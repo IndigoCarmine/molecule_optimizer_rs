@@ -65,8 +65,12 @@ fn analytic_gradients_match_numeric_for_every_term() {
 
 #[test]
 fn breakdown_reports_all_labels_and_sums_to_total() {
-    let mol = &molecules(30)[29];
-    let ff = MmffBuilder::default().build(mol, &[]).unwrap();
+    let mols = molecules(100);
+    let (mol, ff) = mols
+        .iter()
+        .map(|m| (m, MmffBuilder::default().build(m, &[]).unwrap()))
+        .find(|(_, ff)| ff.num_contribs() == 6)
+        .expect("a molecule with all term types");
     let pos = mol.flat_coords();
     let bd = ff.energy_breakdown(&pos);
     let labels: Vec<&str> = bd.iter().map(|(k, _)| k.as_str()).collect();

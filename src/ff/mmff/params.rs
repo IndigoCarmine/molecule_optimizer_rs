@@ -708,7 +708,10 @@ mod tests {
     #[test]
     fn table_sizes_and_values() {
         let p = MmffParams::get(false);
-        assert_eq!(p.def.params.len(), 99);
+        // types 83-86 do not exist; like RDKit, the MMFFDEF vector is
+        // indexed by type-1 (only the ion types 87-99 are affected, and they
+        // never take part in angle/torsion/oop lookups)
+        assert_eq!(p.def.params.len(), 95);
         assert_eq!(p.pbci.params.len(), 99);
         let c = p.prop.get(1).unwrap();
         assert_eq!((c.atno, c.crd, c.val), (6, 4, 4));

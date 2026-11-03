@@ -89,6 +89,18 @@ def fmt(xs, f):
     return " ".join(f % x for x in xs)
 
 
+def final_energy(ff):
+    """Energy at the force field's current positions.
+
+    ForceField.CalcEnergy() without arguments reuses RDKit's internal
+    distance cache, which still holds the distances of the last line-search
+    trial point when the final line search failed (the positions themselves
+    are reset to the previous point). Passing the positions explicitly
+    resets the cache and gives the true energy of the returned geometry.
+    """
+    return ff.CalcEnergy(list(ff.Positions()))
+
+
 def energy_with(mol, variant, **kw):
     props = FFH.MMFFGetMoleculeProperties(mol, mmffVariant=variant)
     if "only" in kw:
@@ -164,7 +176,7 @@ def main():
                     mo, FFH.MMFFGetMoleculeProperties(mo, mmffVariant=variant))
                 ffo.Initialize()
                 st = ffo.Minimize(maxIts=its)
-                lines.append("%s %d %r " % (tag, st, ffo.CalcEnergy()) + fmt(ffo.Positions(), cf))
+                lines.append("%s %d %r " % (tag, st, final_energy(ffo)) + fmt(ffo.Positions(), cf))
             # the validation-suite geometries are already close to their MMFF
             # minima: also minimise from a reproducibly perturbed start
             # (coordinates written with 4 decimals and read back exactly)
@@ -183,7 +195,7 @@ def main():
             ffo.Initialize()
             lines.append("PE %r" % ffo.CalcEnergy())
             st = ffo.Minimize(maxIts=200)
-            lines.append("PO200 %d %r " % (st, ffo.CalcEnergy()) + fmt(ffo.Positions(), "%.7f"))
+            lines.append("PO200 %d %r " % (st, final_energy(ffo)) + fmt(ffo.Positions(), "%.7f"))
             nok += 1
         text = "\n".join(lines) + "\n"
         ref_out = os.path.join(out_dir, name + ".ref")

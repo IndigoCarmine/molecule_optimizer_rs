@@ -196,7 +196,7 @@ impl TypingMol {
                 if is_nos_in_ring && !exo_double_bond && ring.len() % 2 == 1 {
                     pi_e += 2;
                 }
-                if pi_e > 2 && (pi_e - 2) % 4 == 0 {
+                if pi_e > 2 && (pi_e - 2).is_multiple_of(4) {
                     arom_ring_bit[ri] = true;
                     for &a in ring {
                         self.mol.atom_mut(a).is_aromatic = true;

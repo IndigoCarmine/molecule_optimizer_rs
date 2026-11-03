@@ -566,6 +566,7 @@ pub struct TorsionAngleContrib {
 }
 
 impl TorsionAngleContrib {
+    #[allow(clippy::too_many_arguments)]
     pub fn add_term(&mut self, i: usize, j: usize, k: usize, l: usize, v1: f64, v2: f64, v3: f64) {
         self.at.push([i, j, k, l]);
         self.v1.push(v1);

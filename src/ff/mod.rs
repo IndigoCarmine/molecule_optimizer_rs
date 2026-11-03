@@ -30,6 +30,13 @@ pub trait Contrib: Send + Sync {
     fn label(&self) -> &'static str {
         "Other"
     }
+    /// Reports this term's energy for breakdowns, as `(label, energy)`
+    /// pairs. The default reports `(self.label(), self.energy(pos))`; a
+    /// contrib that combines several kinds of terms (e.g. MMFF's combined
+    /// van der Waals + electrostatics pair list) reports each part.
+    fn energy_terms(&self, pos: &[f64], out: &mut dyn FnMut(&'static str, f64)) {
+        out(self.label(), self.energy(pos));
+    }
 }
 
 /// A differentiable energy function of the coordinates.
@@ -239,11 +246,10 @@ impl ForceField for ContribForceField {
     fn energy_breakdown(&self, pos: &[f64]) -> Vec<(String, f64)> {
         let mut out: Vec<(String, f64)> = Vec::new();
         for c in &self.contribs {
-            let e = c.energy(pos);
-            match out.iter_mut().find(|(k, _)| k == c.label()) {
+            c.energy_terms(pos, &mut |label, e| match out.iter_mut().find(|(k, _)| k == label) {
                 Some((_, v)) => *v += e,
-                None => out.push((c.label().to_string(), e)),
-            }
+                None => out.push((label.to_string(), e)),
+            });
         }
         out
     }

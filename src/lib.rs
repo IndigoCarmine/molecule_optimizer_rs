@@ -26,6 +26,7 @@ pub mod calc;
 pub mod core;
 pub mod distgeom;
 pub mod error;
+pub mod fast;
 pub mod ff;
 pub mod io;
 pub mod optim;

@@ -17,6 +17,18 @@ pub fn add_grad(grad: &mut [f64], i: usize, g: V3) {
     grad[3 * i + 2] += g[2];
 }
 
+/// RDKit `ForceField::distance` (indices ordered, squares summed x, y, z).
+#[inline]
+pub(crate) fn rd_distance(pos: &[f64], i: usize, j: usize) -> f64 {
+    let (i, j) = if j < i { (j, i) } else { (i, j) };
+    let mut res = 0.0;
+    for k in 0..3 {
+        let t = pos[3 * i + k] - pos[3 * j + k];
+        res += t * t;
+    }
+    res.sqrt()
+}
+
 #[inline]
 pub fn distance(pos: &[f64], i: usize, j: usize) -> f64 {
     norm(sub(p3(pos, i), p3(pos, j)))

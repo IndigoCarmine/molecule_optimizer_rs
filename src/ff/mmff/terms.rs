@@ -15,6 +15,7 @@ use super::params::{MmffVdw, VdwTable};
 use super::{DEG2RAD, DielectricModel, MDYNE_A_TO_KCAL_MOL, RAD2DEG};
 use crate::ff::Contrib;
 use crate::ff::mmff::typer::is_double_zero;
+use crate::ff::utils::rd_distance as distance;
 
 // ---------------------------------------------------------------------------
 // RDKit Point3D arithmetic (component-wise, same operation order)
@@ -54,17 +55,6 @@ fn cross(a: P3, b: P3) -> P3 {
 #[inline]
 fn clip_to_one(x: f64) -> f64 {
     x.clamp(-1.0, 1.0)
-}
-/// `ForceField::distance(i, j, pos)`
-#[inline]
-fn distance(pos: &[f64], i: usize, j: usize) -> f64 {
-    let (i, j) = if j < i { (j, i) } else { (i, j) };
-    let mut res = 0.0;
-    for d in 0..3 {
-        let tmp = pos[3 * i + d] - pos[3 * j + d];
-        res += tmp * tmp;
-    }
-    res.sqrt()
 }
 #[inline]
 fn add_to(grad: &mut [f64], i: usize, d: usize, v: f64) {
@@ -109,6 +99,24 @@ impl BondStretchContrib {
     }
 }
 
+impl BondStretchContrib {
+    /// Gradient of term `t` at bond length `dist`.
+    #[inline(always)]
+    fn grad_term(&self, t: usize, pos: &[f64], dist: f64, grad: &mut [f64]) {
+        const CS: f64 = -2.0;
+        const C1: f64 = MDYNE_A_TO_KCAL_MOL;
+        const C3: f64 = 7.0 / 12.0;
+        let (i1, i2) = (self.at1[t], self.at2[t]);
+        let dist_term = dist - self.r0[t];
+        let de_dr = C1 * self.kb[t] * dist_term * (1.0 + 1.5 * CS * dist_term + 2.0 * C3 * CS * CS * dist_term * dist_term);
+        for d in 0..3 {
+            let dg = if dist > 0.0 { de_dr * (pos[3 * i1 + d] - pos[3 * i2 + d]) / dist } else { self.kb[t] * 0.01 };
+            add_to(grad, i1, d, dg);
+            add_to(grad, i2, d, -dg);
+        }
+    }
+}
+
 impl Contrib for BondStretchContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -121,20 +129,18 @@ impl Contrib for BondStretchContrib {
         e
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        const CS: f64 = -2.0;
-        const C1: f64 = MDYNE_A_TO_KCAL_MOL;
-        const C3: f64 = 7.0 / 12.0;
         for t in 0..self.at1.len() {
-            let (i1, i2) = (self.at1[t], self.at2[t]);
-            let dist = distance(pos, i1, i2);
-            let dist_term = dist - self.r0[t];
-            let de_dr = C1 * self.kb[t] * dist_term * (1.0 + 1.5 * CS * dist_term + 2.0 * C3 * CS * CS * dist_term * dist_term);
-            for d in 0..3 {
-                let dg = if dist > 0.0 { de_dr * (pos[3 * i1 + d] - pos[3 * i2 + d]) / dist } else { self.kb[t] * 0.01 };
-                add_to(grad, i1, d, dg);
-                add_to(grad, i2, d, -dg);
-            }
+            self.grad_term(t, pos, distance(pos, self.at1[t], self.at2[t]), grad);
         }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut e = 0.0;
+        for t in 0..self.at1.len() {
+            let dist = distance(pos, self.at1[t], self.at2[t]);
+            e += calc_bond_stretch_energy(self.r0[t], self.kb[t], dist);
+            self.grad_term(t, pos, dist, grad);
+        }
+        e
     }
     fn label(&self) -> &'static str {
         "BondStretch"
@@ -187,6 +193,21 @@ impl AngleBendContrib {
     pub fn is_empty(&self) -> bool {
         self.at.is_empty()
     }
+    /// Gradient of term `t` (points `p`, bond lengths `dist`).
+    #[inline(always)]
+    fn grad_term(&self, t: usize, p: [P3; 3], dist: [f64; 2], grad: &mut [f64]) {
+        let r = [div(sub(p[0], p[1]), dist[0]), div(sub(p[2], p[1]), dist[1])];
+        let cos_theta = clip_to_one(dot(r[0], r[1]));
+        let sin_theta_sq = 1.0 - cos_theta * cos_theta;
+        let sin_theta = (if sin_theta_sq > 0.0 { sin_theta_sq.sqrt() } else { 0.0 }).max(1.0e-8);
+        let angle_term = RAD2DEG * cos_theta.acos() - self.theta0[t];
+        let de_dtheta = if self.is_linear[t] {
+            -MDYNE_A_TO_KCAL_MOL * self.ka[t] * sin_theta
+        } else {
+            RAD2DEG * ANGLE_C2 * self.ka[t] * angle_term * (1.0 + 1.5 * ANGLE_CB * angle_term)
+        };
+        calc_angle_bend_grad(&r, &dist, grad, self.at[t], de_dtheta, cos_theta, sin_theta);
+    }
 }
 
 /// RDKit `MMFF::Utils::calcAngleBendGrad`.
@@ -228,20 +249,20 @@ impl Contrib for AngleBendContrib {
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
             let [i, j, k] = self.at[t];
-            let dist = [distance(pos, i, j), distance(pos, j, k)];
-            let (p1, p2, p3) = (pt(pos, i), pt(pos, j), pt(pos, k));
-            let r = [div(sub(p1, p2), dist[0]), div(sub(p3, p2), dist[1])];
-            let cos_theta = clip_to_one(dot(r[0], r[1]));
-            let sin_theta_sq = 1.0 - cos_theta * cos_theta;
-            let sin_theta = (if sin_theta_sq > 0.0 { sin_theta_sq.sqrt() } else { 0.0 }).max(1.0e-8);
-            let angle_term = RAD2DEG * cos_theta.acos() - self.theta0[t];
-            let de_dtheta = if self.is_linear[t] {
-                -MDYNE_A_TO_KCAL_MOL * self.ka[t] * sin_theta
-            } else {
-                RAD2DEG * ANGLE_C2 * self.ka[t] * angle_term * (1.0 + 1.5 * ANGLE_CB * angle_term)
-            };
-            calc_angle_bend_grad(&r, &dist, grad, [i, j, k], de_dtheta, cos_theta, sin_theta);
+            self.grad_term(t, [pt(pos, i), pt(pos, j), pt(pos, k)], [distance(pos, i, j), distance(pos, j, k)], grad);
         }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut res = 0.0;
+        for t in 0..self.at.len() {
+            let [i, j, k] = self.at[t];
+            let dist = [distance(pos, i, j), distance(pos, j, k)];
+            let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
+            let cos = calc_cos_theta(p[0], p[1], p[2], dist[0], dist[1]);
+            res += calc_angle_bend_energy(self.theta0[t], self.ka[t], self.is_linear[t], cos);
+            self.grad_term(t, p, dist, grad);
+        }
+        res
     }
     fn label(&self) -> &'static str {
         "AngleBend"
@@ -287,6 +308,62 @@ impl StretchBendContrib {
     }
 }
 
+impl StretchBendContrib {
+    /// Energy of term `t` (points `p`, bond lengths `dist1`, `dist2`).
+    #[inline(always)]
+    fn energy_term(&self, t: usize, p: &[P3; 3], dist1: f64, dist2: f64) -> f64 {
+        let cos = calc_cos_theta(p[0], p[1], p[2], dist1, dist2);
+        let e = calc_stretch_bend_energy(
+            dist1 - self.rest_len1[t],
+            dist2 - self.rest_len2[t],
+            RAD2DEG * cos.acos() - self.theta0[t],
+            (self.k1[t], self.k2[t]),
+        );
+        e.0 + e.1
+    }
+    /// Gradient of term `t` (points `p`, bond lengths `dist1`, `dist2`).
+    #[inline(always)]
+    fn grad_term(&self, t: usize, p: &[P3; 3], dist1: f64, dist2: f64, grad: &mut [f64]) {
+        const C5: f64 = MDYNE_A_TO_KCAL_MOL * DEG2RAD;
+        let [i1, i2, i3] = self.at[t];
+        let theta0 = self.theta0[t];
+        let fc1 = self.k1[t];
+        let fc2 = self.k2[t];
+        let (p1, p2, p3) = (p[0], p[1], p[2]);
+        let p12 = div(sub(p1, p2), dist1);
+        let p32 = div(sub(p3, p2), dist2);
+        let cos_theta = clip_to_one(dot(p12, p32));
+        let sin_theta_sq = 1.0 - cos_theta * cos_theta;
+        let sin_theta = sin_theta_sq.sqrt().max(1.0e-8);
+        let angle_term = RAD2DEG * cos_theta.acos() - theta0;
+        let dist_term = RAD2DEG * (fc1 * (dist1 - self.rest_len1[t]) + fc2 * (dist2 - self.rest_len2[t]));
+        let dcos1 = [
+            1.0 / dist1 * (p32[0] - cos_theta * p12[0]),
+            1.0 / dist1 * (p32[1] - cos_theta * p12[1]),
+            1.0 / dist1 * (p32[2] - cos_theta * p12[2]),
+        ];
+        let dcos2 = [
+            1.0 / dist2 * (p12[0] - cos_theta * p32[0]),
+            1.0 / dist2 * (p12[1] - cos_theta * p32[1]),
+            1.0 / dist2 * (p12[2] - cos_theta * p32[2]),
+        ];
+        for d in 0..3 {
+            add_to(grad, i1, d, C5 * (p12[d] * fc1 * angle_term + dcos1[d] / (-sin_theta) * dist_term));
+        }
+        for d in 0..3 {
+            add_to(
+                grad,
+                i2,
+                d,
+                C5 * ((-p12[d] * fc1 - p32[d] * fc2) * angle_term + (-dcos1[d] - dcos2[d]) / (-sin_theta) * dist_term),
+            );
+        }
+        for d in 0..3 {
+            add_to(grad, i3, d, C5 * (p32[d] * fc2 * angle_term + dcos2[d] / (-sin_theta) * dist_term));
+        }
+    }
+}
+
 impl Contrib for StretchBendContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -295,61 +372,26 @@ impl Contrib for StretchBendContrib {
         let mut total = 0.0;
         for t in 0..self.at.len() {
             let [i, j, k] = self.at[t];
-            let dist1 = distance(pos, i, j);
-            let dist2 = distance(pos, j, k);
-            let cos = calc_cos_theta(pt(pos, i), pt(pos, j), pt(pos, k), dist1, dist2);
-            let e = calc_stretch_bend_energy(
-                dist1 - self.rest_len1[t],
-                dist2 - self.rest_len2[t],
-                RAD2DEG * cos.acos() - self.theta0[t],
-                (self.k1[t], self.k2[t]),
-            );
-            total += e.0 + e.1;
+            total += self.energy_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k));
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        const C5: f64 = MDYNE_A_TO_KCAL_MOL * DEG2RAD;
         for t in 0..self.at.len() {
-            let [i1, i2, i3] = self.at[t];
-            let theta0 = self.theta0[t];
-            let fc1 = self.k1[t];
-            let fc2 = self.k2[t];
-            let dist1 = distance(pos, i1, i2);
-            let dist2 = distance(pos, i2, i3);
-            let (p1, p2, p3) = (pt(pos, i1), pt(pos, i2), pt(pos, i3));
-            let p12 = div(sub(p1, p2), dist1);
-            let p32 = div(sub(p3, p2), dist2);
-            let cos_theta = clip_to_one(dot(p12, p32));
-            let sin_theta_sq = 1.0 - cos_theta * cos_theta;
-            let sin_theta = sin_theta_sq.sqrt().max(1.0e-8);
-            let angle_term = RAD2DEG * cos_theta.acos() - theta0;
-            let dist_term = RAD2DEG * (fc1 * (dist1 - self.rest_len1[t]) + fc2 * (dist2 - self.rest_len2[t]));
-            let dcos1 = [
-                1.0 / dist1 * (p32[0] - cos_theta * p12[0]),
-                1.0 / dist1 * (p32[1] - cos_theta * p12[1]),
-                1.0 / dist1 * (p32[2] - cos_theta * p12[2]),
-            ];
-            let dcos2 = [
-                1.0 / dist2 * (p12[0] - cos_theta * p32[0]),
-                1.0 / dist2 * (p12[1] - cos_theta * p32[1]),
-                1.0 / dist2 * (p12[2] - cos_theta * p32[2]),
-            ];
-            for d in 0..3 {
-                add_to(grad, i1, d, C5 * (p12[d] * fc1 * angle_term + dcos1[d] / (-sin_theta) * dist_term));
-            }
-            for d in 0..3 {
-                add_to(
-                    grad,
-                    i2,
-                    d,
-                    C5 * ((-p12[d] * fc1 - p32[d] * fc2) * angle_term + (-dcos1[d] - dcos2[d]) / (-sin_theta) * dist_term),
-                );
-            }
-            for d in 0..3 {
-                add_to(grad, i3, d, C5 * (p32[d] * fc2 * angle_term + dcos2[d] / (-sin_theta) * dist_term));
-            }
+            let [i, j, k] = self.at[t];
+            self.grad_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k), grad);
         }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut total = 0.0;
+        for t in 0..self.at.len() {
+            let [i, j, k] = self.at[t];
+            let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
+            let (dist1, dist2) = (distance(pos, i, j), distance(pos, j, k));
+            total += self.energy_term(t, &p, dist1, dist2);
+            self.grad_term(t, &p, dist1, dist2, grad);
+        }
+        total
     }
     fn label(&self) -> &'static str {
         "StretchBend"
@@ -747,6 +789,58 @@ impl NonbondedContrib {
     fn ele_energy(&self, t: usize, dist: f64) -> f64 {
         calc_ele_energy(dist, self.charge_term[t], self.diel_model[t].unwrap_or(DielectricModel::Constant), self.is_1_4[t])
     }
+    /// Gradient of pair `t` at distance `dist`. Returns `false` when the
+    /// pair has zero distance (RDKit then skips the remaining pairs).
+    #[inline(always)]
+    fn grad_term(&self, t: usize, pos: &[f64], dist: f64, grad: &mut [f64]) -> bool {
+        let (i1, i2) = (self.at1[t], self.at2[t]);
+        let mut vdw_grad = 0.0;
+        let mut ele_grad = 0.0;
+        if dist <= 0.0 {
+            if self.kind[t] & VDW_BIT != 0 {
+                for d in 0..3 {
+                    add_to(grad, i1, d, self.r_ij_star[t] * 0.01);
+                    add_to(grad, i2, d, -(self.r_ij_star[t] * 0.01));
+                }
+            }
+            if self.kind[t] & ELE_BIT != 0 {
+                for d in 0..3 {
+                    add_to(grad, i1, d, 0.02);
+                    add_to(grad, i2, d, -0.02);
+                }
+            }
+            return false;
+        }
+        if self.kind[t] & VDW_BIT != 0 {
+            let r = self.r_ij_star[t];
+            let q = dist / r;
+            let q2 = q * q;
+            let q6 = q2 * q2 * q2;
+            let q7 = q6 * q;
+            let q7pvdw2m1 = q7 + VDW2M1;
+            let tt = VDW1 / (q + VDW1 - 1.0);
+            let t2 = tt * tt;
+            let t7 = t2 * t2 * t2 * tt;
+            let de_dr = self.well_depth[t] / r
+                * t7
+                * (-VDW2T7 * q6 / (q7pvdw2m1 * q7pvdw2m1) + ((-VDW2T7 / q7pvdw2m1 + 14.0) / (q + VDW1M1)));
+            vdw_grad = de_dr / dist;
+        }
+        if self.kind[t] & ELE_BIT != 0 {
+            let model = self.diel_model[t].unwrap_or(DielectricModel::Constant);
+            let mut corr_dist = dist + 0.05;
+            corr_dist *= if model == DielectricModel::Distance { corr_dist * corr_dist } else { corr_dist };
+            let de_dr = -332.0716 * model.as_f64() * self.charge_term[t] / corr_dist * (if self.is_1_4[t] { 0.75 } else { 1.0 });
+            ele_grad = de_dr / dist;
+        }
+        let de_dr = vdw_grad + ele_grad;
+        for d in 0..3 {
+            let dg = de_dr * (pos[3 * i1 + d] - pos[3 * i2 + d]);
+            add_to(grad, i1, d, dg);
+            add_to(grad, i2, d, -dg);
+        }
+        true
+    }
 }
 
 impl Contrib for NonbondedContrib {
@@ -768,55 +862,28 @@ impl Contrib for NonbondedContrib {
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at1.len() {
-            let (i1, i2) = (self.at1[t], self.at2[t]);
-            let dist = distance(pos, i1, i2);
-            let mut vdw_grad = 0.0;
-            let mut ele_grad = 0.0;
-            if dist <= 0.0 {
+            if !self.grad_term(t, pos, distance(pos, self.at1[t], self.at2[t]), grad) {
                 // RDKit returns here (skipping the remaining pairs).
-                if self.kind[t] & VDW_BIT != 0 {
-                    for d in 0..3 {
-                        add_to(grad, i1, d, self.r_ij_star[t] * 0.01);
-                        add_to(grad, i2, d, -(self.r_ij_star[t] * 0.01));
-                    }
-                }
-                if self.kind[t] & ELE_BIT != 0 {
-                    for d in 0..3 {
-                        add_to(grad, i1, d, 0.02);
-                        add_to(grad, i2, d, -0.02);
-                    }
-                }
                 return;
             }
+        }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut e = 0.0;
+        let mut with_grad = true;
+        for t in 0..self.at1.len() {
+            let dist = distance(pos, self.at1[t], self.at2[t]);
             if self.kind[t] & VDW_BIT != 0 {
-                let r = self.r_ij_star[t];
-                let q = dist / r;
-                let q2 = q * q;
-                let q6 = q2 * q2 * q2;
-                let q7 = q6 * q;
-                let q7pvdw2m1 = q7 + VDW2M1;
-                let tt = VDW1 / (q + VDW1 - 1.0);
-                let t2 = tt * tt;
-                let t7 = t2 * t2 * t2 * tt;
-                let de_dr = self.well_depth[t] / r
-                    * t7
-                    * (-VDW2T7 * q6 / (q7pvdw2m1 * q7pvdw2m1) + ((-VDW2T7 / q7pvdw2m1 + 14.0) / (q + VDW1M1)));
-                vdw_grad = de_dr / dist;
+                e += self.vdw_energy(t, dist);
             }
             if self.kind[t] & ELE_BIT != 0 {
-                let model = self.diel_model[t].unwrap_or(DielectricModel::Constant);
-                let mut corr_dist = dist + 0.05;
-                corr_dist *= if model == DielectricModel::Distance { corr_dist * corr_dist } else { corr_dist };
-                let de_dr = -332.0716 * model.as_f64() * self.charge_term[t] / corr_dist * (if self.is_1_4[t] { 0.75 } else { 1.0 });
-                ele_grad = de_dr / dist;
+                e += self.ele_energy(t, dist);
             }
-            let de_dr = vdw_grad + ele_grad;
-            for d in 0..3 {
-                let dg = de_dr * (pos[3 * i1 + d] - pos[3 * i2 + d]);
-                add_to(grad, i1, d, dg);
-                add_to(grad, i2, d, -dg);
+            if with_grad {
+                with_grad = self.grad_term(t, pos, dist, grad);
             }
         }
+        e
     }
     fn label(&self) -> &'static str {
         "Nonbonded"

@@ -30,6 +30,15 @@ pub trait Contrib: Send + Sync {
     fn energy(&self, pos: &[f64]) -> f64;
     /// Adds the gradient of this term to `grad`.
     fn grad(&self, pos: &[f64], grad: &mut [f64]);
+    /// Adds the gradient of this term to `grad` and returns its energy.
+    /// Must return exactly what [`Contrib::energy`] returns and add exactly
+    /// what [`Contrib::grad`] adds (same operations in the same order);
+    /// hot contribs override it to compute the shared geometry once.
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let e = self.energy(pos);
+        self.grad(pos, grad);
+        e
+    }
     /// Category label used for energy breakdowns (e.g. `"BondStretch"`).
     fn label(&self) -> &'static str {
         "Other"
@@ -237,8 +246,7 @@ impl ForceField for ContribForceField {
                     let mut g = vec![0.0; n];
                     let mut e = 0.0;
                     for c in cs {
-                        e += c.energy(pos);
-                        c.grad(pos, &mut g);
+                        e += c.energy_grad(pos, &mut g);
                     }
                     (g, e)
                 })
@@ -259,8 +267,7 @@ impl ForceField for ContribForceField {
         } else {
             let mut e = 0.0;
             for c in &self.contribs {
-                e += c.energy(pos);
-                c.grad(pos, grad);
+                e += c.energy_grad(pos, grad);
             }
             for &f in &self.fixed {
                 for d in 0..self.dim {

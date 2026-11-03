@@ -67,10 +67,7 @@ impl ConstraintTable {
     pub fn eval<const G: bool>(&self, pos: &[f64], grad: &mut [f64], acc: &mut f64) {
         for t in &self.terms {
             let c = t.as_contrib();
-            *acc += c.energy(pos);
-            if G {
-                c.grad(pos, grad);
-            }
+            *acc += if G { c.energy_grad(pos, grad) } else { c.energy(pos) };
         }
     }
     pub fn energy(&self, pos: &[f64]) -> f64 {

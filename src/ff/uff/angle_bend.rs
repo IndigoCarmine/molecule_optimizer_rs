@@ -165,13 +165,35 @@ impl Contrib for AngleBendContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
-        let dist1 = rd_distance(pos, self.idx1, self.idx2);
-        let dist2 = rd_distance(pos, self.idx2, self.idx3);
-        let p1 = p3(pos, self.idx1);
-        let p2 = p3(pos, self.idx2);
-        let p3_ = p3(pos, self.idx3);
-        let p12 = sub(p1, p2);
-        let p32 = sub(p3_, p2);
+        let dist = [rd_distance(pos, self.idx1, self.idx2), rd_distance(pos, self.idx2, self.idx3)];
+        self.energy_at(&dist, &[p3(pos, self.idx1), p3(pos, self.idx2), p3(pos, self.idx3)])
+    }
+
+    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        let dist = [rd_distance(pos, self.idx1, self.idx2), rd_distance(pos, self.idx2, self.idx3)];
+        self.grad_at(&dist, &[p3(pos, self.idx1), p3(pos, self.idx2), p3(pos, self.idx3)], grad);
+    }
+
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let dist = [rd_distance(pos, self.idx1, self.idx2), rd_distance(pos, self.idx2, self.idx3)];
+        let p = [p3(pos, self.idx1), p3(pos, self.idx2), p3(pos, self.idx3)];
+        let e = self.energy_at(&dist, &p);
+        self.grad_at(&dist, &p, grad);
+        e
+    }
+
+    fn label(&self) -> &'static str {
+        "AngleBend"
+    }
+}
+
+impl AngleBendContrib {
+    /// Energy for bond lengths `dist` and points `p`.
+    #[inline(always)]
+    fn energy_at(&self, dist: &[f64; 2], p: &[[f64; 3]; 3]) -> f64 {
+        let (dist1, dist2) = (dist[0], dist[1]);
+        let p12 = sub(p[0], p[1]);
+        let p32 = sub(p[2], p[1]);
         let cos_theta = (dot(p12, p32) / (dist1 * dist2)).clamp(-1.0, 1.0);
         let sin_theta_sq = 1. - cos_theta * cos_theta;
         let mut res = self.force_constant * self.energy_term(cos_theta, sin_theta_sq);
@@ -182,13 +204,11 @@ impl Contrib for AngleBendContrib {
         res
     }
 
-    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        let dist = [rd_distance(pos, self.idx1, self.idx2), rd_distance(pos, self.idx2, self.idx3)];
-        let p1 = p3(pos, self.idx1);
-        let p2 = p3(pos, self.idx2);
-        let p3_ = p3(pos, self.idx3);
-        let d0 = sub(p1, p2);
-        let d1 = sub(p3_, p2);
+    /// Gradient for bond lengths `dist` and points `p`.
+    #[inline(always)]
+    fn grad_at(&self, dist: &[f64; 2], p: &[[f64; 3]; 3], grad: &mut [f64]) {
+        let d0 = sub(p[0], p[1]);
+        let d1 = sub(p[2], p[1]);
         let r = [
             [d0[0] / dist[0], d0[1] / dist[0], d0[2] / dist[0]],
             [d1[0] / dist[1], d1[1] / dist[1], d1[2] / dist[1]],
@@ -202,10 +222,6 @@ impl Contrib for AngleBendContrib {
             let corr = -20.0 * (-20.0 * (theta - self.theta0 + 0.25)).exp();
             de_dtheta += corr;
         }
-        calc_angle_bend_grad(&r, &dist, [self.idx1, self.idx2, self.idx3], grad, de_dtheta, cos_theta, sin_theta);
-    }
-
-    fn label(&self) -> &'static str {
-        "AngleBend"
+        calc_angle_bend_grad(&r, dist, [self.idx1, self.idx2, self.idx3], grad, de_dtheta, cos_theta, sin_theta);
     }
 }

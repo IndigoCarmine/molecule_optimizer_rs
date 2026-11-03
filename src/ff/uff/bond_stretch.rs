@@ -51,7 +51,24 @@ impl Contrib for BondStretchContrib {
         0.5 * self.force_constant * dist_term * dist_term
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        self.grad_at(pos, rd_distance(pos, self.idx1, self.idx2), grad);
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
         let dist = rd_distance(pos, self.idx1, self.idx2);
+        let dist_term = dist - self.rest_len;
+        let e = 0.5 * self.force_constant * dist_term * dist_term;
+        self.grad_at(pos, dist, grad);
+        e
+    }
+    fn label(&self) -> &'static str {
+        "BondStretch"
+    }
+}
+
+impl BondStretchContrib {
+    /// Gradient at bond length `dist`.
+    #[inline(always)]
+    fn grad_at(&self, pos: &[f64], dist: f64, grad: &mut [f64]) {
         let pre_factor = self.force_constant * (dist - self.rest_len);
         let (a, b) = (3 * self.idx1, 3 * self.idx2);
         for i in 0..3 {
@@ -63,8 +80,5 @@ impl Contrib for BondStretchContrib {
             grad[a + i] += d_grad;
             grad[b + i] -= d_grad;
         }
-    }
-    fn label(&self) -> &'static str {
-        "BondStretch"
     }
 }

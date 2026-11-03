@@ -67,17 +67,7 @@ fn int_pow_n(x: f64, n: u32) -> f64 {
     }
 }
 
-/// RDKit `ForceField::distance` (indices ordered, squares summed x, y, z).
-#[inline]
-pub(crate) fn rd_distance(pos: &[f64], i: usize, j: usize) -> f64 {
-    let (i, j) = if j < i { (j, i) } else { (i, j) };
-    let mut res = 0.0;
-    for k in 0..3 {
-        let t = pos[3 * i + k] - pos[3 * j + k];
-        res += t * t;
-    }
-    res.sqrt()
-}
+pub(crate) use crate::ff::utils::rd_distance;
 
 /// UFF atom type labels (e.g. `"C_3"`, `"C_R"`, `"N_2"`), RDKit
 /// `UFF::Tools::getAtomLabel`. Labels of atoms that UFF cannot type are

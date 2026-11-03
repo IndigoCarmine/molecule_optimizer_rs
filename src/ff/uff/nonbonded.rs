@@ -44,13 +44,10 @@ impl Contrib for VdwContrib {
     }
     fn energy(&self, pos: &[f64]) -> f64 {
         let dist = rd_distance(pos, self.idx1, self.idx2);
-        if dist > self.thresh || dist <= 0.0 {
+        if dist > self.thresh {
             return 0.0;
         }
-        let r = self.xij / dist;
-        let r6 = int_pow::<6>(r);
-        let r12 = r6 * r6;
-        self.well_depth * (r12 - 2.0 * r6)
+        self.energy_at(dist)
     }
 
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
@@ -58,6 +55,39 @@ impl Contrib for VdwContrib {
         if dist > self.thresh {
             return;
         }
+        self.grad_at(pos, dist, grad);
+    }
+
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let dist = rd_distance(pos, self.idx1, self.idx2);
+        if dist > self.thresh {
+            return 0.0;
+        }
+        let e = self.energy_at(dist);
+        self.grad_at(pos, dist, grad);
+        e
+    }
+
+    fn label(&self) -> &'static str {
+        "VdW"
+    }
+}
+
+impl VdwContrib {
+    /// Energy at distance `dist` (within the threshold).
+    #[inline(always)]
+    fn energy_at(&self, dist: f64) -> f64 {
+        if dist <= 0.0 {
+            return 0.0;
+        }
+        let r = self.xij / dist;
+        let r6 = int_pow::<6>(r);
+        let r12 = r6 * r6;
+        self.well_depth * (r12 - 2.0 * r6)
+    }
+    /// Gradient at distance `dist` (within the threshold).
+    #[inline(always)]
+    fn grad_at(&self, pos: &[f64], dist: f64, grad: &mut [f64]) {
         let (a, b) = (3 * self.idx1, 3 * self.idx2);
         if dist <= 0.0 {
             for i in 0..3 {
@@ -75,9 +105,5 @@ impl Contrib for VdwContrib {
             grad[a + i] += d_grad;
             grad[b + i] -= d_grad;
         }
-    }
-
-    fn label(&self) -> &'static str {
-        "VdW"
     }
 }

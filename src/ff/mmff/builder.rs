@@ -174,6 +174,18 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
             }
         }
         let q = props.partial_charges();
+        // the vdW parameters of a pair depend only on the two atom types
+        // (in this order): computed once per ordered type pair
+        let types = props.atom_types();
+        let mut dense = [u8::MAX; 256];
+        let mut nt = 0usize;
+        for &t in types {
+            if dense[t as usize] == u8::MAX {
+                dense[t as usize] = nt as u8;
+                nt += 1;
+            }
+        }
+        let mut vdw_cache: Vec<Option<Option<(f64, f64)>>> = vec![None; nt * nt];
         let mut nb = NonbondedContrib::default();
         for i in 0..n {
             rel.compute(mol, i);
@@ -196,7 +208,8 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
                 if dist > opts.nonbonded_thresh {
                     continue;
                 }
-                let vdw = props.vdw_params(i, j).map(|v| (v.r_ij_star, v.epsilon));
+                let key = dense[types[i] as usize] as usize * nt + dense[types[j] as usize] as usize;
+                let vdw = *vdw_cache[key].get_or_insert_with(|| props.vdw_params(i, j).map(|v| (v.r_ij_star, v.epsilon)));
                 let ele = if !is_double_zero(q[i]) && !is_double_zero(q[j]) {
                     Some((q[i] * q[j] / opts.dielectric_constant, opts.dielectric_model, is_1_4))
                 } else {

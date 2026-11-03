@@ -436,6 +436,26 @@ impl ExactNonbonded {
     /// the reference contribs' order (UFF: pair by pair; MMFF: the pair sum
     /// of the single nonbonded contrib) and the gradient to `grad` (if `G`).
     pub fn eval_into<const G: bool>(&self, pos: &[f64], grad: &mut [f64], acc: &mut f64) -> NonbondedEnergy {
+        self.eval_overlapped::<G, ()>(pos, grad, acc, |_| ()).0
+    }
+
+    /// `true` if the pairs are evaluated in parallel chunks.
+    pub fn is_parallel(&self) -> bool {
+        !self.chunks.is_empty()
+    }
+
+    /// Like [`Self::eval_into`], but runs `other(grad)` concurrently with
+    /// the parallel pair chunks (which write to their own buffers); the
+    /// chunk buffers are added to `grad` after both have finished, so the
+    /// result is deterministic. Without a parallel plan the pairs are
+    /// evaluated first, then `other`.
+    pub fn eval_overlapped<const G: bool, R: Send>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        acc: &mut f64,
+        other: impl FnOnce(&mut [f64]) -> R + Send,
+    ) -> (NonbondedEnergy, R) {
         if self.chunks.is_empty() {
             let (v, e) = if self.mmff {
                 let mut local = 0.0;
@@ -445,18 +465,23 @@ impl ExactNonbonded {
             } else {
                 self.eval_rows_dispatch::<G>(pos, grad, 0..self.n_atoms, acc)
             };
-            return NonbondedEnergy { vdw: v, electrostatic: e };
+            return (NonbondedEnergy { vdw: v, electrostatic: e }, other(grad));
         }
         let len = 3 * self.n_atoms;
         self.ws.with(|ws| {
             let (bufs, energies) = ws.split();
-            if G {
-                bufs.par_chunks_mut(len).zip(energies.par_iter_mut()).zip(self.chunks.par_iter()).for_each(
-                    |((buf, en), ch)| {
-                        buf[3 * ch.lo..].fill(0.0);
-                        let mut c = 0.0;
-                        let (v, e) = self.eval_rows_dispatch::<true>(pos, buf, ch.rows.clone(), &mut c);
-                        *en = [c, v, e];
+            let r = if G {
+                let (r, ()) = rayon::join(
+                    || other(&mut *grad),
+                    || {
+                        bufs.par_chunks_mut(len).zip(energies.par_iter_mut()).zip(self.chunks.par_iter()).for_each(
+                            |((buf, en), ch)| {
+                                buf[3 * ch.lo..].fill(0.0);
+                                let mut c = 0.0;
+                                let (v, e) = self.eval_rows_dispatch::<true>(pos, buf, ch.rows.clone(), &mut c);
+                                *en = [c, v, e];
+                            },
+                        )
                     },
                 );
                 let chunks = &self.chunks;
@@ -473,13 +498,20 @@ impl ExactNonbonded {
                         }
                     }
                 });
+                r
             } else {
-                energies.par_iter_mut().zip(self.chunks.par_iter()).for_each(|(en, ch)| {
-                    let mut c = 0.0;
-                    let (v, e) = self.eval_rows_dispatch::<false>(pos, &mut [], ch.rows.clone(), &mut c);
-                    *en = [c, v, e];
-                });
-            }
+                let (r, ()) = rayon::join(
+                    || other(&mut *grad),
+                    || {
+                        energies.par_iter_mut().zip(self.chunks.par_iter()).for_each(|(en, ch)| {
+                            let mut c = 0.0;
+                            let (v, e) = self.eval_rows_dispatch::<false>(pos, &mut [], ch.rows.clone(), &mut c);
+                            *en = [c, v, e];
+                        })
+                    },
+                );
+                r
+            };
             let mut out = NonbondedEnergy::default();
             let mut local = 0.0;
             for en in energies.iter() {
@@ -488,7 +520,7 @@ impl ExactNonbonded {
                 out.electrostatic += en[2];
             }
             *acc += local;
-            out
+            (out, r)
         })
     }
 }

@@ -292,6 +292,20 @@ impl FastForceField {
     /// order it reproduces); with a parallel plan the bonded tables are
     /// evaluated first in fixed chunks.
     fn eval<const G: bool>(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        if let Nb::Exact(e) = &self.nb {
+            if e.is_parallel() {
+                // overlap the other terms with the parallel pair chunks
+                let mut nb_acc = 0.0;
+                let (_, rest) = e.eval_overlapped::<G, f64>(pos, grad, &mut nb_acc, |g| self.eval_segments::<G>(pos, g, false));
+                return rest + nb_acc;
+            }
+        }
+        self.eval_segments::<G>(pos, grad, true)
+    }
+
+    /// Evaluates the segments in order (the nonbonded one only if
+    /// `with_nb`).
+    fn eval_segments<const G: bool>(&self, pos: &[f64], grad: &mut [f64], with_nb: bool) -> f64 {
         let b = &*self.bonded;
         let simd = self.simd;
         let parallel = !b.chunks.is_empty();
@@ -313,6 +327,7 @@ impl FastForceField {
                         }
                     }
                 }
+                Segment::Nonbonded if !with_nb => {}
                 Segment::Nonbonded => match &self.nb {
                     Nb::None => {}
                     Nb::Exact(e) => {

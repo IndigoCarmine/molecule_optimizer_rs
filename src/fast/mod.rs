@@ -34,6 +34,8 @@
 //! ```
 
 pub mod approx;
+#[cfg(target_arch = "x86_64")]
+pub mod avx;
 pub mod backend;
 pub mod bonded;
 pub mod compile;
@@ -201,6 +203,8 @@ impl Default for FastOptions {
 // FastForceField
 // ---------------------------------------------------------------------------
 
+// one per force field, matched on every evaluation: kept inline (unboxed)
+#[allow(clippy::large_enum_variant)]
 enum Nb {
     None,
     Exact(ExactNonbonded),

@@ -7,9 +7,9 @@
 //!   the charge term are stored. Pair parameters live in a small table
 //!   indexed by the (atom type, atom type) combination, so the hot loop
 //!   streams ~15 bytes per pair.
-//! * Four pairs of a row are evaluated at once; the force on the row atom
-//!   is accumulated in registers, forces on the partners are scattered in
-//!   pair order.
+//! * The pairs are evaluated as one flat list, four at a time (a block may
+//!   span rows, so short rows of small molecules still run in SIMD);
+//!   gradients are scattered pair by pair, in pair order.
 //! * Parallel evaluation splits the rows into fixed chunks with balanced
 //!   pair counts (depending only on the pair list and the grain); each
 //!   chunk has its own gradient buffer and the buffers are reduced in chunk
@@ -106,6 +106,9 @@ pub struct ExactNonbonded {
     mmff: bool,
     n_atoms: usize,
     row_start: Vec<u32>,
+    /// First atom of every pair (pairs are evaluated as one flat list, so
+    /// SIMD blocks may span rows).
+    i: Vec<u32>,
     j: Vec<u32>,
     p: Vec<u32>,
     flags: Vec<u8>,
@@ -154,6 +157,7 @@ impl ExactNonbonded {
         for k in 0..n_atoms {
             row_start[k + 1] += row_start[k];
         }
+        let i: Vec<u32> = pairs.iter().map(|p| p.i).collect();
         let j: Vec<u32> = pairs.iter().map(|p| p.j).collect();
         let p: Vec<u32> = pairs.iter().map(|p| p.p).collect();
         let flags: Vec<u8> = pairs.iter().map(|p| p.flags).collect();
@@ -164,6 +168,7 @@ impl ExactNonbonded {
             mmff,
             n_atoms,
             row_start,
+            i,
             j,
             p,
             flags,
@@ -237,19 +242,19 @@ impl ExactNonbonded {
         self.simd = simd;
     }
 
-    /// Adds `dg` to row atom `i` and `-dg` to the partners, pair by pair
-    /// (the reference contribs' order).
+    /// Adds `dg` to the first atom and `-dg` to the second atom of every
+    /// pair, pair by pair (the reference contribs' order).
     ///
-    /// Safety: `t + L::N <= num_pairs`, `grad.len() >= 3 * n_atoms`, `i < n_atoms`.
+    /// Safety: `t + L::N <= num_pairs`, `grad.len() >= 3 * n_atoms`.
     #[inline(always)]
-    unsafe fn scatter_pairs<L: Lane>(&self, grad: &mut [f64], i: usize, t: usize, dg: P<L>) {
+    unsafe fn scatter_pairs<L: Lane>(&self, grad: &mut [f64], t: usize, dg: P<L>) {
         let mut v = [[0.0f64; 4]; 3];
         for d in 0..3 {
             dg[d].write(&mut v[d]);
         }
-        let a = 3 * i;
         for k in 0..L::N {
             unsafe {
+                let a = 3 * *self.i.get_unchecked(t + k) as usize;
                 let b = 3 * *self.j.get_unchecked(t + k) as usize;
                 for d in 0..3 {
                     *grad.get_unchecked_mut(a + d) += v[d][k];
@@ -259,13 +264,14 @@ impl ExactNonbonded {
         }
     }
 
-    /// Partner coordinates of pairs `t .. t + L::N`.
+    /// Coordinates of the atoms `idx[t .. t + L::N]` (`idx` = `self.i` or
+    /// `self.j`).
     ///
     /// Safety: `t + L::N <= num_pairs`, `pos.len() >= 3 * n_atoms`.
     #[inline(always)]
-    unsafe fn ldj<L: Lane>(&self, pos: &[f64], t: usize) -> P<L> {
+    unsafe fn ldp<L: Lane>(pos: &[f64], idx: &[u32], t: usize) -> P<L> {
         unsafe {
-            let j = |k: usize| 3 * *self.j.get_unchecked(t + k) as usize;
+            let j = |k: usize| 3 * *idx.get_unchecked(t + k) as usize;
             [
                 L::from_fn(|k| *pos.get_unchecked(j(k))),
                 L::from_fn(|k| *pos.get_unchecked(j(k) + 1)),
@@ -284,9 +290,10 @@ impl ExactNonbonded {
 
     /// Safety: see [`Self::eval_rows`].
     #[inline(always)]
-    unsafe fn uff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> L {
+    unsafe fn uff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], t: usize) -> L {
         let ParamTable::Uff(tab) = &*self.params else { unreachable!() };
-        let pj = unsafe { self.ldj::<L>(pos, t) };
+        let xi = unsafe { Self::ldp::<L>(pos, &self.i, t) };
+        let pj = unsafe { Self::ldp::<L>(pos, &self.j, t) };
         let g = |f: usize| unsafe { self.par::<L, 4>(tab, t, f) };
         let (x, d_, th) = (g(0), g(1), g(2));
         let d = sub3(xi, pj);
@@ -307,16 +314,17 @@ impl ExactNonbonded {
                 L::select(in_r, L::select(posd, pre * d[1] / dist, h), z),
                 L::select(in_r, L::select(posd, pre * d[2] / dist, h), z),
             ];
-            unsafe { self.scatter_pairs(grad, i, t, dg) };
+            unsafe { self.scatter_pairs(grad, t, dg) };
         }
         e
     }
 
     /// Safety: see [`Self::eval_rows`].
     #[inline(always)]
-    unsafe fn mmff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> (L, L) {
+    unsafe fn mmff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], t: usize) -> (L, L) {
         let ParamTable::Mmff(tab) = &*self.params else { unreachable!() };
-        let pj = unsafe { self.ldj::<L>(pos, t) };
+        let xi = unsafe { Self::ldp::<L>(pos, &self.i, t) };
+        let pj = unsafe { Self::ldp::<L>(pos, &self.j, t) };
         let g = |f: usize| unsafe { self.par::<L, 8>(tab, t, f) };
         let fl = |k: usize| unsafe { *self.flags.get_unchecked(t + k) };
         let bit = |b: u8| L::from_fn(|k| if fl(k) & b != 0 { 1.0 } else { 0.0 }).gt(0.5);
@@ -362,74 +370,80 @@ impl ExactNonbonded {
                 L::select(posd, de * d[1], special),
                 L::select(posd, de * d[2], special),
             ];
-            unsafe { self.scatter_pairs(grad, i, t, dg) };
+            unsafe { self.scatter_pairs(grad, t, dg) };
         }
         (ev, ee)
     }
 
-    /// Evaluates rows `rows` (SIMD blocks, scalar tails). Pair energies are
-    /// added to `acc` pair by pair (vdW then electrostatics, as the
-    /// reference contribs do); returns the separate (vdW, electrostatic)
-    /// sums.
+    /// Evaluates the pairs of rows `rows` as one flat list (SIMD blocks,
+    /// one scalar tail). Pair energies are added to `acc` pair by pair (vdW
+    /// then electrostatics, as the reference contribs do); returns the
+    /// separate (vdW, electrostatic) sums.
+    #[inline(always)]
     fn eval_rows<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
         // bounds for the unchecked kernels (indices validated at construction)
         assert!(pos.len() >= 3 * self.n_atoms && (!G || grad.len() >= 3 * self.n_atoms) && rows.end <= self.n_atoms);
         let (mut ev, mut ee) = (0.0, 0.0);
         let mut lv = [0.0f64; 4];
         let mut le = [0.0f64; 4];
-        for i in rows {
-            let (s, e) = (self.row_start[i] as usize, self.row_start[i + 1] as usize);
-            if s == e {
-                continue;
+        let (s, e) = if rows.is_empty() { (0, 0) } else { (self.row_start[rows.start] as usize, self.row_start[rows.end] as usize) };
+        let mut t = s;
+        if self.mmff {
+            // Absent parts are 0.0; a running sum that starts at +0.0 can
+            // never be -0.0, so adding them is bitwise neutral.
+            while t + L::N <= e {
+                let (v, el) = unsafe { self.mmff_block::<L, G>(pos, grad, t) };
+                v.write(&mut lv);
+                el.write(&mut le);
+                for k in 0..L::N {
+                    *acc += lv[k];
+                    *acc += le[k];
+                    ev += lv[k];
+                    ee += le[k];
+                }
+                t += L::N;
             }
-            let xs = [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
-            let xi = [L::splat(xs[0]), L::splat(xs[1]), L::splat(xs[2])];
-            let mut t = s;
-            if self.mmff {
-                // Absent parts are 0.0; a running sum that starts at +0.0 can
-                // never be -0.0, so adding them is bitwise neutral.
-                while t + L::N <= e {
-                    let (v, el) = unsafe { self.mmff_block::<L, G>(pos, grad, i, t, xi) };
-                    v.write(&mut lv);
-                    el.write(&mut le);
-                    for k in 0..L::N {
-                        *acc += lv[k];
-                        *acc += le[k];
-                        ev += lv[k];
-                        ee += le[k];
-                    }
-                    t += L::N;
+            while t < e {
+                let (v, el) = unsafe { self.mmff_block::<f64, G>(pos, grad, t) };
+                *acc += v;
+                *acc += el;
+                ev += v;
+                ee += el;
+                t += 1;
+            }
+        } else {
+            while t + L::N <= e {
+                unsafe { self.uff_block::<L, G>(pos, grad, t) }.write(&mut lv);
+                for x in &lv[..L::N] {
+                    *acc += *x;
+                    ev += *x;
                 }
-                while t < e {
-                    let (v, el) = unsafe { self.mmff_block::<f64, G>(pos, grad, i, t, xs) };
-                    *acc += v;
-                    *acc += el;
-                    ev += v;
-                    ee += el;
-                    t += 1;
-                }
-            } else {
-                while t + L::N <= e {
-                    unsafe { self.uff_block::<L, G>(pos, grad, i, t, xi) }.write(&mut lv);
-                    for x in &lv[..L::N] {
-                        *acc += *x;
-                        ev += *x;
-                    }
-                    t += L::N;
-                }
-                while t < e {
-                    let x = unsafe { self.uff_block::<f64, G>(pos, grad, i, t, xs) };
-                    *acc += x;
-                    ev += x;
-                    t += 1;
-                }
+                t += L::N;
+            }
+            while t < e {
+                let x = unsafe { self.uff_block::<f64, G>(pos, grad, t) };
+                *acc += x;
+                ev += x;
+                t += 1;
             }
         }
         (ev, ee)
     }
 
     fn eval_rows_dispatch<const G: bool>(&self, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
-        if self.simd { self.eval_rows::<V4, G>(pos, grad, rows, acc) } else { self.eval_rows::<f64, G>(pos, grad, rows, acc) }
+        if !self.simd {
+            return self.eval_rows::<f64, G>(pos, grad, rows, acc);
+        }
+        #[cfg(target_arch = "x86_64")]
+        if super::avx::available() {
+            #[target_feature(enable = "avx")]
+            unsafe fn avx<const G: bool>(nb: &ExactNonbonded, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
+                nb.eval_rows::<super::avx::A4, G>(pos, grad, rows, acc)
+            }
+            // SAFETY: the CPU supports AVX (checked above).
+            return unsafe { avx::<G>(self, pos, grad, rows, acc) };
+        }
+        self.eval_rows::<V4, G>(pos, grad, rows, acc)
     }
 
     /// Evaluates all pairs, adds the energy to the running total `acc` in

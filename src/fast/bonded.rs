@@ -19,9 +19,10 @@
 //! any thread count, but a different summation order than the serial path).
 //!
 //! `wide` chooses its instruction set at compile time: on the default
-//! x86-64 target `f64x4` runs as two 128-bit halves; building with
-//! `RUSTFLAGS="-C target-feature=+avx2"` (or `-C target-cpu=native`) gives
-//! 256-bit vectors (about 30 % faster here) with identical results.
+//! x86-64 target [`V4`] runs as two 128-bit halves. [`run_simd`] therefore
+//! instantiates the kernels with the 256-bit AVX lanes of
+//! [`super::avx::A4`] when the CPU supports AVX (checked at run time),
+//! with identical results.
 
 use std::ops::{Add, BitAnd, BitOr, Div, Mul, Neg, Not, Range, Sub};
 use wide::{CmpEq, CmpGt, CmpLt, f64x4};
@@ -364,7 +365,7 @@ pub trait Table: Send + Sync {
 /// Evaluates the terms in `r` (SIMD blocks of `L::N`, scalar tail) and adds
 /// their energies to `acc` one term after the other (the same summation
 /// order as evaluating the terms one by one).
-#[inline]
+#[inline(always)]
 pub fn run<T: Table, L: Lane, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
     let mut t = r.start;
     let mut lanes = [0.0f64; 4];
@@ -379,6 +380,22 @@ pub fn run<T: Table, L: Lane, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f
         *acc += tab.block::<f64, G>(pos, grad, t);
         t += 1;
     }
+}
+
+/// [`run`] with the widest SIMD lanes available: 256-bit AVX ([`super::avx::A4`])
+/// when the CPU has it, [`V4`] otherwise (same results either way).
+#[inline]
+pub fn run_simd<T: Table, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
+    #[cfg(target_arch = "x86_64")]
+    if super::avx::available() {
+        #[target_feature(enable = "avx")]
+        unsafe fn avx<T: Table, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
+            run::<T, super::avx::A4, G>(tab, pos, grad, r, acc)
+        }
+        // SAFETY: the CPU supports AVX (checked above).
+        return unsafe { avx::<T, G>(tab, pos, grad, r, acc) };
+    }
+    run::<T, V4, G>(tab, pos, grad, r, acc)
 }
 
 /// UFF harmonic bond stretch.
@@ -1106,7 +1123,7 @@ impl Bonded {
     pub fn eval<const G: bool>(&self, k: TableKind, pos: &[f64], grad: &mut [f64], r: Range<usize>, simd: bool, acc: &mut f64) {
         macro_rules! go {
             ($t:expr) => {
-                if simd { run::<_, V4, G>($t, pos, grad, r, acc) } else { run::<_, f64, G>($t, pos, grad, r, acc) }
+                if simd { run_simd::<_, G>($t, pos, grad, r, acc) } else { run::<_, f64, G>($t, pos, grad, r, acc) }
             };
         }
         match k {

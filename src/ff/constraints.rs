@@ -3,9 +3,9 @@
 //! Port of RDKit `Code/ForceField/{Distance,Angle,Torsion,Position}Constraint.cpp`
 //! (BSD-3-Clause, Copyright (C) 2013-2020 Paolo Tosco and other RDKit contributors).
 
-use super::utils::{RAD2DEG, add_grad, compute_dihedral, distance, normalize_angle_deg, p3};
+use super::utils::{RAD2DEG, Torsion, add_grad, distance, normalize_angle_deg, p3};
 use super::{Contrib, ContribForceField};
-use crate::core::geometry::{cross, dot, norm, scale, sub};
+use crate::core::geometry::{V3, cross, dot, norm, scale, sub};
 
 /// A geometric constraint applied on top of a force field.
 ///
@@ -85,12 +85,9 @@ pub struct DistanceConstraintContrib {
     pub k: f64,
 }
 
-impl Contrib for DistanceConstraintContrib {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
-    fn energy(&self, pos: &[f64]) -> f64 {
-        let d = distance(pos, self.i, self.j);
+impl DistanceConstraintContrib {
+    #[inline]
+    fn energy_of(&self, d: f64) -> f64 {
         let t = if d < self.min {
             self.min - d
         } else if d > self.max {
@@ -100,8 +97,8 @@ impl Contrib for DistanceConstraintContrib {
         };
         0.5 * self.k * t * t
     }
-    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        let d = distance(pos, self.i, self.j);
+    #[inline]
+    fn grad_of(&self, pos: &[f64], d: f64, grad: &mut [f64]) {
         let pre = if d < self.min {
             d - self.min
         } else if d > self.max {
@@ -114,6 +111,23 @@ impl Contrib for DistanceConstraintContrib {
         let g = scale(sub(a, b), pre / d.max(1e-8));
         add_grad(grad, self.i, g);
         add_grad(grad, self.j, scale(g, -1.0));
+    }
+}
+
+impl Contrib for DistanceConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_of(distance(pos, self.i, self.j))
+    }
+    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        self.grad_of(pos, distance(pos, self.i, self.j), grad);
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let d = distance(pos, self.i, self.j);
+        self.grad_of(pos, d, grad);
+        self.energy_of(d)
     }
     fn label(&self) -> &'static str {
         "Constraint"
@@ -147,21 +161,37 @@ impl Contrib for AngleConstraintContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
-        let r0 = sub(p3(pos, self.i), p3(pos, self.j));
-        let r1 = sub(p3(pos, self.k), p3(pos, self.j));
-        let l0 = dot(r0, r0).max(1e-5);
-        let l1 = dot(r1, r1).max(1e-5);
-        let c = (dot(r0, r1) / (l0 * l1).sqrt()).clamp(-1.0, 1.0);
-        let t = self.term(RAD2DEG * c.acos());
+        let (_, t) = self.geom(pos);
         self.force * t * t
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        let (g, t) = self.geom(pos);
+        self.grad_of(g, t, grad);
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let (g, t) = self.geom(pos);
+        self.grad_of(g, t, grad);
+        self.force * t * t
+    }
+    fn label(&self) -> &'static str {
+        "Constraint"
+    }
+}
+
+impl AngleConstraintContrib {
+    /// Bond vectors `i - j`, `k - j`, their clamped squared lengths, and the
+    /// flat-bottom deviation (degrees).
+    #[inline]
+    fn geom(&self, pos: &[f64]) -> ((V3, V3, f64, f64), f64) {
         let r0 = sub(p3(pos, self.i), p3(pos, self.j));
         let r1 = sub(p3(pos, self.k), p3(pos, self.j));
         let l0 = dot(r0, r0).max(1e-5);
         let l1 = dot(r1, r1).max(1e-5);
         let c = (dot(r0, r1) / (l0 * l1).sqrt()).clamp(-1.0, 1.0);
-        let t = self.term(RAD2DEG * c.acos());
+        ((r0, r1, l0, l1), self.term(RAD2DEG * c.acos()))
+    }
+    #[inline]
+    fn grad_of(&self, (r0, r1, l0, l1): (V3, V3, f64, f64), t: f64, grad: &mut [f64]) {
         let de = 2.0 * RAD2DEG * self.force * t;
         let rp = cross(r1, r0);
         let pre = de / norm(rp).max(1e-5);
@@ -173,9 +203,6 @@ impl Contrib for AngleConstraintContrib {
         add_grad(grad, self.i, d0);
         add_grad(grad, self.j, d1);
         add_grad(grad, self.k, d2);
-    }
-    fn label(&self) -> &'static str {
-        "Constraint"
     }
 }
 
@@ -205,17 +232,19 @@ impl Contrib for TorsionConstraintContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
-        let [a, b, c, d] = self.idx;
-        let dd = compute_dihedral(pos, a, b, c, d);
-        let t = self.term(dd.dihedral * RAD2DEG);
+        let t = self.term(Torsion::at(pos, self.idx).angle() * RAD2DEG);
         self.force * t * t
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        let [a, b, c, d] = self.idx;
-        let dd = compute_dihedral(pos, a, b, c, d);
-        let t = self.term(dd.dihedral * RAD2DEG);
-        let de = 2.0 * RAD2DEG * self.force * t;
-        torsion_grad(pos, self.idx, &dd, de, grad);
+        let g = Torsion::at(pos, self.idx);
+        let t = self.term(g.angle() * RAD2DEG);
+        torsion_angle_grad(pos, self.idx, &g.r, &g.n, 2.0 * RAD2DEG * self.force * t, grad);
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let g = Torsion::at(pos, self.idx);
+        let t = self.term(g.angle() * RAD2DEG);
+        torsion_angle_grad(pos, self.idx, &g.r, &g.n, 2.0 * RAD2DEG * self.force * t, grad);
+        self.force * t * t
     }
     fn label(&self) -> &'static str {
         "Constraint"
@@ -224,14 +253,20 @@ impl Contrib for TorsionConstraintContrib {
 
 /// Distributes `dE/dφ` onto the four atoms (RDKit torsion gradient code).
 pub fn torsion_grad(pos: &[f64], idx: [usize; 4], dd: &super::utils::DihedralData, de_dphi: f64, grad: &mut [f64]) {
+    let r = &dd.r;
+    torsion_angle_grad(pos, idx, r, &[cross(r[0], r[1]), cross(r[2], r[3])], de_dphi, grad);
+}
+
+/// [`torsion_grad`] from the bond vectors `r` and plane normals `n` of a
+/// [`Torsion`].
+#[inline]
+fn torsion_angle_grad(pos: &[f64], idx: [usize; 4], r: &[V3; 4], n: &[V3; 2], de_dphi: f64, grad: &mut [f64]) {
     let [a, b, c, d] = idx;
-    let r = dd.r;
     let d23 = distance(pos, b, c);
     let r31 = sub(p3(pos, c), p3(pos, a));
     let r42 = sub(p3(pos, d), p3(pos, b));
     let pre = de_dphi / d23;
-    let tt0 = cross(r[0], r[1]);
-    let tt1 = cross(r[2], r[3]);
+    let [tt0, tt1] = *n;
     let l0 = dot(tt0, tt0).max(1e-12);
     let l1 = dot(tt1, tt1).max(1e-12);
     let dedt0 = scale(cross(tt0, r[2]), pre / l0);
@@ -254,23 +289,38 @@ pub struct PositionConstraintContrib {
     pub k: f64,
 }
 
-impl Contrib for PositionConstraintContrib {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
-    fn energy(&self, pos: &[f64]) -> f64 {
-        let d = norm(sub(p3(pos, self.i), self.pos0));
+impl PositionConstraintContrib {
+    #[inline]
+    fn energy_of(&self, d: f64) -> f64 {
         let t = (d - self.max_displ).max(0.0);
         0.5 * self.k * t * t
     }
-    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        let p = p3(pos, self.i);
-        let d = norm(sub(p, self.pos0));
+    #[inline]
+    fn grad_of(&self, p: V3, d: f64, grad: &mut [f64]) {
         if d <= self.max_displ {
             return;
         }
         let pre = (d - self.max_displ) * self.k / d.max(1e-8);
         add_grad(grad, self.i, scale(sub(p, self.pos0), pre));
+    }
+}
+
+impl Contrib for PositionConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_of(norm(sub(p3(pos, self.i), self.pos0)))
+    }
+    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        let p = p3(pos, self.i);
+        self.grad_of(p, norm(sub(p, self.pos0)), grad);
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let p = p3(pos, self.i);
+        let d = norm(sub(p, self.pos0));
+        self.grad_of(p, d, grad);
+        self.energy_of(d)
     }
     fn label(&self) -> &'static str {
         "Constraint"

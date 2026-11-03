@@ -43,11 +43,7 @@ pub use nonbonded::VdwContrib;
 pub use params::AtomicParams;
 pub use torsion_angle::TorsionAngleContrib;
 
-/// RDKit `isDoubleZero`.
-#[inline]
-pub(crate) fn is_double_zero(x: f64) -> bool {
-    x < 1.0e-10 && x > -1.0e-10
-}
+pub(crate) use crate::ff::utils::is_double_zero;
 
 /// RDKit `int_pow<N>` (same multiplication sequence).
 #[inline]

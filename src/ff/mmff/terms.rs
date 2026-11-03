@@ -16,6 +16,7 @@ use super::{DEG2RAD, DielectricModel, MDYNE_A_TO_KCAL_MOL, RAD2DEG};
 use crate::ff::Contrib;
 use crate::ff::mmff::typer::is_double_zero;
 use crate::ff::utils::rd_distance as distance;
+use crate::ff::utils::{OutOfPlane, Torsion};
 
 // ---------------------------------------------------------------------------
 // RDKit Point3D arithmetic (component-wise, same operation order)
@@ -30,10 +31,6 @@ fn pt(pos: &[f64], i: usize) -> P3 {
 #[inline]
 fn sub(a: P3, b: P3) -> P3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-#[inline]
-fn neg(a: P3) -> P3 {
-    [-a[0], -a[1], -a[2]]
 }
 #[inline]
 fn div(a: P3, s: f64) -> P3 {
@@ -404,12 +401,13 @@ impl Contrib for StretchBendContrib {
 
 /// RDKit `MMFF::Utils::calcOopChi` (degrees).
 pub fn calc_oop_chi(i: P3, j: P3, k: P3, l: P3) -> f64 {
-    let mut rji = sub(i, j);
-    let mut rjk = sub(k, j);
-    let mut rjl = sub(l, j);
-    rji = div(rji, length(rji));
-    rjk = div(rjk, length(rjk));
-    rjl = div(rjl, length(rjl));
+    oop_chi(&OutOfPlane::new(i, j, k, l).unit())
+}
+
+/// `calcOopChi` from the unit bond vectors `j->i`, `j->k`, `j->l`.
+#[inline(always)]
+fn oop_chi(u: &[P3; 3]) -> f64 {
+    let [rji, rjk, rjl] = *u;
     let mut n = cross(rji, rjk);
     n = div(n, length(n));
     let sin_chi = clip_to_one(dot(n, rjl));
@@ -442,6 +440,25 @@ impl OopBendContrib {
     }
 }
 
+impl OopBendContrib {
+    /// Gradient of term `t` (RDKit `OopBendContrib::getGrad`).
+    #[inline(always)]
+    fn grad_term(&self, t: usize, g: &OutOfPlane, u: &[P3; 3], grad: &mut [f64]) {
+        const C2: f64 = MDYNE_A_TO_KCAL_MOL * DEG2RAD * DEG2RAD;
+        if g.is_degenerate() {
+            return;
+        }
+        let (sin_chi, cos_theta) = OutOfPlane::wilson(u);
+        let cos_chi_sq = 1.0 - sin_chi * sin_chi;
+        let cos_chi = (if cos_chi_sq > 0.0 { cos_chi_sq.sqrt() } else { 0.0 }).max(1.0e-8);
+        let chi = RAD2DEG * sin_chi.asin();
+        let sin_theta_sq = (1.0 - cos_theta * cos_theta).max(1.0e-8);
+        let sin_theta = (if sin_theta_sq > 0.0 { sin_theta_sq.sqrt() } else { 0.0 }).max(1.0e-8);
+        let de_dchi = RAD2DEG * C2 * self.koop[t] * chi;
+        g.add_grad(grad, self.at[t], u, de_dchi, sin_chi, cos_chi, cos_theta, sin_theta, sin_theta_sq);
+    }
+}
+
 impl Contrib for OopBendContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -449,58 +466,26 @@ impl Contrib for OopBendContrib {
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut total = 0.0;
         for t in 0..self.at.len() {
-            let [i, j, k, l] = self.at[t];
-            total += calc_oop_bend_energy(calc_oop_chi(pt(pos, i), pt(pos, j), pt(pos, k), pt(pos, l)), self.koop[t]);
+            let u = OutOfPlane::at(pos, self.at[t]).unit();
+            total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        const C2: f64 = MDYNE_A_TO_KCAL_MOL * DEG2RAD * DEG2RAD;
         for t in 0..self.at.len() {
-            let [i1, i2, i3, i4] = self.at[t];
-            let (ip, jp, kp, lp) = (pt(pos, i1), pt(pos, i2), pt(pos, i3), pt(pos, i4));
-            let mut rji = sub(ip, jp);
-            let mut rjk = sub(kp, jp);
-            let mut rjl = sub(lp, jp);
-            let dji = length(rji);
-            let djk = length(rjk);
-            let djl = length(rjl);
-            if is_double_zero(dji) || is_double_zero(djk) || is_double_zero(djl) {
-                continue;
-            }
-            rji = div(rji, dji);
-            rjk = div(rjk, djk);
-            rjl = div(rjl, djl);
-            let mut n = cross(neg(rji), rjk);
-            n = div(n, length(n));
-            let sin_chi = clip_to_one(dot(rjl, n));
-            let cos_chi_sq = 1.0 - sin_chi * sin_chi;
-            let cos_chi = (if cos_chi_sq > 0.0 { cos_chi_sq.sqrt() } else { 0.0 }).max(1.0e-8);
-            let chi = RAD2DEG * sin_chi.asin();
-            let cos_theta = clip_to_one(dot(rji, rjk));
-            let sin_theta_sq = (1.0 - cos_theta * cos_theta).max(1.0e-8);
-            let sin_theta = (if sin_theta_sq > 0.0 { sin_theta_sq.sqrt() } else { 0.0 }).max(1.0e-8);
-            let de_dchi = RAD2DEG * C2 * self.koop[t] * chi;
-            let t1 = cross(rjl, rjk);
-            let t2 = cross(rji, rjl);
-            let t3 = cross(rjk, rji);
-            let term1 = cos_chi * sin_theta;
-            let term2 = sin_chi / (cos_chi * sin_theta_sq);
-            let mut tg1 = [0.0; 3];
-            let mut tg3 = [0.0; 3];
-            let mut tg4 = [0.0; 3];
-            for d in 0..3 {
-                tg1[d] = (t1[d] / term1 - (rji[d] - rjk[d] * cos_theta) * term2) / dji;
-                tg3[d] = (t2[d] / term1 - (rjk[d] - rji[d] * cos_theta) * term2) / djk;
-                tg4[d] = (t3[d] / term1 - rjl[d] * sin_chi / cos_chi) / djl;
-            }
-            for d in 0..3 {
-                add_to(grad, i1, d, de_dchi * tg1[d]);
-                add_to(grad, i2, d, -de_dchi * (tg1[d] + tg3[d] + tg4[d]));
-                add_to(grad, i3, d, de_dchi * tg3[d]);
-                add_to(grad, i4, d, de_dchi * tg4[d]);
-            }
+            let g = OutOfPlane::at(pos, self.at[t]);
+            self.grad_term(t, &g, &g.unit(), grad);
         }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut total = 0.0;
+        for t in 0..self.at.len() {
+            let g = OutOfPlane::at(pos, self.at[t]);
+            let u = g.unit();
+            total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
+            self.grad_term(t, &g, &u, grad);
+        }
+        total
     }
     fn label(&self) -> &'static str {
         "OopBend"
@@ -513,18 +498,7 @@ impl Contrib for OopBendContrib {
 
 /// RDKit `MMFF::Utils::calcTorsionCosPhi`.
 pub fn calc_torsion_cos_phi(i: P3, j: P3, k: P3, l: P3) -> f64 {
-    let r1 = sub(i, j);
-    let r2 = sub(k, j);
-    let r3 = sub(j, k);
-    let r4 = sub(l, k);
-    let t1 = cross(r1, r2);
-    let t2 = cross(r3, r4);
-    let t1_len = length(t1);
-    let t2_len = length(t2);
-    if is_double_zero(t1_len) || is_double_zero(t2_len) {
-        return 0.0;
-    }
-    clip_to_one(dot(t1, t2) / (t1_len * t2_len))
+    Torsion::new(i, j, k, l).cos_torsion()
 }
 
 /// RDKit `MMFF::Utils::calcTorsionEnergy`.
@@ -532,82 +506,6 @@ pub fn calc_torsion_energy(v1: f64, v2: f64, v3: f64, cos_phi: f64) -> f64 {
     let cos2phi = 2.0 * cos_phi * cos_phi - 1.0;
     let cos3phi = cos_phi * (2.0 * cos2phi - 1.0);
     0.5 * (v1 * (1.0 + cos_phi) + v2 * (1.0 - cos2phi) + v3 * (1.0 + cos3phi))
-}
-
-/// RDKit `ForceFieldsHelper::computeDihedral` (vectors `r`, `t`, lengths
-/// `d` and `cosPhi`).
-fn compute_dihedral(pos: &[f64], i1: usize, i2: usize, i3: usize, i4: usize) -> ([P3; 4], [P3; 2], [f64; 2], f64) {
-    let (p1, p2, p3, p4) = (pt(pos, i1), pt(pos, i2), pt(pos, i3), pt(pos, i4));
-    let r0 = sub(p1, p2);
-    let r1 = sub(p3, p2);
-    let r2 = neg(r1);
-    let r3 = sub(p4, p3);
-    let mut t0 = cross(r0, r1);
-    let d0 = length(t0).max(1.0e-5);
-    t0 = div(t0, d0);
-    let mut t1 = cross(r2, r3);
-    let d1 = length(t1).max(1.0e-5);
-    t1 = div(t1, d1);
-    let cos_phi = dot(t0, t1).clamp(-1.0, 1.0);
-    ([r0, r1, r2, r3], [t0, t1], [d0, d1], cos_phi)
-}
-
-/// RDKit `MMFF::Utils::calcTorsionGrad`.
-fn calc_torsion_grad(r: &[P3; 4], t: &[P3; 2], d: &[f64; 2], g: &mut [f64], idx: [usize; 4], sin_term: f64, cos_phi: f64) {
-    let dc = [
-        1.0 / d[0] * (t[1][0] - cos_phi * t[0][0]),
-        1.0 / d[0] * (t[1][1] - cos_phi * t[0][1]),
-        1.0 / d[0] * (t[1][2] - cos_phi * t[0][2]),
-        1.0 / d[1] * (t[0][0] - cos_phi * t[1][0]),
-        1.0 / d[1] * (t[0][1] - cos_phi * t[1][1]),
-        1.0 / d[1] * (t[0][2] - cos_phi * t[1][2]),
-    ];
-    let (x, y, z) = (0, 1, 2);
-    add_to(g, idx[0], 0, sin_term * (dc[2] * r[1][y] - dc[1] * r[1][z]));
-    add_to(g, idx[0], 1, sin_term * (dc[0] * r[1][z] - dc[2] * r[1][x]));
-    add_to(g, idx[0], 2, sin_term * (dc[1] * r[1][x] - dc[0] * r[1][y]));
-
-    add_to(
-        g,
-        idx[1],
-        0,
-        sin_term * (dc[1] * (r[1][z] - r[0][z]) + dc[2] * (r[0][y] - r[1][y]) + dc[4] * (-r[3][z]) + dc[5] * (r[3][y])),
-    );
-    add_to(
-        g,
-        idx[1],
-        1,
-        sin_term * (dc[0] * (r[0][z] - r[1][z]) + dc[2] * (r[1][x] - r[0][x]) + dc[3] * (r[3][z]) + dc[5] * (-r[3][x])),
-    );
-    add_to(
-        g,
-        idx[1],
-        2,
-        sin_term * (dc[0] * (r[1][y] - r[0][y]) + dc[1] * (r[0][x] - r[1][x]) + dc[3] * (-r[3][y]) + dc[4] * (r[3][x])),
-    );
-
-    add_to(
-        g,
-        idx[2],
-        0,
-        sin_term * (dc[1] * (r[0][z]) + dc[2] * (-r[0][y]) + dc[4] * (r[3][z] - r[2][z]) + dc[5] * (r[2][y] - r[3][y])),
-    );
-    add_to(
-        g,
-        idx[2],
-        1,
-        sin_term * (dc[0] * (-r[0][z]) + dc[2] * (r[0][x]) + dc[3] * (r[2][z] - r[3][z]) + dc[5] * (r[3][x] - r[2][x])),
-    );
-    add_to(
-        g,
-        idx[2],
-        2,
-        sin_term * (dc[0] * (r[0][y]) + dc[1] * (-r[0][x]) + dc[3] * (r[3][y] - r[2][y]) + dc[4] * (r[2][x] - r[3][x])),
-    );
-
-    add_to(g, idx[3], 0, sin_term * (dc[4] * r[2][z] - dc[5] * r[2][y]));
-    add_to(g, idx[3], 1, sin_term * (dc[5] * r[2][x] - dc[3] * r[2][z]));
-    add_to(g, idx[3], 2, sin_term * (dc[3] * r[2][y] - dc[4] * r[2][x]));
 }
 
 /// All MMFF torsion terms (RDKit `TorsionAngleContrib`).
@@ -635,6 +533,21 @@ impl TorsionAngleContrib {
     }
 }
 
+impl TorsionAngleContrib {
+    /// Gradient of term `t` (RDKit `TorsionAngleContrib::getGrad`).
+    #[inline(always)]
+    fn grad_term(&self, t: usize, g: &Torsion, grad: &mut [f64]) {
+        let cos_phi = g.cos_phi;
+        let sin_phi_sq = 1.0 - cos_phi * cos_phi;
+        let sin_phi = if sin_phi_sq > 0.0 { sin_phi_sq.sqrt() } else { 0.0 };
+        let sin2phi = 2.0 * sin_phi * cos_phi;
+        let sin3phi = 3.0 * sin_phi - 4.0 * sin_phi * sin_phi_sq;
+        let de_dphi = 0.5 * (-(self.v1[t]) * sin_phi + 2.0 * self.v2[t] * sin2phi - 3.0 * self.v3[t] * sin3phi);
+        let sin_term = -de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
+        g.add_grad(grad, self.at[t], sin_term);
+    }
+}
+
 impl Contrib for TorsionAngleContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -642,24 +555,23 @@ impl Contrib for TorsionAngleContrib {
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut total = 0.0;
         for t in 0..self.at.len() {
-            let [i, j, k, l] = self.at[t];
-            total +=
-                calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], calc_torsion_cos_phi(pt(pos, i), pt(pos, j), pt(pos, k), pt(pos, l)));
+            total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], Torsion::at(pos, self.at[t]).cos_torsion());
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
-            let [i1, i2, i3, i4] = self.at[t];
-            let (r, tt, d, cos_phi) = compute_dihedral(pos, i1, i2, i3, i4);
-            let sin_phi_sq = 1.0 - cos_phi * cos_phi;
-            let sin_phi = if sin_phi_sq > 0.0 { sin_phi_sq.sqrt() } else { 0.0 };
-            let sin2phi = 2.0 * sin_phi * cos_phi;
-            let sin3phi = 3.0 * sin_phi - 4.0 * sin_phi * sin_phi_sq;
-            let de_dphi = 0.5 * (-(self.v1[t]) * sin_phi + 2.0 * self.v2[t] * sin2phi - 3.0 * self.v3[t] * sin3phi);
-            let sin_term = -de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
-            calc_torsion_grad(&r, &tt, &d, grad, [i1, i2, i3, i4], sin_term, cos_phi);
+            self.grad_term(t, &Torsion::at(pos, self.at[t]), grad);
         }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut total = 0.0;
+        for t in 0..self.at.len() {
+            let g = Torsion::at(pos, self.at[t]);
+            total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], g.cos_torsion());
+            self.grad_term(t, &g, grad);
+        }
+        total
     }
     fn label(&self) -> &'static str {
         "Torsion"

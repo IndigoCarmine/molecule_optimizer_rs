@@ -17,11 +17,7 @@ use crate::perception;
 use crate::perception::rings::RingInfo;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// RDKit `ForceFields::MMFF::isDoubleZero`.
-#[inline]
-pub(crate) fn is_double_zero(x: f64) -> bool {
-    x < 1.0e-10 && x > -1.0e-10
-}
+pub(crate) use crate::ff::utils::is_double_zero;
 
 /// Periodic table row starting from 0 for hydrogen (RDKit
 /// `getPeriodicTableRow`).

@@ -8,24 +8,13 @@
 use super::is_double_zero;
 use super::params::AtomicParams;
 use crate::core::Hybridization;
-use crate::core::geometry::{V3, cross, dot, norm, sub};
+use crate::core::geometry::V3;
 use crate::ff::Contrib;
-use crate::ff::utils::{compute_dihedral, p3};
+use crate::ff::utils::Torsion;
 
 /// RDKit `Utils::calculateCosTorsion`.
 pub fn calculate_cos_torsion(p1: V3, p2: V3, p3_: V3, p4: V3) -> f64 {
-    let r1 = sub(p1, p2);
-    let r2 = sub(p3_, p2);
-    let r3 = sub(p2, p3_);
-    let r4 = sub(p4, p3_);
-    let t1 = cross(r1, r2);
-    let t2 = cross(r3, r4);
-    let d1 = norm(t1);
-    let d2 = norm(t2);
-    if is_double_zero(d1) || is_double_zero(d2) {
-        return 0.0;
-    }
-    (dot(t1, t2) / (d1 * d2)).clamp(-1.0, 1.0)
+    Torsion::new(p1, p2, p3_, p4).cos_torsion()
 }
 
 /// RDKit `Utils::isInGroup6`.
@@ -36,70 +25,6 @@ pub fn is_in_group6(num: u8) -> bool {
 /// RDKit `Utils::equation17` (sp2-sp2 barrier).
 pub fn equation17(bond_order23: f64, at2: &AtomicParams, at3: &AtomicParams) -> f64 {
     5. * (at2.u1 * at3.u1).sqrt() * (1. + 4.18 * bond_order23.ln())
-}
-
-/// RDKit `Utils::calcTorsionGrad`.
-pub(crate) fn calc_torsion_grad(
-    r: &[V3; 4],
-    t: &[V3; 2],
-    d: &[f64; 2],
-    g: [usize; 4],
-    grad: &mut [f64],
-    sin_term: f64,
-    cos_phi: f64,
-) {
-    let dcos_dt = [
-        1.0 / d[0] * (t[1][0] - cos_phi * t[0][0]),
-        1.0 / d[0] * (t[1][1] - cos_phi * t[0][1]),
-        1.0 / d[0] * (t[1][2] - cos_phi * t[0][2]),
-        1.0 / d[1] * (t[0][0] - cos_phi * t[1][0]),
-        1.0 / d[1] * (t[0][1] - cos_phi * t[1][1]),
-        1.0 / d[1] * (t[0][2] - cos_phi * t[1][2]),
-    ];
-    let (x, y, z) = (0, 1, 2);
-    let a = 3 * g[0];
-    grad[a] += sin_term * (dcos_dt[2] * r[1][y] - dcos_dt[1] * r[1][z]);
-    grad[a + 1] += sin_term * (dcos_dt[0] * r[1][z] - dcos_dt[2] * r[1][x]);
-    grad[a + 2] += sin_term * (dcos_dt[1] * r[1][x] - dcos_dt[0] * r[1][y]);
-
-    let b = 3 * g[1];
-    grad[b] += sin_term
-        * (dcos_dt[1] * (r[1][z] - r[0][z])
-            + dcos_dt[2] * (r[0][y] - r[1][y])
-            + dcos_dt[4] * (-r[3][z])
-            + dcos_dt[5] * (r[3][y]));
-    grad[b + 1] += sin_term
-        * (dcos_dt[0] * (r[0][z] - r[1][z])
-            + dcos_dt[2] * (r[1][x] - r[0][x])
-            + dcos_dt[3] * (r[3][z])
-            + dcos_dt[5] * (-r[3][x]));
-    grad[b + 2] += sin_term
-        * (dcos_dt[0] * (r[1][y] - r[0][y])
-            + dcos_dt[1] * (r[0][x] - r[1][x])
-            + dcos_dt[3] * (-r[3][y])
-            + dcos_dt[4] * (r[3][x]));
-
-    let c = 3 * g[2];
-    grad[c] += sin_term
-        * (dcos_dt[1] * (r[0][z])
-            + dcos_dt[2] * (-r[0][y])
-            + dcos_dt[4] * (r[3][z] - r[2][z])
-            + dcos_dt[5] * (r[2][y] - r[3][y]));
-    grad[c + 1] += sin_term
-        * (dcos_dt[0] * (-r[0][z])
-            + dcos_dt[2] * (r[0][x])
-            + dcos_dt[3] * (r[2][z] - r[3][z])
-            + dcos_dt[5] * (r[3][x] - r[2][x]));
-    grad[c + 2] += sin_term
-        * (dcos_dt[0] * (r[0][y])
-            + dcos_dt[1] * (-r[0][x])
-            + dcos_dt[3] * (r[3][y] - r[2][y])
-            + dcos_dt[4] * (r[2][x] - r[3][x]));
-
-    let e = 3 * g[3];
-    grad[e] += sin_term * (dcos_dt[4] * r[2][z] - dcos_dt[5] * r[2][y]);
-    grad[e + 1] += sin_term * (dcos_dt[5] * r[2][x] - dcos_dt[3] * r[2][z]);
-    grad[e + 2] += sin_term * (dcos_dt[3] * r[2][y] - dcos_dt[4] * r[2][x]);
 }
 
 /// UFF torsion `V/2·(1 - cos(n·phi0)·cos(n·phi))` (RDKit `TorsionAngleContrib`).
@@ -185,15 +110,10 @@ impl TorsionAngleContrib {
         res *= -(self.force_constant / 2.0 * self.cos_term) * self.order as f64;
         res
     }
-}
 
-impl Contrib for TorsionAngleContrib {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
-    fn energy(&self, pos: &[f64]) -> f64 {
-        let [i1, i2, i3, i4] = self.idx;
-        let cos_phi = calculate_cos_torsion(p3(pos, i1), p3(pos, i2), p3(pos, i3), p3(pos, i4));
+    #[inline(always)]
+    fn energy_of(&self, g: &Torsion) -> f64 {
+        let cos_phi = g.cos_torsion();
         let sin_phi_sq = 1.0 - cos_phi * cos_phi;
         let cos_n_phi = match self.order {
             2 => 1.0 - 2.0 * sin_phi_sq,
@@ -204,15 +124,33 @@ impl Contrib for TorsionAngleContrib {
         self.force_constant / 2.0 * (1. - self.cos_term * cos_n_phi)
     }
 
-    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
-        let [i1, i2, i3, i4] = self.idx;
-        let dd = compute_dihedral(pos, i1, i2, i3, i4);
-        let cos_phi = dd.cos_phi;
+    #[inline(always)]
+    fn grad_of(&self, g: &Torsion, grad: &mut [f64]) {
+        let cos_phi = g.cos_phi;
         let sin_phi_sq = 1.0 - cos_phi * cos_phi;
         let sin_phi = if sin_phi_sq > 0.0 { sin_phi_sq.sqrt() } else { 0.0 };
         let de_dphi = self.theta_deriv(cos_phi, sin_phi);
         let sin_term = de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
-        calc_torsion_grad(&dd.r, &dd.t, &dd.d, self.idx, grad, sin_term, cos_phi);
+        g.add_grad(grad, self.idx, sin_term);
+    }
+}
+
+impl Contrib for TorsionAngleContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_of(&Torsion::at(pos, self.idx))
+    }
+
+    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        self.grad_of(&Torsion::at(pos, self.idx), grad);
+    }
+
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let g = Torsion::at(pos, self.idx);
+        self.grad_of(&g, grad);
+        self.energy_of(&g)
     }
 
     fn label(&self) -> &'static str {

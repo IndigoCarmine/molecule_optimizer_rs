@@ -136,10 +136,43 @@ fn equal_range(keys: &[u8], lo: usize, hi: usize, val: u8) -> (usize, usize) {
     (lo + a, lo + b)
 }
 
+/// Row of the first occurrence of every key value of a sorted single key
+/// column (`u16::MAX` = absent): the same row `nested_lookup` finds, by
+/// direct indexing.
+fn first_row_index(keys: &[u8]) -> Vec<u16> {
+    assert!(keys.len() < u16::MAX as usize);
+    let mut index = vec![u16::MAX; 256];
+    for (row, &k) in keys.iter().enumerate() {
+        if index[k as usize] == u16::MAX {
+            index[k as usize] = row as u16;
+        }
+    }
+    index
+}
+
+/// `equal_range` of every key value of a sorted key column, precomputed
+/// (indexed by the key value).
+fn key_ranges(keys: &[u8]) -> Vec<(u32, u32)> {
+    (0..=255u8)
+        .map(|v| {
+            let (a, b) = equal_range(keys, 0, keys.len(), v);
+            (a as u32, b as u32)
+        })
+        .collect()
+}
+
 /// Nested equal_range over several key columns (in lookup order); returns
 /// the index of the first matching row.
 fn nested_lookup(cols: &[&[u8]], vals: &[u8]) -> Option<usize> {
-    let (mut lo, mut hi) = (0, cols[0].len());
+    nested_lookup_in(0, cols[0].len(), cols, vals)
+}
+
+/// [`nested_lookup`] within rows `lo..hi` (the equal range of the keys
+/// already matched).
+fn nested_lookup_in(mut lo: usize, mut hi: usize, cols: &[&[u8]], vals: &[u8]) -> Option<usize> {
+    if lo == hi {
+        return None;
+    }
     for (c, &v) in cols.iter().zip(vals) {
         let (a, b) = equal_range(c, lo, hi, v);
         if a == b {
@@ -191,6 +224,8 @@ impl DefTable {
 pub struct PropTable {
     types: Vec<u8>,
     params: Vec<MmffProp>,
+    /// row by atom type (see [`first_row_index`])
+    index: Vec<u16>,
 }
 impl PropTable {
     fn parse(text: &str) -> Self {
@@ -208,10 +243,13 @@ impl PropTable {
                 sbmb: pu(t[8]),
             });
         }
+        s.index = first_row_index(&s.types);
         s
     }
+    #[inline]
     pub fn get(&self, atom_type: u8) -> Option<&MmffProp> {
-        nested_lookup(&[&self.types], &[atom_type]).map(|i| &self.params[i])
+        let row = self.index[atom_type as usize];
+        (row != u16::MAX).then(|| &self.params[row as usize])
     }
 }
 
@@ -239,6 +277,8 @@ pub struct ChgTable {
     i: Vec<u8>,
     j: Vec<u8>,
     bci: Vec<f64>,
+    /// equal ranges of `i` (see [`key_ranges`])
+    i_ranges: Vec<(u32, u32)>,
 }
 impl ChgTable {
     fn parse(text: &str) -> Self {
@@ -259,7 +299,8 @@ impl ChgTable {
             cj = i_type;
             sign = 1;
         }
-        let r = nested_lookup(&[&self.i, &self.j, &self.bond_type], &[ci, cj, bond_type]);
+        let (lo, hi) = self.i_ranges[ci as usize];
+        let r = nested_lookup_in(lo as usize, hi as usize, &[&self.j, &self.bond_type], &[cj, bond_type]);
         (sign, r.map(|k| self.bci[k]))
     }
 }
@@ -270,6 +311,8 @@ pub struct BondTable {
     i: Vec<u8>,
     j: Vec<u8>,
     params: Vec<MmffBond>,
+    /// equal ranges of `i` (see [`key_ranges`])
+    i_ranges: Vec<(u32, u32)>,
 }
 impl BondTable {
     fn parse(text: &str) -> Self {
@@ -284,7 +327,8 @@ impl BondTable {
     }
     pub fn get(&self, bond_type: u8, a: u8, b: u8) -> Option<MmffBond> {
         let (ci, cj) = if a > b { (b, a) } else { (a, b) };
-        nested_lookup(&[&self.i, &self.j, &self.bond_type], &[ci, cj, bond_type]).map(|k| self.params[k])
+        let (lo, hi) = self.i_ranges[ci as usize];
+        nested_lookup_in(lo as usize, hi as usize, &[&self.j, &self.bond_type], &[cj, bond_type]).map(|k| self.params[k])
     }
 }
 
@@ -358,6 +402,8 @@ pub struct AngleTable {
     j: Vec<u8>,
     k: Vec<u8>,
     params: Vec<MmffAngle>,
+    /// equal ranges of `j` (see [`key_ranges`])
+    j_ranges: Vec<(u32, u32)>,
 }
 impl AngleTable {
     fn parse(text: &str) -> Self {
@@ -374,7 +420,8 @@ impl AngleTable {
     /// RDKit `MMFFAngleCollection::operator()` (step-down through the
     /// equivalence levels of the outer atoms).
     pub fn get(&self, def: &DefTable, angle_type: u8, it: u8, jt: u8, kt: u8) -> Option<MmffAngle> {
-        let (j_lo, j_hi) = equal_range(&self.j, 0, self.j.len(), jt);
+        let (j_lo, j_hi) = self.j_ranges[jt as usize];
+        let (j_lo, j_hi) = (j_lo as usize, j_hi as usize);
         if j_lo == j_hi {
             return None;
         }
@@ -408,6 +455,8 @@ pub struct StbnTable {
     j: Vec<u8>,
     k: Vec<u8>,
     params: Vec<MmffStbn>,
+    /// equal ranges of `j` (see [`key_ranges`])
+    j_ranges: Vec<(u32, u32)>,
 }
 impl StbnTable {
     fn parse(text: &str) -> Self {
@@ -431,7 +480,8 @@ impl StbnTable {
         } else if it == kt {
             swap = bond_type1 < bond_type2;
         }
-        let r = nested_lookup(&[&self.j, &self.i, &self.k, &self.stbn_type], &[jt, ci, ck, stbn_type]);
+        let (lo, hi) = self.j_ranges[jt as usize];
+        let r = nested_lookup_in(lo as usize, hi as usize, &[&self.i, &self.k, &self.stbn_type], &[ci, ck, stbn_type]);
         (swap, r.map(|x| self.params[x]))
     }
 }
@@ -467,6 +517,8 @@ pub struct OopTable {
     k: Vec<u8>,
     l: Vec<u8>,
     params: Vec<MmffOop>,
+    /// equal ranges of `j` (see [`key_ranges`])
+    j_ranges: Vec<(u32, u32)>,
 }
 impl OopTable {
     fn parse(text: &str) -> Self {
@@ -482,7 +534,8 @@ impl OopTable {
     }
     /// RDKit `MMFFOopCollection::operator()`.
     pub fn get(&self, def: &DefTable, it: u8, jt: u8, kt: u8, lt: u8) -> Option<MmffOop> {
-        let (j_lo, j_hi) = equal_range(&self.j, 0, self.j.len(), jt);
+        let (j_lo, j_hi) = self.j_ranges[jt as usize];
+        let (j_lo, j_hi) = (j_lo as usize, j_hi as usize);
         if j_lo == j_hi {
             return None;
         }
@@ -514,6 +567,8 @@ pub struct TorTable {
     k: Vec<u8>,
     l: Vec<u8>,
     params: Vec<MmffTor>,
+    /// equal ranges of `j` (see [`key_ranges`])
+    j_ranges: Vec<(u32, u32)>,
 }
 impl TorTable {
     fn parse(text: &str) -> Self {
@@ -530,7 +585,8 @@ impl TorTable {
     }
 
     fn find(&self, tt: u8, ci: u8, cj: u8, ck: u8, cl: u8) -> Option<MmffTor> {
-        nested_lookup(&[&self.j, &self.k, &self.i, &self.l, &self.tor_type], &[cj, ck, ci, cl, tt]).map(|x| self.params[x])
+        let (lo, hi) = self.j_ranges[cj as usize];
+        nested_lookup_in(lo as usize, hi as usize, &[&self.k, &self.i, &self.l, &self.tor_type], &[ck, ci, cl, tt]).map(|x| self.params[x])
     }
 
     /// RDKit `getMMFFTorParams` (including its wildcard step-down and the
@@ -585,6 +641,8 @@ pub struct VdwTable {
     pub daeps: f64,
     types: Vec<u8>,
     params: Vec<MmffVdw>,
+    /// row by atom type (see [`first_row_index`])
+    index: Vec<u16>,
 }
 impl VdwTable {
     fn parse(text: &str) -> Self {
@@ -612,10 +670,13 @@ impl VdwTable {
                 r_star: a_i * alpha_i.powf(s.power),
             });
         }
+        s.index = first_row_index(&s.types);
         s
     }
+    #[inline]
     pub fn get(&self, atom_type: u8) -> Option<&MmffVdw> {
-        nested_lookup(&[&self.types], &[atom_type]).map(|i| &self.params[i])
+        let row = self.index[atom_type as usize];
+        (row != u16::MAX).then(|| &self.params[row as usize])
     }
 }
 
@@ -640,7 +701,7 @@ pub struct MmffParams {
 
 impl MmffParams {
     fn load(mmffs: bool) -> Self {
-        MmffParams {
+        let mut p = MmffParams {
             def: DefTable::parse(include_str!("data/def.par")),
             prop: PropTable::parse(include_str!("data/prop.par")),
             pbci: PbciTable::parse(include_str!("data/pbci.par")),
@@ -655,7 +716,16 @@ impl MmffParams {
             oop: OopTable::parse(if mmffs { include_str!("data/oop_mmffs.par") } else { include_str!("data/oop.par") }),
             tor: TorTable::parse(if mmffs { include_str!("data/tor_mmffs.par") } else { include_str!("data/tor.par") }),
             vdw: VdwTable::parse(include_str!("data/vdw.par")),
-        }
+        };
+        // first-key equal ranges: the nested lookups start from a direct
+        // index instead of a binary search over the whole table
+        p.chg.i_ranges = key_ranges(&p.chg.i);
+        p.bond.i_ranges = key_ranges(&p.bond.i);
+        p.angle.j_ranges = key_ranges(&p.angle.j);
+        p.stbn.j_ranges = key_ranges(&p.stbn.j);
+        p.oop.j_ranges = key_ranges(&p.oop.j);
+        p.tor.j_ranges = key_ranges(&p.tor.j);
+        p
     }
 
     /// The (lazily parsed, shared) parameter set of a variant.

@@ -376,12 +376,22 @@ pub fn kekulize_canonical(mol: &mut Molecule, ranks: Option<&[usize]>) -> Result
     if !any_arom_bond && !any_arom_atom {
         return Ok(());
     }
-    let ri = mol.rings().clone();
+    // kekulization changes only bond orders and atom flags: the ring info is
+    // moved out for the duration (no copy) and put back afterwards
+    mol.rings();
+    let ri = mol.ring_info.take().expect("ring info");
+    let res = kekulize_canonical_with(mol, &ri, ranks);
+    mol.ring_info = Some(ri);
+    res
+}
+
+fn kekulize_canonical_with(mol: &mut Molecule, ri: &RingInfo, ranks: Option<&[usize]>) -> Result<()> {
+    let n = mol.num_atoms();
     let owned;
     let ranks: &[usize] = match ranks {
         Some(r) => r,
         None => {
-            owned = rank_fragment_atoms(mol, &ri);
+            owned = rank_fragment_atoms(mol, ri);
             &owned
         }
     };
@@ -413,7 +423,7 @@ pub fn kekulize_canonical(mol: &mut Molecule, ranks: Option<&[usize]>) -> Result
         let mut fused = Vec::new();
         pick_fused_rings(curr, &neigh, &mut fused, &mut fus_done);
         let frings: Vec<&Vec<usize>> = fused.iter().map(|&k| &ri.atom_rings[ring_ids[k]]).collect();
-        kekulize_fused(mol, &ri, &cache, &frings, ranks, 100)?;
+        kekulize_fused(mol, ri, &cache, &frings, ranks, 100)?;
         match (0..nr).find(|&k| !fus_done[k]) {
             Some(k) => curr = k,
             None => break,

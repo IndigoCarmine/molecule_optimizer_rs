@@ -257,9 +257,11 @@ fn iterate_cip_ranks(mol: &Molecule, invars: &[i64], seed_with_invars: bool) -> 
     let max_its = n / 2 + 1;
     let mut num_its = 0;
     let mut last_num_ranks: i64 = -1;
+    let mut nb: Vec<(u32, usize)> = Vec::new();
     while !needs_sorting.is_empty() && num_its < max_its && (last_num_ranks < 0 || (last_num_ranks as usize) < num_ranks) {
         for index in 0..n {
-            let mut nb = features[index].clone();
+            nb.clear();
+            nb.extend_from_slice(&features[index]);
             // neighbors in decreasing rank order; ties are irrelevant since
             // equal ranks produce identical runs of values
             nb.sort_by(|x, y| ranks[y.1].cmp(&ranks[x.1]));
@@ -374,18 +376,21 @@ impl<'a> State<'a> {
                 }
             }
             if legal && let Some(ranks) = ranks {
-                let mut seen = vec![false; mol.num_atoms()];
+                // ranks seen so far (at most 4 neighbors here: tnz <= 4)
+                let mut seen = [0u32; 4];
+                let mut n_seen = 0;
                 for &(other, b) in mol.atom_bonds(atom) {
                     nbrs.push((ranks[other], b));
                     if !bond_affects_atom_chirality(mol, b, atom) {
                         continue;
                     }
-                    let r = ranks[other] as usize;
-                    if seen[r] {
+                    let r = ranks[other];
+                    if seen[..n_seen].contains(&r) {
                         dupes = true;
                         break;
                     }
-                    seen[r] = true;
+                    seen[n_seen] = r;
+                    n_seen += 1;
                 }
             }
         }

@@ -43,7 +43,7 @@ fn rd_bond_stereo(b: &Bond) -> u32 {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct BondHolder {
     bond_type: u32,
     bond_stereo: u32,
@@ -98,18 +98,18 @@ fn count_swaps_to_interconvert(reference: &[usize], probe: &[usize]) -> u32 {
 
 /// `updateAtomNeighborIndex`: refresh neighbor classes and re-sort
 /// (descending) with an insertion sort.
-fn update_atom_neighbor_index(classes: &[i32], bonds: &mut [BondHolder]) {
+fn update_atom_neighbor_index(atoms: &[CanonAtom], bonds: &mut [BondHolder]) {
     for b in bonds.iter_mut() {
-        b.nbr_sym_class = classes[b.nbr_idx] as u32;
+        b.nbr_sym_class = atoms[b.nbr_idx].index as u32;
     }
     for i in 1..bonds.len() {
         if !BondHolder::greater(&bonds[i], &bonds[i - 1]) {
             continue;
         }
-        let value = bonds[i].clone();
+        let value = bonds[i];
         let mut j = i;
         loop {
-            bonds[j] = bonds[j - 1].clone();
+            bonds[j] = bonds[j - 1];
             j -= 1;
             if !(j > 0 && BondHolder::greater(&value, &bonds[j - 1])) {
                 break;
@@ -134,13 +134,12 @@ struct Ranker<'a> {
 }
 
 impl Ranker<'_> {
-    fn classes(&self) -> Vec<i32> {
-        self.atoms.iter().map(|a| a.index).collect()
-    }
-
+    /// Refreshes the neighbor classes of atom `i` from the current atom
+    /// indices (no per-call copy of the class vector).
     fn refresh_bonds(&mut self, i: usize) {
-        let classes = self.classes();
-        update_atom_neighbor_index(&classes, &mut self.atoms[i].bonds);
+        let mut bonds = std::mem::take(&mut self.atoms[i].bonds);
+        update_atom_neighbor_index(&self.atoms, &mut bonds);
+        self.atoms[i].bonds = bonds;
     }
 
     /// `getChiralRank`.
@@ -454,6 +453,8 @@ struct Partitions {
     changed: Vec<i32>,
     touched: Vec<bool>,
     activeset: i32,
+    /// scratch for the per-partition merge sort (reused across partitions)
+    mem: Vec<usize>,
 }
 
 impl Partitions {
@@ -488,12 +489,14 @@ fn refine(r: &mut Ranker, f: Functor, p: &mut Partitions) {
         let len = p.count[partition] as usize;
         let offset = r.atoms[partition].index as usize;
 
-        let mut mem: Vec<usize> = Vec::with_capacity(2 * len);
+        let mut mem = std::mem::take(&mut p.mem);
+        mem.clear();
         mem.extend_from_slice(&p.order[offset..offset + len]);
         mem.resize(2 * len, 0);
         let in_temp = r.hanoi(f, &mut mem, 0, len, len, &mut p.count, &p.changed);
         let src = if in_temp { len } else { 0 };
         p.order[offset..offset + len].copy_from_slice(&mem[src..src + len]);
+        p.mem = mem;
 
         for k in 0..len {
             p.changed[p.order[offset + k]] = 0;
@@ -682,6 +685,7 @@ pub fn rank_fragment_atoms(mol: &Molecule, ri: &RingInfo) -> Vec<usize> {
         changed: vec![1; n],
         touched: vec![false; n],
         activeset: -1,
+        mem: Vec::new(),
     };
     for a in r.atoms.iter_mut() {
         a.index = 0;

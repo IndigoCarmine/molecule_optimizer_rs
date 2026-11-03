@@ -89,11 +89,12 @@ pub fn kekulized_copy(mol: &Molecule) -> Result<Molecule> {
 /// the coordinates; otherwise the molecule's own chiral tags.
 pub fn canonical_atom_ranks(mol: &Molecule) -> Vec<usize> {
     let mut stereo = mol.clone();
-    let ri = stereo.rings().clone();
+    stereo.rings();
     if has_3d_coords(&stereo) {
+        // changes only stereo tags: the ring info stays valid
         legacy_stereo::assign_stereo_legacy_from_3d(&mut stereo);
     }
-    canon::rank_fragment_atoms(&stereo, &ri)
+    canon::rank_fragment_atoms(&stereo, stereo.ring_info().expect("ring info"))
 }
 
 /// Kekulized copy exactly as RDKit's canonical `MolOps::Kekulize` produces

@@ -176,4 +176,19 @@ impl Lane for A4 {
     fn write(self, out: &mut [f64; 4]) {
         unsafe { _mm256_storeu_pd(out.as_mut_ptr(), self.0) };
     }
+    #[inline(always)]
+    fn transpose4(r: [Self; 4]) -> [Self; 4] {
+        unsafe {
+            let t0 = _mm256_unpacklo_pd(r[0].0, r[1].0);
+            let t1 = _mm256_unpackhi_pd(r[0].0, r[1].0);
+            let t2 = _mm256_unpacklo_pd(r[2].0, r[3].0);
+            let t3 = _mm256_unpackhi_pd(r[2].0, r[3].0);
+            [
+                A4(_mm256_permute2f128_pd(t0, t2, 0x20)),
+                A4(_mm256_permute2f128_pd(t1, t3, 0x20)),
+                A4(_mm256_permute2f128_pd(t0, t2, 0x31)),
+                A4(_mm256_permute2f128_pd(t1, t3, 0x31)),
+            ]
+        }
+    }
 }

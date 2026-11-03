@@ -5,6 +5,7 @@
 //! Copyright (C) 2004-2008 Greg Landrum and Rational Discovery LLC).
 
 use super::{IterationInfo, MinimizeOptions, MinimizeResult, MinimizeStatus, Observer};
+use crate::fast::bonded::{Lane, V4};
 use crate::ff::ForceField;
 use std::ops::ControlFlow;
 
@@ -136,87 +137,31 @@ fn notify(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f6
     matches!(observer.on_iteration(&IterationInfo { iteration, pos, energy, grad }), ControlFlow::Break(()))
 }
 
-/// Runs `$body` (a call to an `#[inline(always)]` kernel) compiled for AVX
-/// when the CPU has it. Plain AVX multiplies and adds are the same IEEE
-/// operations as the scalar/SSE2 ones (no FMA contraction), so the result
-/// does not depend on the path taken.
-macro_rules! dispatch_avx {
-    ($body:expr) => {{
-        #[cfg(target_arch = "x86_64")]
-        {
-            #[target_feature(enable = "avx")]
-            unsafe fn avx<R>(f: impl FnOnce() -> R) -> R {
-                f()
-            }
-            if std::arch::is_x86_feature_detected!("avx") {
-                // SAFETY: the CPU supports AVX (checked above).
-                return unsafe { avx(#[inline(always)] || $body) };
-            }
-        }
-        $body
-    }};
+/// Packed upper triangle of the symmetric `dim × dim` inverse Hessian: row
+/// `i` holds `H[i][i..dim]`, rows stored one after another (`dim·(dim+1)/2`
+/// values, half the memory of the full matrix).
+struct PackedSym {
+    dim: usize,
+    a: Vec<f64>,
 }
 
-/// `out = H·v` for the symmetric row-major `h`, evaluated as a sum of rows
-/// (`out += H[j,:]·v[j]` for `j = 0, 1, …`). Because `H` is exactly
-/// symmetric, every `out[i]` sees the same products added in the same order
-/// as the row-wise dot product `Σ_j H[i,j]·v[j]` RDKit evaluates, so the
-/// result is bit-identical — but the inner loop is a contiguous, vectorizable
-/// axpy instead of a serial reduction.
-#[inline(always)]
-fn sym_matvec_kernel(h: &[f64], v: &[f64], out: &mut [f64]) {
-    let dim = v.len();
-    out.fill(0.0);
-    if dim == 0 {
-        return;
-    }
-    for (row, &vj) in h.chunks_exact(dim).zip(v) {
-        for (o, &r) in out.iter_mut().zip(row) {
-            *o += r * vj;
+impl PackedSym {
+    fn identity(dim: usize) -> Self {
+        let mut h = PackedSym { dim, a: vec![0.0; dim * (dim + 1) / 2] };
+        for i in 0..dim {
+            let o = h.row_start(i);
+            h.a[o] = 1.0;
         }
+        h
+    }
+    /// Offset of `H[i][i]`.
+    #[inline(always)]
+    fn row_start(&self, i: usize) -> usize {
+        i * self.dim - i * i.saturating_sub(1) / 2
     }
 }
 
-fn sym_matvec(h: &[f64], v: &[f64], out: &mut [f64]) {
-    dispatch_avx!(sym_matvec_kernel(h, v, out))
-}
-
-/// Rank-two BFGS update of the inverse Hessian `h` (when `upd` is given)
-/// fused with `dir = -H·grad` for the updated `H`.
-///
-/// RDKit updates the upper triangle, `H[i][j] += pxi[i]*xi[j] -
-/// hdg[i]*hdgrad[j] + dgs[i]*dgrad[j]` for `j >= i`, and mirrors it. Here
-/// row `i` is rewritten in place: the part left of the diagonal takes the
-/// mirrored expression (row index `j < i`), reading the old, symmetric
-/// `H[i][j]` — the same value with the same operations, without strided
-/// writes. The finished row then feeds `dir` like [`sym_matvec_kernel`].
-#[inline(always)]
-fn update_direction_kernel(h: &mut [f64], upd: Option<UpdateVecs<'_>>, grad: &[f64], dir: &mut [f64]) {
-    let dim = grad.len();
-    dir.fill(0.0);
-    if dim == 0 {
-        return;
-    }
-    for (i, row) in h.chunks_exact_mut(dim).enumerate() {
-        if let Some(u) = &upd {
-            let (lo, hi) = row.split_at_mut(i);
-            let (x, hd, dg) = (u.xi[i], u.hdgrad[i], u.dgrad[i]);
-            for (((h, &p), &q), &r) in lo.iter_mut().zip(&u.pxi[..i]).zip(&u.hdg[..i]).zip(&u.dgs[..i]) {
-                *h += p * x - q * hd + r * dg;
-            }
-            let (p, q, r) = (u.pxi[i], u.hdg[i], u.dgs[i]);
-            for (((h, &x), &hd), &dg) in hi.iter_mut().zip(&u.xi[i..]).zip(&u.hdgrad[i..]).zip(&u.dgrad[i..]) {
-                *h += p * x - q * hd + r * dg;
-            }
-        }
-        let g = grad[i];
-        for (s, &h) in dir.iter_mut().zip(row.iter()) {
-            *s -= h * g;
-        }
-    }
-}
-
-/// Vectors of the BFGS update (see [`update_direction_kernel`]).
+/// Vectors of the BFGS update (see [`packed_pass`]).
 struct UpdateVecs<'a> {
     xi: &'a [f64],
     hdgrad: &'a [f64],
@@ -226,8 +171,188 @@ struct UpdateVecs<'a> {
     dgs: &'a [f64],
 }
 
-fn update_direction(h: &mut [f64], upd: Option<UpdateVecs<'_>>, grad: &[f64], dir: &mut [f64]) {
-    dispatch_avx!(update_direction_kernel(h, upd, grad, dir))
+/// RDKit update of one stored element `H[i][j]` (`j >= i`).
+#[inline(always)]
+fn update_elem(h: &mut f64, u: &UpdateVecs<'_>, i: usize, j: usize) {
+    *h += u.pxi[i] * u.xi[j] - u.hdg[i] * u.hdgrad[j] + u.dgs[i] * u.dgrad[j];
+}
+
+/// `a + b` (`SUB = false`) or `a - b` (`SUB = true`).
+#[inline(always)]
+fn acc<const SUB: bool>(a: f64, b: f64) -> f64 {
+    if SUB { a - b } else { a + b }
+}
+
+/// Row `i` of [`packed_pass`]: updates the stored row, finishes `out[i]`
+/// with the row terms `j >= i` (all column terms `j < i` are already in it)
+/// and adds this row's column term to every `out[t]`, `t > i`.
+#[inline(always)]
+fn packed_row<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64], i: usize) {
+    let dim = h.dim;
+    let o = h.row_start(i);
+    let row = &mut h.a[o..o + dim - i];
+    if let Some(u) = upd {
+        for (k, e) in row.iter_mut().enumerate() {
+            update_elem(e, u, i, i + k);
+        }
+    }
+    let mut s = out[i];
+    for (e, &vj) in row.iter().zip(&v[i..]) {
+        s = acc::<SUB>(s, e * vj);
+    }
+    out[i] = s;
+    let vi = v[i];
+    for (o, e) in out[i + 1..].iter_mut().zip(&row[1..]) {
+        *o = acc::<SUB>(*o, e * vi);
+    }
+}
+
+/// One sweep over the packed matrix: applies the BFGS update `upd` (if any)
+/// to every stored element, and computes `out = H·v` (`SUB = false`) or
+/// `out = -H·v` (`SUB = true`) for the updated `H`.
+///
+/// Arithmetic is identical to RDKit `BFGSOpt.h` operation by operation:
+/// every `out[t]` starts from 0 and takes the products `H[t][j]·v[j]` for
+/// `j = 0, 1, …` in order. The terms `j < t` come from the rows above (the
+/// stored `H[j][t]`, added when row `j` is visited), the terms `j >= t`
+/// from row `t` itself. The update writes RDKit's upper-triangle value.
+fn packed_pass<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
+    let dim = h.dim;
+    assert!(v.len() == dim && out.len() == dim && h.a.len() == dim * (dim + 1) / 2);
+    if let Some(u) = upd {
+        assert!([u.xi, u.hdgrad, u.dgrad, u.pxi, u.hdg, u.dgs].iter().all(|x| x.len() == dim));
+    }
+    out.fill(0.0);
+    #[cfg(target_arch = "x86_64")]
+    if crate::fast::avx::available() {
+        #[target_feature(enable = "avx")]
+        unsafe fn avx<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
+            packed_pass_lanes::<crate::fast::avx::A4, SUB>(h, upd, v, out)
+        }
+        // SAFETY: the CPU supports AVX (checked above).
+        return unsafe { avx::<SUB>(h, upd, v, out) };
+    }
+    packed_pass_lanes::<V4, SUB>(h, upd, v, out)
+}
+
+/// [`packed_pass`] four rows `r..r+4` at a time, with 4-wide lanes. Each
+/// output still receives its terms one by one in the order of
+/// [`packed_row`]: the in-block triangle is done row by row, then for every
+/// group of four columns `c ≥ r+4` the column terms of the four rows are
+/// added to `out[c..c+4]` in row order, and the row terms of the four rows
+/// (one running sum per lane, after a 4×4 transpose of the products) in
+/// column order.
+#[inline(always)]
+fn packed_pass_lanes<V: Lane, const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
+    // macros, not closures: closures would not inherit the caller's target features
+    macro_rules! ld {
+        ($s:expr) => {{
+            let s: &[f64] = $s;
+            V::from_fn(|l| s[l])
+        }};
+    }
+    macro_rules! vacc {
+        ($a:expr, $b:expr) => {
+            if SUB { $a - $b } else { $a + $b }
+        };
+    }
+    let dim = h.dim;
+    let mut r = 0;
+    while r + 4 <= dim {
+        let (o0, o4) = (h.row_start(r), h.row_start(r + 4));
+        let (r0, rest) = h.a[o0..o4].split_at_mut(dim - r);
+        let (r1, rest) = rest.split_at_mut(dim - r - 1);
+        let (r2, r3) = rest.split_at_mut(dim - r - 2);
+        let mut rows = [r0, r1, r2, r3];
+        // in-block triangle (columns r..r+4); row k holds column j at j - r - k
+        let mut s = [0.0; 4];
+        for (k, row) in rows.iter_mut().enumerate() {
+            let i = r + k;
+            if let Some(u) = upd {
+                for j in i..r + 4 {
+                    update_elem(&mut row[j - i], u, i, j);
+                }
+            }
+            let mut sk = out[i];
+            for j in i..r + 4 {
+                sk = acc::<SUB>(sk, row[j - i] * v[j]);
+            }
+            s[k] = sk;
+            for t in i + 1..r + 4 {
+                out[t] = acc::<SUB>(out[t], row[t - i] * v[i]);
+            }
+        }
+        // columns r+4.. (index c - r - 4 in every tail)
+        let [t0, t1, t2, t3] = rows;
+        let tails = [&mut t0[4..], &mut t1[3..], &mut t2[2..], &mut t3[1..]];
+        let vr: [f64; 4] = std::array::from_fn(|k| v[r + k]);
+        let c4 = r + 4;
+        let mut sacc = ld!(&s);
+        {
+            macro_rules! body {
+                ($hc:expr, $oc:expr, $vc:expr, $upd:expr) => {{
+                    let ([h0, h1, h2, h3], oc, vc): ([&mut [f64; 4]; 4], &mut [f64; 4], &[f64; 4]) = ($hc, $oc, $vc);
+                    let mut a = [ld!(h0), ld!(h1), ld!(h2), ld!(h3)];
+                    if let Some((xc, hdc, dgc, p, q, rr)) = $upd {
+                        let (x, hd, dg): (V, V, V) = (ld!(xc), ld!(hdc), ld!(dgc));
+                        let (p, q, rr): ([f64; 4], [f64; 4], [f64; 4]) = (p, q, rr);
+                        for k in 0..4 {
+                            a[k] = a[k] + ((x * p[k] - hd * q[k]) + dg * rr[k]);
+                        }
+                        a[0].write(h0);
+                        a[1].write(h1);
+                        a[2].write(h2);
+                        a[3].write(h3);
+                    }
+                    let mut o = ld!(oc);
+                    for k in 0..4 {
+                        o = vacc!(o, a[k] * vr[k]);
+                    }
+                    o.write(oc);
+                    let vv = ld!(vc);
+                    let [b0, b1, b2, b3] = a;
+                    for q in V::transpose4([b0 * vv, b1 * vv, b2 * vv, b3 * vv]) {
+                        sacc = vacc!(sacc, q);
+                    }
+                }};
+            }
+            let [h0, h1, h2, h3] = tails;
+            let cols = h0.as_chunks_mut::<4>().0.iter_mut().zip(h1.as_chunks_mut::<4>().0.iter_mut()).zip(h2.as_chunks_mut::<4>().0.iter_mut()).zip(h3.as_chunks_mut::<4>().0.iter_mut()).zip(out[c4..].as_chunks_mut::<4>().0.iter_mut()).zip(v[c4..].as_chunks::<4>().0);
+            match upd {
+                Some(u) => {
+                    let f = |w: &[f64]| -> [f64; 4] { [w[r], w[r + 1], w[r + 2], w[r + 3]] };
+                    let (p, q, rr) = (f(u.pxi), f(u.hdg), f(u.dgs));
+                    let ucols = u.xi[c4..].as_chunks::<4>().0.iter().zip(u.hdgrad[c4..].as_chunks::<4>().0).zip(u.dgrad[c4..].as_chunks::<4>().0);
+                    for ((((((h0, h1), h2), h3), oc), vc), ((xc, hdc), dgc)) in cols.zip(ucols) {
+                        body!([h0, h1, h2, h3], oc, vc, Some((xc, hdc, dgc, p, q, rr)));
+                    }
+                }
+                None => {
+                    for (((((h0, h1), h2), h3), oc), vc) in cols {
+                        body!([h0, h1, h2, h3], oc, vc, None::<(&[f64; 4], &[f64; 4], &[f64; 4], [f64; 4], [f64; 4], [f64; 4])>);
+                    }
+                }
+            }
+        }
+        sacc.write(&mut s);
+        let n4 = c4 + (dim - c4) / 4 * 4;
+        let base: [usize; 4] = std::array::from_fn(|k| h.row_start(r + k) - (r + k));
+        for c in n4..dim {
+            for (k, sk) in s.iter_mut().enumerate() {
+                let e = &mut h.a[base[k] + c];
+                if let Some(u) = upd {
+                    update_elem(e, u, r + k, c);
+                }
+                out[c] = acc::<SUB>(out[c], *e * v[r + k]);
+                *sk = acc::<SUB>(*sk, *e * v[c]);
+            }
+        }
+        out[r..r + 4].copy_from_slice(&s);
+        r += 4;
+    }
+    for i in r..dim {
+        packed_row::<SUB>(h, upd, v, out, i);
+    }
 }
 
 /// Scratch vectors of [`minimize_bfgs`] (one allocation).
@@ -250,9 +375,10 @@ impl BfgsWork {
 /// RDKit BFGS minimization.
 ///
 /// Arithmetic is identical to RDKit `BFGSOpt.h` operation by operation
-/// (same products, same summation order), only the loops are rearranged:
-/// the inverse-Hessian update is done row by row without the strided
-/// mirror writes, and is fused with the product for the next direction.
+/// (same products, same summation order), only the storage and loops
+/// differ: the symmetric inverse Hessian is kept as a packed upper triangle
+/// (half the memory, see [`PackedSym`]), and its update is fused with the
+/// product for the next direction ([`packed_pass`]).
 pub fn minimize_bfgs(
     ff: &dyn ForceField,
     pos: &mut [f64],
@@ -263,13 +389,12 @@ pub fn minimize_bfgs(
     let scaling = opts.rdkit_grad_scaling;
     let mut work = BfgsWork::new(dim);
     let [grad, dgrad, hess_dgrad, xi, new_pos, pxi, hdg, dgs] = work.split();
-    let mut inv_hessian = vec![0.0; dim * dim];
+    let mut inv_hessian = PackedSym::identity(dim);
 
     let mut fp = ff.energy(pos);
     calc_grad(ff, pos, grad, scaling);
     let mut sum = 0.0;
     for i in 0..dim {
-        inv_hessian[i * dim + i] = 1.0;
         xi[i] = -grad[i];
         sum += pos[i] * pos[i];
     }
@@ -310,7 +435,7 @@ pub fn minimize_bfgs(
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
         // BFGS inverse Hessian update
-        sym_matvec(&inv_hessian, dgrad, hess_dgrad);
+        packed_pass::<false>(&mut inv_hessian, None, dgrad, hess_dgrad);
         let (mut fac, mut fae, mut sum_dgrad, mut sum_xi) = (0.0, 0.0, 0.0, 0.0);
         for i in 0..dim {
             fac += dgrad[i] * xi[i];
@@ -335,7 +460,7 @@ pub fn minimize_bfgs(
         } else {
             None
         };
-        update_direction(&mut inv_hessian, upd, grad, new_pos);
+        packed_pass::<true>(&mut inv_hessian, upd.as_ref(), grad, new_pos);
         let dir = &*new_pos;
         xi.copy_from_slice(dir);
     }

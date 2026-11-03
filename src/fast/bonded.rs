@@ -71,6 +71,17 @@ pub trait Lane:
     fn hsum(self) -> f64;
     /// Writes the lanes to `out[..N]`.
     fn write(self, out: &mut [f64; 4]);
+    /// 4×4 transpose (4-lane types only): lane `l` of `out[m]` is lane `m`
+    /// of `rows[l]`.
+    #[inline(always)]
+    fn transpose4(rows: [Self; 4]) -> [Self; 4] {
+        debug_assert!(Self::N == 4);
+        let mut a = [[0.0; 4]; 4];
+        for (r, o) in rows.iter().zip(&mut a) {
+            r.write(o);
+        }
+        std::array::from_fn(|m| Self::from_fn(|l| a[l][m]))
+    }
 }
 
 impl Lane for f64 {

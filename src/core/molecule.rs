@@ -158,6 +158,55 @@ impl Bond {
     }
 }
 
+/// Adjacency lists of all atoms in one shared buffer: atom `i` owns
+/// `slots[start[i]..start[i] + len[i]]` with room for `cap[i]` entries. A
+/// full list is moved to the end of the buffer with doubled room, so adding
+/// bonds stays amortized O(1) and copying a molecule copies four vectors
+/// instead of one vector per atom.
+#[derive(Debug, Clone, Default)]
+struct Adjacency {
+    start: Vec<u32>,
+    len: Vec<u32>,
+    cap: Vec<u32>,
+    /// (neighbor, bond index)
+    slots: Vec<(usize, usize)>,
+}
+
+impl Adjacency {
+    fn add_atom(&mut self) {
+        self.start.push(self.slots.len() as u32);
+        self.len.push(0);
+        self.cap.push(0);
+    }
+    fn push(&mut self, i: usize, entry: (usize, usize)) {
+        let (s, l, c) = (self.start[i] as usize, self.len[i] as usize, self.cap[i] as usize);
+        if l == c {
+            let new_cap = (2 * c).max(4);
+            if s + c == self.slots.len() {
+                // last list in the buffer: grow in place
+                self.slots.resize(s + new_cap, (0, 0));
+            } else {
+                let ns = self.slots.len();
+                self.slots.resize(ns + new_cap, (0, 0));
+                self.slots.copy_within(s..s + l, ns);
+                self.start[i] = ns as u32;
+            }
+            self.cap[i] = new_cap as u32;
+        }
+        let s = self.start[i] as usize;
+        self.slots[s + l] = entry;
+        self.len[i] += 1;
+    }
+    fn clear(&mut self) {
+        self.len.iter_mut().for_each(|l| *l = 0);
+    }
+    #[inline]
+    fn get(&self, i: usize) -> &[(usize, usize)] {
+        let s = self.start[i] as usize;
+        &self.slots[s..s + self.len[i] as usize]
+    }
+}
+
 /// Molecule: atoms, bonds, adjacency and coordinates (Å).
 #[derive(Debug, Clone, Default)]
 pub struct Molecule {
@@ -165,7 +214,7 @@ pub struct Molecule {
     atoms: Vec<Atom>,
     bonds: Vec<Bond>,
     /// adjacency: for each atom, list of (neighbor, bond index)
-    adj: Vec<Vec<(usize, usize)>>,
+    adj: Adjacency,
     /// one position per atom
     pub coords: Vec<[f64; 3]>,
     /// Ring perception result (filled by [`crate::perception::sanitize`]).
@@ -217,7 +266,7 @@ impl Molecule {
     /// Adds an atom at `pos` and returns its index.
     pub fn add_atom(&mut self, atom: Atom, pos: [f64; 3]) -> usize {
         self.atoms.push(atom);
-        self.adj.push(Vec::new());
+        self.adj.add_atom();
         self.coords.push(pos);
         self.ring_info = None;
         self.atoms.len() - 1
@@ -232,8 +281,8 @@ impl Molecule {
         }
         let idx = self.bonds.len();
         self.bonds.push(Bond::new(begin, end, order));
-        self.adj[begin].push((end, idx));
-        self.adj[end].push((begin, idx));
+        self.adj.push(begin, (end, idx));
+        self.adj.push(end, (begin, idx));
         self.ring_info = None;
         idx
     }
@@ -241,27 +290,25 @@ impl Molecule {
     /// Removes all bonds (used by bond perception).
     pub fn clear_bonds(&mut self) {
         self.bonds.clear();
-        for a in &mut self.adj {
-            a.clear();
-        }
+        self.adj.clear();
         self.ring_info = None;
     }
 
     /// Neighbor atom indices of `i`.
     pub fn neighbors(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
-        self.adj[i].iter().map(|&(n, _)| n)
+        self.adj.get(i).iter().map(|&(n, _)| n)
     }
     /// (neighbor, bond index) pairs of atom `i`.
     pub fn atom_bonds(&self, i: usize) -> &[(usize, usize)] {
-        &self.adj[i]
+        self.adj.get(i)
     }
     /// Number of explicit neighbors (RDKit `getDegree`).
     pub fn degree(&self, i: usize) -> usize {
-        self.adj[i].len()
+        self.adj.len[i] as usize
     }
     /// Degree including hidden hydrogens (RDKit `getTotalDegree`).
     pub fn total_degree(&self, i: usize) -> usize {
-        self.adj[i].len() + self.atoms[i].total_hidden_hs() as usize
+        self.adj.len[i] as usize + self.atoms[i].total_hidden_hs() as usize
     }
     /// Total number of hydrogens: hydrogen neighbors + hidden hydrogens
     /// (RDKit `getTotalNumHs(true)`).
@@ -271,7 +318,7 @@ impl Molecule {
     }
 
     pub fn bond_between(&self, a: usize, b: usize) -> Option<usize> {
-        self.adj[a].iter().find(|&&(n, _)| n == b).map(|&(_, bi)| bi)
+        self.adj.get(a).iter().find(|&&(n, _)| n == b).map(|&(_, bi)| bi)
     }
 
     /// Explicit valence (RDKit `getValence(EXPLICIT)`, port of
@@ -286,7 +333,7 @@ impl Molecule {
         let mut accum = atom.num_explicit_hs as f64;
         let mut min_accum = accum;
         let mut aromatic = atom.is_aromatic;
-        for &(_, bi) in &self.adj[i] {
+        for &(_, bi) in self.adj.get(i) {
             let b = &self.bonds[bi];
             let c = b.valence_contrib(i);
             accum += c;
@@ -363,7 +410,7 @@ impl Molecule {
             queue.push_back(s);
             while let Some(u) = queue.pop_front() {
                 let du = d[s][u];
-                for &(v, _) in &self.adj[u] {
+                for &(v, _) in self.adj.get(u) {
                     if d[s][v] == usize::MAX {
                         d[s][v] = du + 1;
                         queue.push_back(v);
@@ -386,7 +433,7 @@ impl Molecule {
             if u == to {
                 break;
             }
-            for &(v, _) in &self.adj[u] {
+            for &(v, _) in self.adj.get(u) {
                 if !seen[v] {
                     seen[v] = true;
                     prev[v] = u;
@@ -416,7 +463,7 @@ impl Molecule {
         let mut stack = vec![start];
         let mut out = vec![start];
         while let Some(u) = stack.pop() {
-            for &(v, _) in &self.adj[u] {
+            for &(v, _) in self.adj.get(u) {
                 if u == start && v == blocked {
                     continue;
                 }
@@ -449,7 +496,7 @@ impl Molecule {
             while k < members.len() {
                 let u = members[k];
                 k += 1;
-                for &(v, _) in &self.adj[u] {
+                for &(v, _) in self.adj.get(u) {
                     if comp[v] == usize::MAX {
                         comp[v] = id;
                         members.push(v);

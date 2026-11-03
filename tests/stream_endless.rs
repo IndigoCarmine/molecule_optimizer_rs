@@ -219,3 +219,42 @@ async fn generic_stream_ends_with_final_state() {
     assert_eq!(late.len(), 1);
     assert!(late[0].finished);
 }
+
+/// Endless mode is for single-structure optimizations only: scans and
+/// conformer searches with `force_tol = 0` still finish (`max_iters`, TOLX).
+#[tokio::test(flavor = "multi_thread")]
+async fn multi_structure_calculations_are_never_endless() {
+    use molecule_optimizer_rs::calc::conformer::RandomTorsionGenerator;
+    use molecule_optimizer_rs::calc::{ConformerSearchOptions, ScanCoordinate, ScanOptions};
+    let mol = Arc::new(butane());
+    let builder = Arc::new(Springs { delay: Duration::ZERO });
+    let mut sopts = ScanOptions {
+        coordinates: vec![ScanCoordinate::Dihedral { i: 0, j: 1, k: 2, l: 3, values: ScanCoordinate::steps(-180.0, 60.0, 6) }],
+        ..Default::default()
+    };
+    sopts.minimize.force_tol = 0.0;
+    sopts.minimize.max_iters = 50;
+    let sync = molecule_optimizer_rs::calc::scan::scan(&mol, builder.as_ref(), &sopts).unwrap();
+    assert_eq!(sync.points.len(), 6);
+    let r = tokio::time::timeout(Duration::from_secs(60), engine(Duration::from_millis(1)).scan(mol.clone(), builder.clone(), sopts)).await.expect("scan must finish").unwrap();
+    assert_eq!(r.points.len(), 6);
+    let mut copts = ConformerSearchOptions::new(Arc::new(RandomTorsionGenerator { seed: 3 }));
+    copts.num_conformers = 4;
+    copts.minimize.force_tol = 0.0;
+    copts.minimize.max_iters = 50;
+    let r = tokio::time::timeout(Duration::from_secs(60), engine(Duration::from_millis(1)).conformer_search(mol, builder, copts)).await.expect("conformer search must finish").unwrap();
+    assert!(!r.conformers.is_empty());
+}
+
+#[test]
+fn minimize_with_non_endless_stops_with_zero_force_tol() {
+    let mol = butane();
+    let ff = Springs { delay: Duration::ZERO }.build(&mol, &[]).unwrap();
+    for alg in [Algorithm::Bfgs, Algorithm::Lbfgs(5)] {
+        let mut p = mol.flat_coords();
+        let opts = MinimizeOptions { max_iters: 40, force_tol: 0.0, algorithm: alg, ..Default::default() };
+        let r = molecule_optimizer_rs::optim::minimize_with(&ff, &mut p, &opts, false, &mut NoObserver);
+        assert_ne!(r.status, MinimizeStatus::Cancelled, "{alg:?}");
+        assert!(r.iterations <= 40, "{alg:?}");
+    }
+}

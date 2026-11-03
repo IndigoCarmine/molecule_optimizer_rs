@@ -255,9 +255,9 @@ impl ScanCtx<'_> {
                     ctx.update(|s| s.points[fi] = PointState::Running(Frame { coords, energy: e, iteration: it }));
                 });
                 ctx.update_silent(|s| s.points[fi] = PointState::Running(Frame { coords: c.clone(), energy: f64::NAN, iteration: 0 }));
-                optim::minimize(&ff, &mut pos, &self.opts.minimize, &mut obs)
+                optim::minimize_with(&ff, &mut pos, &self.opts.minimize, false, &mut obs)
             }
-            None => optim::minimize(&ff, &mut pos, &self.opts.minimize, &mut optim::NoObserver),
+            None => optim::minimize_with(&ff, &mut pos, &self.opts.minimize, false, &mut optim::NoObserver),
         };
         if r.status == MinimizeStatus::Cancelled {
             return Err(Error::Cancelled);

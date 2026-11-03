@@ -650,6 +650,18 @@ pub fn minimize_lbfgs(
     m: usize,
     observer: &mut dyn Observer,
 ) -> MinimizeResult {
+    minimize_lbfgs_impl(ff, pos, opts, m, opts.is_endless(), observer)
+}
+
+/// [`minimize_lbfgs`] with endless mode chosen explicitly.
+pub(crate) fn minimize_lbfgs_impl(
+    ff: &dyn ForceField,
+    pos: &mut [f64],
+    opts: &MinimizeOptions,
+    m: usize,
+    endless: bool,
+    observer: &mut dyn Observer,
+) -> MinimizeResult {
     let dim = pos.len();
     let m = m.max(1);
     let scaling = opts.rdkit_grad_scaling;
@@ -665,7 +677,6 @@ pub fn minimize_lbfgs(
     let sum: f64 = pos.iter().map(|p| p * p).sum();
     let max_step = MAXSTEP * sum.sqrt().max(dim as f64);
     let mut alpha = vec![0.0; m];
-    let endless = opts.is_endless();
     let max_iters = if endless { usize::MAX } else { opts.max_iters };
     let mut stalled = false;
     for iter in 1..=max_iters {

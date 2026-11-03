@@ -42,10 +42,12 @@ pub struct MinimizeOptions {
     /// [`crate::tasks::Engine`] jobs that is [`crate::tasks::JobHandle::cancel`].
     /// At a point that is stationary to machine precision it keeps calling
     /// the observer (with a 1 ms pause per iteration) so it stays responsive.
-    /// Intended for single optimizations ([`crate::tasks::Engine::optimize`]
-    /// plus [`crate::tasks::JobHandle::stream`]); calculations that minimize
-    /// many structures in turn (scans, conformer / assembly searches) would
-    /// never get past their first minimization.
+    /// Applies to single-structure optimizations only: [`minimize`],
+    /// [`crate::calc::optimize::optimize`], [`crate::tasks::Engine::optimize`] and
+    /// [`crate::tasks::Engine::optimize_batch`]. Scans, conformer and
+    /// assembly searches and the distance-geometry embedder never run
+    /// endless; there `force_tol <= 0` only disables the gradient test
+    /// (see [`minimize_with`]).
     pub force_tol: f64,
     /// Energy tolerance (accepted for API compatibility; RDKit ignores it).
     pub energy_tol: f64,
@@ -125,11 +127,30 @@ impl<F: FnMut(&IterationInfo<'_>) -> ControlFlow<()>> Observer for F {
     }
 }
 
-/// Minimizes `ff` starting from `pos` (updated in place).
+/// Minimizes `ff` starting from `pos` (updated in place). Runs in endless
+/// mode when `opts.force_tol <= 0` (see [`MinimizeOptions::force_tol`]);
+/// [`minimize_with`] chooses the mode explicitly.
 pub fn minimize(
     ff: &dyn ForceField,
     pos: &mut [f64],
     opts: &MinimizeOptions,
+    observer: &mut dyn Observer,
+) -> MinimizeResult {
+    minimize_with(ff, pos, opts, opts.is_endless(), observer)
+}
+
+/// [`minimize`] with endless mode chosen explicitly instead of from
+/// `opts.force_tol`. With `endless == false` a `force_tol <= 0` only
+/// disables the gradient convergence test: the step-size (TOLX) test, a
+/// failed line search and `max_iters` still end the minimization (the
+/// behavior before endless mode existed). Calculations that minimize many
+/// structures in turn (scans, conformer and assembly searches, the
+/// distance-geometry embedder) always use `endless == false`.
+pub fn minimize_with(
+    ff: &dyn ForceField,
+    pos: &mut [f64],
+    opts: &MinimizeOptions,
+    endless: bool,
     observer: &mut dyn Observer,
 ) -> MinimizeResult {
     let dim = pos.len();
@@ -144,8 +165,8 @@ pub fn minimize(
         a => a,
     };
     let mut res = match alg {
-        Algorithm::Lbfgs(m) => bfgs::minimize_lbfgs(ff, pos, opts, m.max(1), observer),
-        _ => bfgs::minimize_bfgs(ff, pos, opts, observer),
+        Algorithm::Lbfgs(m) => bfgs::minimize_lbfgs_impl(ff, pos, opts, m.max(1), endless, observer),
+        _ => bfgs::minimize_bfgs_impl(ff, pos, opts, endless, observer),
     };
     let mut g = vec![0.0; dim];
     res.energy = ff.energy_grad(pos, &mut g);

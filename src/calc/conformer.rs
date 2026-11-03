@@ -279,9 +279,9 @@ fn run_one(
                     s.in_flight.insert(id, (Stage::Optimizing, Frame { coords, energy: e, iteration: it }));
                 });
             });
-            optim::minimize(ff, &mut pos, &opts.minimize, &mut obs)
+            optim::minimize_with(ff, &mut pos, &opts.minimize, false, &mut obs)
         }
-        None => optim::minimize(ff, &mut pos, &opts.minimize, &mut optim::NoObserver),
+        None => optim::minimize_with(ff, &mut pos, &opts.minimize, false, &mut optim::NoObserver),
     };
     if r.status == MinimizeStatus::Cancelled {
         return Err(Error::Cancelled);

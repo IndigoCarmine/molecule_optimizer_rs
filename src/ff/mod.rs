@@ -9,6 +9,7 @@
 //! contribs (BSD-3-Clause, Copyright (C) 2004-2019 Greg Landrum and others).
 
 pub mod constraints;
+pub mod custom;
 pub mod mmff;
 pub mod uff;
 pub mod utils;

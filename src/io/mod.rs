@@ -1,5 +1,6 @@
-//! File formats: XYZ, MDL Molfile / SDF, PDB.
+//! File formats: XYZ, MDL Molfile / SDF, PDB, Tripos MOL2.
 
+pub mod mol2;
 pub mod molfile;
 pub mod pdb;
 pub mod xyz;
@@ -8,6 +9,7 @@ use crate::core::Molecule;
 use crate::error::{Error, Result};
 use std::path::Path;
 
+pub use mol2::{read_mol2, read_mol2_str, write_mol2};
 pub use molfile::{read_molfile, read_sdf, write_molblock, write_sdf_record};
 pub use pdb::{read_pdb, write_pdb};
 pub use xyz::{read_xyz, write_xyz};
@@ -19,6 +21,7 @@ pub enum Format {
     Mol,
     Sdf,
     Pdb,
+    Mol2,
 }
 
 impl Format {
@@ -28,6 +31,7 @@ impl Format {
             "mol" | "mdl" => Some(Format::Mol),
             "sdf" | "sd" => Some(Format::Sdf),
             "pdb" | "ent" => Some(Format::Pdb),
+            "mol2" | "ml2" => Some(Format::Mol2),
             _ => None,
         }
     }
@@ -40,6 +44,7 @@ pub fn read_str(text: &str, format: Format) -> Result<Vec<Molecule>> {
         Format::Mol => Ok(vec![molfile::read_molfile(text)?]),
         Format::Sdf => molfile::read_sdf(text),
         Format::Pdb => pdb::read_pdb_models(text),
+        Format::Mol2 => mol2::read_mol2_str(text),
     }
 }
 
@@ -60,6 +65,7 @@ pub fn write_str(mol: &Molecule, coords: Option<&[[f64; 3]]>, format: Format) ->
         Format::Mol => molfile::write_molblock_coords(mol, c),
         Format::Sdf => molfile::write_sdf_record(mol, Some(c), &[]),
         Format::Pdb => pdb::write_pdb_coords(mol, c),
+        Format::Mol2 => mol2::write_mol2_coords(mol, c),
     }
 }
 

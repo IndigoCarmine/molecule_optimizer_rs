@@ -61,13 +61,16 @@ fn add_bonds(mol: &Molecule, params: &Params, out: &mut Vec<BondStretchContrib>)
 }
 
 fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<AngleBendContrib>) -> Result<()> {
+    // neighbor list of the current central atom (reused)
+    let mut nbrs: Vec<usize> = Vec::new();
     for j in 0..mol.num_atoms() {
         let Some(pj) = params[j] else { continue };
         if mol.degree(j) == 1 {
             continue;
         }
         let hyb = mol.atom(j).hybridization;
-        let nbrs: Vec<usize> = mol.neighbors(j).collect();
+        nbrs.clear();
+        nbrs.extend(mol.neighbors(j));
         for (n1, &i) in nbrs.iter().enumerate() {
             let Some(pi) = params[i] else { continue };
             for &k in &nbrs[n1 + 1..] {
@@ -235,17 +238,18 @@ fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContr
     // keeping only the orientation with idx1 < idx2. (This reproduces
     // RDKit's energies and gradients bit-for-bit on the reference set.)
     let ok: Vec<bool> = (0..n).map(|i| torsion_atom_ok(mol, i)).collect();
+    // torsions about the current bond (reused)
+    let mut here: Vec<TorsionAngleContrib> = Vec::new();
     for idx1 in 0..n {
         if !ok[idx1] {
             continue;
         }
-        let partners: Vec<usize> = mol.neighbors(idx1).filter(|&b| b > idx1 && ok[b]).collect();
-        for idx2 in partners {
+        for idx2 in mol.neighbors(idx1).filter(|&b| b > idx1 && ok[b]) {
             let (Some(p1), Some(p2)) = (params[idx1], params[idx2]) else { continue };
             let bond = mol.bond_between(idx1, idx2).expect("bond");
             let a1 = mol.atom(idx1);
             let a2 = mol.atom(idx2);
-            let mut here: Vec<TorsionAngleContrib> = Vec::new();
+            here.clear();
             if matches!(a1.hybridization, SP2 | SP3) && matches!(a2.hybridization, SP2 | SP3) {
                 let bo = bond_type_as_double(mol.bond(bond).order);
                 for &(b_idx, t1) in mol.atom_bonds(idx1) {
@@ -272,7 +276,7 @@ fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContr
                 }
             }
             let count = here.len();
-            for mut t in here {
+            for mut t in here.drain(..) {
                 t.scale_force_constant(count);
                 out.push(t);
             }
@@ -289,7 +293,10 @@ fn add_inversions(mol: &Molecule, out: &mut Vec<InversionContrib>) {
         if matches!(at2, 6..=8) && mol.atom(center).hybridization != Hybridization::SP2 {
             continue;
         }
-        let nb: Vec<usize> = mol.neighbors(center).collect();
+        let mut nb = [0usize; 3];
+        for (slot, a) in nb.iter_mut().zip(mol.neighbors(center)) {
+            *slot = a;
+        }
         let is_bound_to_sp2_o = at2 == 6
             && nb.iter().any(|&a| mol.atom(a).atomic_num == 8 && mol.atom(a).hybridization == Hybridization::SP2);
         // RDKit stores the neighbours at idx[0], idx[2], idx[3]

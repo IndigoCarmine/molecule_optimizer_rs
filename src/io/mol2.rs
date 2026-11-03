@@ -344,7 +344,7 @@ fn infer_charges(mol: &mut Molecule, types: &[String]) {
             6 => 1,                                   // carboxylate
             7 => 1,                                   // nitro (N+ handled by valence)
             15 => 1,                                  // phosphate
-            16 => (oxy.len().min(3)).saturating_sub(1).max(1).min(2), // sulfonate/sulfate
+            16 => (oxy.len().min(3)).saturating_sub(1).clamp(1, 2), // sulfonate/sulfate
             _ => 1,
         };
         let already_double = oxy.iter().filter(|&&(_, b)| mol.bond(b).order == BondOrder::Double).count();

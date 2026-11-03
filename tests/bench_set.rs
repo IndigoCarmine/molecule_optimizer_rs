@@ -35,10 +35,6 @@ fn rmsd_heavy(m: &Molecule, a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
     kabsch_rmsd(&pa, &pb)
 }
 
-/// Molecules whose result depends on ring order (our ring perception orders
-/// rings differently from RDKit; being fixed by porting RDKit's ring finding).
-const KNOWN_DIFFERENCES: &[(&str, &str)] = &[("MMFF", "fullerene_C60")];
-
 fn check(kind: &str, builder: &dyn ForceFieldBuilder, label: &str) {
     let initial: HashMap<String, Molecule> = load("initial.sdf").into_iter().map(|m| (m.name.clone(), m)).collect();
     let opt = load(&format!("{}_opt.sdf", kind.to_lowercase()));
@@ -48,10 +44,6 @@ fn check(kind: &str, builder: &dyn ForceFieldBuilder, label: &str) {
     let mut worst_rmsd = 0.0f64;
     let mut failures = Vec::new();
     for o in &opt {
-        if KNOWN_DIFFERENCES.contains(&(kind, o.name.as_str())) {
-            println!("{label}: skipping known difference {}", o.name);
-            continue;
-        }
         let m0 = &initial[&o.name];
         let e0_ref = prop(o, "E_INITIAL");
         let eopt_ref = prop(o, "E_OPT");

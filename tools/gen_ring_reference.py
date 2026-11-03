@@ -15,7 +15,11 @@ Writes into ``tests/data/rings/``:
 
       {"<repo-relative sdf path>": [
           {"index": <record index>, "name": <title>,
-           "atom_rings": [[...], ...], "bond_rings": [[...], ...]}
+           "atom_rings": [[...], ...], "bond_rings": [[...], ...],
+           # aromatic molecules only: canonical atom ranks
+           # (CanonicalRankAtomsInFragment over all atoms/bonds) and the
+           # double bonds after the canonical Kekulize MMFF typing uses
+           "ranks": [...], "kekule_double": [...]}
           | {"index": <record index>, "name": <title>, "failed": true},
           ...]}
 
@@ -97,12 +101,23 @@ def ring_record(idx, mol):
     if mol is None:
         return {"index": idx, "name": None, "failed": True}
     ri = mol.GetRingInfo()
-    return {
+    rec = {
         "index": idx,
         "name": mol.GetProp("_Name") if mol.HasProp("_Name") else "",
         "atom_rings": [list(r) for r in ri.AtomRings()],
         "bond_rings": [list(r) for r in ri.BondRings()],
     }
+    if any(a.GetIsAromatic() for a in mol.GetAtoms()):
+        n, nb = mol.GetNumAtoms(), mol.GetNumBonds()
+        rec["ranks"] = list(Chem.CanonicalRankAtomsInFragment(mol, list(range(n)), list(range(nb))))
+        km = Chem.RWMol(mol)
+        try:
+            Chem.Kekulize(km, clearAromaticFlags=True)  # canonical=True
+            rec["kekule_double"] = [b.GetIdx() for b in km.GetBonds()
+                                    if b.GetBondType() == Chem.BondType.DOUBLE]
+        except Exception:
+            rec["kekule_double"] = None
+    return rec
 
 
 def write_tricky(path):

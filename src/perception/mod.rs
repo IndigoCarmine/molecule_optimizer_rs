@@ -4,11 +4,13 @@
 
 pub mod aromaticity;
 pub mod bond_perception;
+mod canon;
 pub mod hybridization;
 pub mod hydrogens;
 pub mod kekulize;
 pub mod legacy_stereo;
 pub mod matching;
+mod rdkit_kekulize;
 mod ring_decomposer;
 pub mod rings;
 pub mod stereo;
@@ -72,12 +74,41 @@ pub fn has_3d_coords(mol: &Molecule) -> bool {
     mol.coords.iter().any(|p| p[2].abs() > 1e-4)
 }
 
-/// Returns a kekulized copy (aromatic flags cleared) – what MMFF typing uses.
+/// Returns a kekulized copy (aromatic flags cleared).
 pub fn kekulized_copy(mol: &Molecule) -> Result<Molecule> {
     let mut m = mol.clone();
     kekulize::kekulize(&mut m)?;
     aromaticity::clear_aromatic_flags(&mut m);
     Ok(m)
+}
+
+/// RDKit canonical atom ranks of the whole molecule
+/// (`Canon::rankFragmentAtoms` with all atoms and bonds, ties broken; equal
+/// to `Chem.CanonicalRankAtomsInFragment(mol, range(n), range(nb))`).  For
+/// 3D molecules the chirality used is RDKit's legacy stereo perception from
+/// the coordinates; otherwise the molecule's own chiral tags.
+pub fn canonical_atom_ranks(mol: &Molecule) -> Vec<usize> {
+    let mut stereo = mol.clone();
+    let ri = stereo.rings().clone();
+    if has_3d_coords(&stereo) {
+        legacy_stereo::assign_stereo_legacy_from_3d(&mut stereo);
+    }
+    canon::rank_fragment_atoms(&stereo, &ri)
+}
+
+/// Kekulized copy exactly as RDKit's canonical `MolOps::Kekulize` produces
+/// it (what RDKit's MMFF typer works on).  The canonical ranks use the
+/// chirality RDKit would have assigned (legacy stereo perception from 3D
+/// coordinates when the molecule is 3D).  Falls back to
+/// [`kekulized_copy`] if the RDKit algorithm cannot kekulize the molecule.
+pub fn kekulized_copy_canonical(mol: &Molecule) -> Result<Molecule> {
+    let mut m = mol.clone();
+    m.rings();
+    let ranks = canonical_atom_ranks(&m);
+    match rdkit_kekulize::kekulize_canonical(&mut m, Some(&ranks)) {
+        Ok(()) => Ok(m),
+        Err(_) => kekulized_copy(mol),
+    }
 }
 
 #[cfg(test)]

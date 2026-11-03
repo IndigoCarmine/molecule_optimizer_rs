@@ -4,7 +4,8 @@ h(x) = (x + K) * exp(x^2) * erfc(x) is fitted in t = (x - K)/(x + K) on
 x in [0, X] against 110-digit decimal reference values.
 
 Usage: python tools/fit_erfc.py X K DEGREE [print]
-(the coefficients in erfc.rs come from `python tools/fit_erfc.py 8 2.0 20 print`).
+(the monomial coefficients in erfc.rs come from
+`python tools/fit_erfc.py 8 2.0 20 print`).
 """
 from decimal import Decimal as D, getcontext
 import numpy as np, sys
@@ -51,6 +52,7 @@ approx = np.polynomial.chebyshev.chebval(u, c) / (K + xs)
 err = max(abs(float((D(float(a)) - v) / v)) for a, v in zip(approx, hp))
 print(deg, K, err)
 if len(sys.argv) > 4:
-    print("t0", t0, "t1", t1)
-    for v in c:
+    # erfc.rs evaluates the series as a polynomial in u (monomial basis)
+    print("t0", t0, "t1", t1, "monomial coefficients in u:")
+    for v in np.polynomial.chebyshev.cheb2poly(c):
         print(repr(float(v)))

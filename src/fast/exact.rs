@@ -21,7 +21,7 @@
 //!   the molecule.
 
 use super::backend::{NonbondedBackend, NonbondedEnergy};
-use super::bonded::{Lane, P, V4, dot3, ld, sub3};
+use super::bonded::{Lane, P, V4, dot3, sub3};
 use super::workspace::WorkspacePool;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -42,54 +42,44 @@ pub(crate) const F_ELE: u8 = 2;
 pub(crate) const F_14: u8 = 4;
 pub(crate) const F_DIST: u8 = 8;
 
-/// Pair-parameter table.
+/// Pair-parameter table: one record per (type, type) combination.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ParamTable {
-    /// UFF Lennard-Jones: `x_ij`, `D_ij`, runtime cutoff `10·x_ij`,
-    /// `12·D_ij / x_ij`.
-    Uff { xij: Vec<f64>, eps: Vec<f64>, thresh: Vec<f64>, pre12: Vec<f64> },
-    /// MMFF buffered 14-7 with derived constants.
-    Mmff {
-        r: Vec<f64>,
-        eps: Vec<f64>,
-        eps_r: Vec<f64>,
-        vdw1r: Vec<f64>,
-        vdw1m1r: Vec<f64>,
-        vdw2r7: Vec<f64>,
-        vdw2m1r7: Vec<f64>,
-    },
+    /// UFF Lennard-Jones: `[x_ij, D_ij, 10·x_ij (runtime cutoff), 12·D_ij/x_ij]`.
+    Uff(Vec<[f64; 4]>),
+    /// MMFF buffered 14-7: `[R*, eps, eps/R*, 1.07·R*, 0.07·R*, 1.12·R*⁷,
+    /// 0.12·R*⁷, 0]`.
+    Mmff(Vec<[f64; 8]>),
     #[default]
     Empty,
 }
 
 impl ParamTable {
     fn new_uff() -> Self {
-        ParamTable::Uff { xij: vec![], eps: vec![], thresh: vec![], pre12: vec![] }
+        ParamTable::Uff(Vec::new())
     }
     fn new_mmff() -> Self {
-        ParamTable::Mmff { r: vec![], eps: vec![], eps_r: vec![], vdw1r: vec![], vdw1m1r: vec![], vdw2r7: vec![], vdw2m1r7: vec![] }
+        ParamTable::Mmff(Vec::new())
+    }
+    fn len(&self) -> usize {
+        match self {
+            ParamTable::Uff(v) => v.len(),
+            ParamTable::Mmff(v) => v.len(),
+            ParamTable::Empty => 0,
+        }
     }
     /// Adds a UFF entry (`xij`, `well_depth`, `thresh` as in `VdwContrib`).
     fn push_uff(&mut self, x: f64, d: f64, th: f64) {
-        if let ParamTable::Uff { xij, eps, thresh, pre12 } = self {
-            xij.push(x);
-            eps.push(d);
-            thresh.push(th);
-            pre12.push(12. * d / x);
+        if let ParamTable::Uff(v) = self {
+            v.push([x, d, th, 12. * d / x]);
         }
     }
     /// Adds an MMFF entry (`R*_ij`, `eps_ij`).
     fn push_mmff(&mut self, rs: f64, e: f64) {
-        if let ParamTable::Mmff { r, eps, eps_r, vdw1r, vdw1m1r, vdw2r7, vdw2m1r7 } = self {
+        if let ParamTable::Mmff(v) = self {
             let r2 = rs * rs;
             let r7 = r2 * r2 * r2 * rs;
-            r.push(rs);
-            eps.push(e);
-            eps_r.push(e / rs);
-            vdw1r.push(VDW1 * rs);
-            vdw1m1r.push(VDW1M1 * rs);
-            vdw2r7.push(VDW2 * r7);
-            vdw2m1r7.push(VDW2M1 * r7);
+            v.push([rs, e, e / rs, VDW1 * rs, VDW1M1 * rs, VDW2 * r7, VDW2M1 * r7, 0.0]);
         }
     }
 }
@@ -149,8 +139,16 @@ impl ExactNonbonded {
         grain: usize,
         simd: bool,
     ) -> Self {
+        // the kernels index without bounds checks: validate here
+        let np = params.len();
+        assert!(n_atoms < u32::MAX as usize / 3, "too many atoms");
         let mut row_start = vec![0u32; n_atoms + 1];
+        let mut last = 0u32;
         for pr in pairs {
+            assert!(pr.i >= last, "pairs must be ordered by their first atom");
+            assert!((pr.i as usize) < n_atoms && (pr.j as usize) < n_atoms, "pair atom index out of range");
+            assert!((pr.p as usize) < np, "pair parameter index out of range");
+            last = pr.i;
             row_start[pr.i as usize + 1] += 1;
         }
         for k in 0..n_atoms {
@@ -241,29 +239,56 @@ impl ExactNonbonded {
 
     /// Adds `dg` to row atom `i` and `-dg` to the partners, pair by pair
     /// (the reference contribs' order).
+    ///
+    /// Safety: `t + L::N <= num_pairs`, `grad.len() >= 3 * n_atoms`, `i < n_atoms`.
     #[inline(always)]
-    fn scatter_pairs<L: Lane>(&self, grad: &mut [f64], i: usize, t: usize, dg: P<L>) {
+    unsafe fn scatter_pairs<L: Lane>(&self, grad: &mut [f64], i: usize, t: usize, dg: P<L>) {
         let mut v = [[0.0f64; 4]; 3];
         for d in 0..3 {
             dg[d].write(&mut v[d]);
         }
         let a = 3 * i;
         for k in 0..L::N {
-            let b = 3 * self.j[t + k] as usize;
-            for d in 0..3 {
-                grad[a + d] += v[d][k];
-                grad[b + d] += -v[d][k];
+            unsafe {
+                let b = 3 * *self.j.get_unchecked(t + k) as usize;
+                for d in 0..3 {
+                    *grad.get_unchecked_mut(a + d) += v[d][k];
+                    *grad.get_unchecked_mut(b + d) += -v[d][k];
+                }
             }
         }
     }
 
+    /// Partner coordinates of pairs `t .. t + L::N`.
+    ///
+    /// Safety: `t + L::N <= num_pairs`, `pos.len() >= 3 * n_atoms`.
     #[inline(always)]
-    fn uff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> L {
-        let ParamTable::Uff { xij, eps, thresh, pre12 } = &*self.params else { unreachable!() };
-        let pj = ld::<L>(pos, &self.j, t);
-        let p = &self.p;
-        let g = |v: &Vec<f64>| L::from_fn(|k| v[p[t + k] as usize]);
-        let (x, d_, th) = (g(xij), g(eps), g(thresh));
+    unsafe fn ldj<L: Lane>(&self, pos: &[f64], t: usize) -> P<L> {
+        unsafe {
+            let j = |k: usize| 3 * *self.j.get_unchecked(t + k) as usize;
+            [
+                L::from_fn(|k| *pos.get_unchecked(j(k))),
+                L::from_fn(|k| *pos.get_unchecked(j(k) + 1)),
+                L::from_fn(|k| *pos.get_unchecked(j(k) + 2)),
+            ]
+        }
+    }
+
+    /// Parameter records of pairs `t .. t + L::N`, field `f`.
+    ///
+    /// Safety: `t + L::N <= num_pairs` (parameter indices are validated).
+    #[inline(always)]
+    unsafe fn par<L: Lane, const W: usize>(&self, tab: &[[f64; W]], t: usize, f: usize) -> L {
+        unsafe { L::from_fn(|k| *tab.get_unchecked(*self.p.get_unchecked(t + k) as usize).get_unchecked(f)) }
+    }
+
+    /// Safety: see [`Self::eval_rows`].
+    #[inline(always)]
+    unsafe fn uff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> L {
+        let ParamTable::Uff(tab) = &*self.params else { unreachable!() };
+        let pj = unsafe { self.ldj::<L>(pos, t) };
+        let g = |f: usize| unsafe { self.par::<L, 4>(tab, t, f) };
+        let (x, d_, th) = (g(0), g(1), g(2));
         let d = sub3(xi, pj);
         let dist = dot3(d, d).sqrt();
         let in_r = !dist.gtv(th);
@@ -274,7 +299,7 @@ impl ExactNonbonded {
         let r12 = r6 * r6;
         let e = L::select(in_r & posd, d_ * (r12 - r6 * 2.0), L::splat(0.0));
         if G {
-            let pre = g(pre12) * (r6 * r - r12 * r);
+            let pre = g(3) * (r6 * r - r12 * r);
             let z = L::splat(0.0);
             let h = L::splat(100.0);
             let dg: P<L> = [
@@ -282,38 +307,38 @@ impl ExactNonbonded {
                 L::select(in_r, L::select(posd, pre * d[1] / dist, h), z),
                 L::select(in_r, L::select(posd, pre * d[2] / dist, h), z),
             ];
-            self.scatter_pairs(grad, i, t, dg);
+            unsafe { self.scatter_pairs(grad, i, t, dg) };
         }
         e
     }
 
+    /// Safety: see [`Self::eval_rows`].
     #[inline(always)]
-    fn mmff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> (L, L) {
-        let ParamTable::Mmff { r, eps, eps_r, vdw1r, vdw1m1r, vdw2r7, vdw2m1r7 } = &*self.params else { unreachable!() };
-        let pj = ld::<L>(pos, &self.j, t);
-        let p = &self.p;
-        let fl = &self.flags;
-        let g = |v: &Vec<f64>| L::from_fn(|k| v[p[t + k] as usize]);
-        let bit = |b: u8| L::from_fn(|k| if fl[t + k] & b != 0 { 1.0 } else { 0.0 }).gt(0.5);
+    unsafe fn mmff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], i: usize, t: usize, xi: P<L>) -> (L, L) {
+        let ParamTable::Mmff(tab) = &*self.params else { unreachable!() };
+        let pj = unsafe { self.ldj::<L>(pos, t) };
+        let g = |f: usize| unsafe { self.par::<L, 8>(tab, t, f) };
+        let fl = |k: usize| unsafe { *self.flags.get_unchecked(t + k) };
+        let bit = |b: u8| L::from_fn(|k| if fl(k) & b != 0 { 1.0 } else { 0.0 }).gt(0.5);
         let (vm, em, m14, dm) = (bit(F_VDW), bit(F_ELE), bit(F_14), bit(F_DIST));
-        let ct = L::from_fn(|k| self.ct[t + k]);
+        let ct = L::from_fn(|k| unsafe { *self.ct.get_unchecked(t + k) });
         let z = L::splat(0.0);
         let d = sub3(xi, pj);
         let dist = dot3(d, d).sqrt();
         // van der Waals energy (calcVdWEnergy)
         let dist2 = dist * dist;
         let dist7 = dist2 * dist2 * dist2 * dist;
-        let a = g(vdw1r) / (dist + g(vdw1m1r));
+        let a = g(3) / (dist + g(4));
         let a2 = a * a;
         let a7 = a2 * a2 * a2 * a;
-        let b = g(vdw2r7) / (dist7 + g(vdw2m1r7)) - 2.0;
-        let ev = L::select(vm, g(eps) * a7 * b, z);
+        let b = g(5) / (dist7 + g(6)) - 2.0;
+        let ev = L::select(vm, g(1) * a7 * b, z);
         // electrostatics (calcEleEnergy)
         let corr = dist + 0.05;
         let sc = L::select(m14, L::splat(0.75), L::splat(1.0));
         let ee = L::select(em, ct * DIEL / L::select(dm, corr * corr, corr) * sc, z);
         if G {
-            let rr = g(r);
+            let rr = g(0);
             let q = dist / rr;
             let q2 = q * q;
             let q6 = q2 * q2 * q2;
@@ -322,7 +347,7 @@ impl ExactNonbonded {
             let tt = L::splat(VDW1) / (q + VDW1 - 1.0);
             let t2 = tt * tt;
             let t7 = t2 * t2 * t2 * tt;
-            let de_v = g(eps_r) * t7 * (q6 * -VDW2T7 / (q7p * q7p) + ((L::splat(-VDW2T7) / q7p + 14.0) / (q + VDW1M1)));
+            let de_v = g(2) * t7 * (q6 * -VDW2T7 / (q7p * q7p) + ((L::splat(-VDW2T7) / q7p + 14.0) / (q + VDW1M1)));
             let vg = L::select(vm, de_v / dist, z);
             let cg = corr * L::select(dm, corr * corr, corr);
             let bm = L::select(dm, L::splat(-DIEL * 2.0), L::splat(-DIEL * 1.0));
@@ -337,7 +362,7 @@ impl ExactNonbonded {
                 L::select(posd, de * d[1], special),
                 L::select(posd, de * d[2], special),
             ];
-            self.scatter_pairs(grad, i, t, dg);
+            unsafe { self.scatter_pairs(grad, i, t, dg) };
         }
         (ev, ee)
     }
@@ -347,6 +372,8 @@ impl ExactNonbonded {
     /// reference contribs do); returns the separate (vdW, electrostatic)
     /// sums.
     fn eval_rows<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
+        // bounds for the unchecked kernels (indices validated at construction)
+        assert!(pos.len() >= 3 * self.n_atoms && (!G || grad.len() >= 3 * self.n_atoms) && rows.end <= self.n_atoms);
         let (mut ev, mut ee) = (0.0, 0.0);
         let mut lv = [0.0f64; 4];
         let mut le = [0.0f64; 4];
@@ -359,34 +386,31 @@ impl ExactNonbonded {
             let xi = [L::splat(xs[0]), L::splat(xs[1]), L::splat(xs[2])];
             let mut t = s;
             if self.mmff {
-                let mut fold = |t: usize, n: usize, lv: &[f64; 4], le: &[f64; 4], acc: &mut f64| {
-                    for k in 0..n {
-                        let f = self.flags[t + k];
-                        if f & F_VDW != 0 {
-                            *acc += lv[k];
-                            ev += lv[k];
-                        }
-                        if f & F_ELE != 0 {
-                            *acc += le[k];
-                            ee += le[k];
-                        }
-                    }
-                };
+                // Absent parts are 0.0; a running sum that starts at +0.0 can
+                // never be -0.0, so adding them is bitwise neutral.
                 while t + L::N <= e {
-                    let (v, el) = self.mmff_block::<L, G>(pos, grad, i, t, xi);
+                    let (v, el) = unsafe { self.mmff_block::<L, G>(pos, grad, i, t, xi) };
                     v.write(&mut lv);
                     el.write(&mut le);
-                    fold(t, L::N, &lv, &le, acc);
+                    for k in 0..L::N {
+                        *acc += lv[k];
+                        *acc += le[k];
+                        ev += lv[k];
+                        ee += le[k];
+                    }
                     t += L::N;
                 }
                 while t < e {
-                    let (v, el) = self.mmff_block::<f64, G>(pos, grad, i, t, xs);
-                    fold(t, 1, &[v, 0.0, 0.0, 0.0], &[el, 0.0, 0.0, 0.0], acc);
+                    let (v, el) = unsafe { self.mmff_block::<f64, G>(pos, grad, i, t, xs) };
+                    *acc += v;
+                    *acc += el;
+                    ev += v;
+                    ee += el;
                     t += 1;
                 }
             } else {
                 while t + L::N <= e {
-                    self.uff_block::<L, G>(pos, grad, i, t, xi).write(&mut lv);
+                    unsafe { self.uff_block::<L, G>(pos, grad, i, t, xi) }.write(&mut lv);
                     for x in &lv[..L::N] {
                         *acc += *x;
                         ev += *x;
@@ -394,7 +418,7 @@ impl ExactNonbonded {
                     t += L::N;
                 }
                 while t < e {
-                    let x = self.uff_block::<f64, G>(pos, grad, i, t, xs);
+                    let x = unsafe { self.uff_block::<f64, G>(pos, grad, i, t, xs) };
                     *acc += x;
                     ev += x;
                     t += 1;

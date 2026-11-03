@@ -100,159 +100,170 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
     let mut seen_tables: Vec<TableKind> = Vec::new();
     let (mut seen_nb, mut seen_cons) = (false, false);
     let b = &mut out.bonded;
+    let mut terms: Vec<Option<&dyn Any>> = Vec::new();
     for (ci, c) in contribs.iter().enumerate() {
-        let any = c.as_any();
-        let mut table = |k: TableKind, segs: &mut Vec<Segment>| {
-            if !seen_tables.contains(&k) {
-                seen_tables.push(k);
-                segs.push(Segment::Table(k));
-            }
-        };
-        macro_rules! is {
-            ($t:ty) => {
-                any.and_then(|a| a.downcast_ref::<$t>())
+        // a term list is compiled term by term (an opaque one is recorded once)
+        terms.clear();
+        c.visit_terms(&mut |a| terms.push(a));
+        for &any in &terms {
+            let mut table = |k: TableKind, segs: &mut Vec<Segment>| {
+                if !seen_tables.contains(&k) {
+                    seen_tables.push(k);
+                    segs.push(Segment::Table(k));
+                }
             };
-        }
-        if let Some(t) = is!(uff::BondStretchContrib) {
-            let u = &mut b.uff_bonds;
-            u.a.push(idx(t.idx1));
-            u.b.push(idx(t.idx2));
-            u.r0.push(t.rest_len);
-            u.k.push(t.force_constant);
-            table(TableKind::UffBond, &mut out.segments);
-        } else if let Some(t) = is!(uff::AngleBendContrib) {
-            let u = &mut b.uff_angles;
-            u.a.push(idx(t.idx1));
-            u.b.push(idx(t.idx2));
-            u.c.push(idx(t.idx3));
-            u.fc.push(t.force_constant);
-            u.c0.push(t.c0);
-            u.c1.push(t.c1);
-            u.c2.push(t.c2);
-            u.theta0.push(t.theta0);
-            u.ord.push(t.order as f64);
-            u.ord_sq.push((t.order * t.order) as f64);
-            u.fc_ord.push(t.force_constant / t.order as f64);
-            table(TableKind::UffAngle, &mut out.segments);
-        } else if let Some(t) = is!(uff::TorsionAngleContrib) {
-            let u = &mut b.uff_torsions;
-            u.a.push(idx(t.idx[0]));
-            u.b.push(idx(t.idx[1]));
-            u.c.push(idx(t.idx[2]));
-            u.d.push(idx(t.idx[3]));
-            u.half_fc.push(t.force_constant / 2.0);
-            u.cos_term.push(t.cos_term);
-            u.ord.push(t.order as f64);
-            u.dfac.push(-(t.force_constant / 2.0 * t.cos_term) * t.order as f64);
-            table(TableKind::UffTorsion, &mut out.segments);
-        } else if let Some(t) = is!(uff::InversionContrib) {
-            let u = &mut b.uff_inversions;
-            u.a.push(idx(t.idx[0]));
-            u.b.push(idx(t.idx[1]));
-            u.c.push(idx(t.idx[2]));
-            u.d.push(idx(t.idx[3]));
-            u.fc.push(t.force_constant);
-            u.c0.push(t.c0);
-            u.c1.push(t.c1);
-            u.c2.push(t.c2);
-            table(TableKind::UffInversion, &mut out.segments);
-        } else if let Some(t) = is!(mmff::terms::BondStretchContrib) {
-            let m = &mut b.mmff_bonds;
-            for k in 0..t.len() {
-                m.a.push(idx(t.at1[k]));
-                m.b.push(idx(t.at2[k]));
-                m.r0.push(t.r0[k]);
-                m.kb.push(t.kb[k]);
+            macro_rules! is {
+                ($t:ty) => {
+                    any.and_then(|a| a.downcast_ref::<$t>())
+                };
             }
-            table(TableKind::MmffBond, &mut out.segments);
-        } else if let Some(t) = is!(mmff::terms::AngleBendContrib) {
-            let m = &mut b.mmff_angles;
-            for k in 0..t.len() {
-                m.a.push(idx(t.at[k][0]));
-                m.b.push(idx(t.at[k][1]));
-                m.c.push(idx(t.at[k][2]));
-                m.theta0.push(t.theta0[k]);
-                m.ka.push(t.ka[k]);
-                m.lin.push(if t.is_linear[k] { 1.0 } else { 0.0 });
-            }
-            table(TableKind::MmffAngle, &mut out.segments);
-        } else if let Some(t) = is!(mmff::terms::StretchBendContrib) {
-            let m = &mut b.mmff_stbn;
-            for k in 0..t.len() {
-                m.a.push(idx(t.at[k][0]));
-                m.b.push(idx(t.at[k][1]));
-                m.c.push(idx(t.at[k][2]));
-                m.r1.push(t.rest_len1[k]);
-                m.r2.push(t.rest_len2[k]);
-                m.theta0.push(t.theta0[k]);
-                m.k1.push(t.k1[k]);
-                m.k2.push(t.k2[k]);
-            }
-            table(TableKind::MmffStretchBend, &mut out.segments);
-        } else if let Some(t) = is!(mmff::terms::OopBendContrib) {
-            let m = &mut b.mmff_oops;
-            for k in 0..t.len() {
-                m.a.push(idx(t.at[k][0]));
-                m.b.push(idx(t.at[k][1]));
-                m.c.push(idx(t.at[k][2]));
-                m.d.push(idx(t.at[k][3]));
-                m.koop.push(t.koop[k]);
-            }
-            table(TableKind::MmffOop, &mut out.segments);
-        } else if let Some(t) = is!(mmff::terms::TorsionAngleContrib) {
-            let m = &mut b.mmff_torsions;
-            for k in 0..t.len() {
-                m.a.push(idx(t.at[k][0]));
-                m.b.push(idx(t.at[k][1]));
-                m.c.push(idx(t.at[k][2]));
-                m.d.push(idx(t.at[k][3]));
-                m.v1.push(t.v1[k]);
-                m.v2.push(t.v2[k]);
-                m.v3.push(t.v3[k]);
-            }
-            table(TableKind::MmffTorsion, &mut out.segments);
-        } else if let Some(t) = is!(uff::VdwContrib) {
-            if skip_nonbonded || out.nb.add_uff(t) {
-                if !seen_nb {
-                    seen_nb = true;
-                    out.segments.push(Segment::Nonbonded);
+            if let Some(t) = is!(uff::BondStretchContrib) {
+                let u = &mut b.uff_bonds;
+                u.a.push(idx(t.idx1));
+                u.b.push(idx(t.idx2));
+                u.r0.push(t.rest_len);
+                u.k.push(t.force_constant);
+                table(TableKind::UffBond, &mut out.segments);
+            } else if let Some(t) = is!(uff::AngleBendContrib) {
+                let u = &mut b.uff_angles;
+                u.a.push(idx(t.idx1));
+                u.b.push(idx(t.idx2));
+                u.c.push(idx(t.idx3));
+                u.fc.push(t.force_constant);
+                u.c0.push(t.c0);
+                u.c1.push(t.c1);
+                u.c2.push(t.c2);
+                u.theta0.push(t.theta0);
+                u.ord.push(t.order as f64);
+                u.ord_sq.push((t.order * t.order) as f64);
+                u.fc_ord.push(t.force_constant / t.order as f64);
+                table(TableKind::UffAngle, &mut out.segments);
+            } else if let Some(t) = is!(uff::TorsionAngleContrib) {
+                let u = &mut b.uff_torsions;
+                u.a.push(idx(t.idx[0]));
+                u.b.push(idx(t.idx[1]));
+                u.c.push(idx(t.idx[2]));
+                u.d.push(idx(t.idx[3]));
+                u.half_fc.push(t.force_constant / 2.0);
+                u.cos_term.push(t.cos_term);
+                u.ord.push(t.order as f64);
+                u.dfac.push(-(t.force_constant / 2.0 * t.cos_term) * t.order as f64);
+                table(TableKind::UffTorsion, &mut out.segments);
+            } else if let Some(t) = is!(uff::InversionContrib) {
+                let u = &mut b.uff_inversions;
+                u.a.push(idx(t.idx[0]));
+                u.b.push(idx(t.idx[1]));
+                u.c.push(idx(t.idx[2]));
+                u.d.push(idx(t.idx[3]));
+                u.fc.push(t.force_constant);
+                u.c0.push(t.c0);
+                u.c1.push(t.c1);
+                u.c2.push(t.c2);
+                table(TableKind::UffInversion, &mut out.segments);
+            } else if let Some(t) = is!(mmff::terms::BondStretchContrib) {
+                let m = &mut b.mmff_bonds;
+                for k in 0..t.len() {
+                    m.a.push(idx(t.at1[k]));
+                    m.b.push(idx(t.at2[k]));
+                    m.r0.push(t.r0[k]);
+                    m.kb.push(t.kb[k]);
+                }
+                table(TableKind::MmffBond, &mut out.segments);
+            } else if let Some(t) = is!(mmff::terms::AngleBendContrib) {
+                let m = &mut b.mmff_angles;
+                for k in 0..t.len() {
+                    m.a.push(idx(t.at[k][0]));
+                    m.b.push(idx(t.at[k][1]));
+                    m.c.push(idx(t.at[k][2]));
+                    m.theta0.push(t.theta0[k]);
+                    m.ka.push(t.ka[k]);
+                    m.lin.push(if t.is_linear[k] { 1.0 } else { 0.0 });
+                }
+                table(TableKind::MmffAngle, &mut out.segments);
+            } else if let Some(t) = is!(mmff::terms::StretchBendContrib) {
+                let m = &mut b.mmff_stbn;
+                for k in 0..t.len() {
+                    m.a.push(idx(t.at[k][0]));
+                    m.b.push(idx(t.at[k][1]));
+                    m.c.push(idx(t.at[k][2]));
+                    m.r1.push(t.rest_len1[k]);
+                    m.r2.push(t.rest_len2[k]);
+                    m.theta0.push(t.theta0[k]);
+                    m.k1.push(t.k1[k]);
+                    m.k2.push(t.k2[k]);
+                }
+                table(TableKind::MmffStretchBend, &mut out.segments);
+            } else if let Some(t) = is!(mmff::terms::OopBendContrib) {
+                let m = &mut b.mmff_oops;
+                for k in 0..t.len() {
+                    m.a.push(idx(t.at[k][0]));
+                    m.b.push(idx(t.at[k][1]));
+                    m.c.push(idx(t.at[k][2]));
+                    m.d.push(idx(t.at[k][3]));
+                    m.koop.push(t.koop[k]);
+                }
+                table(TableKind::MmffOop, &mut out.segments);
+            } else if let Some(t) = is!(mmff::terms::TorsionAngleContrib) {
+                let m = &mut b.mmff_torsions;
+                for k in 0..t.len() {
+                    m.a.push(idx(t.at[k][0]));
+                    m.b.push(idx(t.at[k][1]));
+                    m.c.push(idx(t.at[k][2]));
+                    m.d.push(idx(t.at[k][3]));
+                    m.v1.push(t.v1[k]);
+                    m.v2.push(t.v2[k]);
+                    m.v3.push(t.v3[k]);
+                }
+                table(TableKind::MmffTorsion, &mut out.segments);
+            } else if let Some(t) = is!(uff::VdwContrib) {
+                if skip_nonbonded || out.nb.add_uff(t) {
+                    if !seen_nb {
+                        seen_nb = true;
+                        out.segments.push(Segment::Nonbonded);
+                    }
+                } else {
+                    if out.opaque.last() != Some(&ci) {
+                        out.opaque.push(ci);
+                        out.segments.push(Segment::Opaque(ci));
+                    }
+                }
+            } else if let Some(t) = is!(mmff::terms::NonbondedContrib) {
+                if skip_nonbonded || out.nb.add_mmff(t) {
+                    if !seen_nb {
+                        seen_nb = true;
+                        out.segments.push(Segment::Nonbonded);
+                    }
+                } else {
+                    if out.opaque.last() != Some(&ci) {
+                        out.opaque.push(ci);
+                        out.segments.push(Segment::Opaque(ci));
+                    }
                 }
             } else {
-                out.opaque.push(ci);
-                out.segments.push(Segment::Opaque(ci));
-            }
-        } else if let Some(t) = is!(mmff::terms::NonbondedContrib) {
-            if skip_nonbonded || out.nb.add_mmff(t) {
-                if !seen_nb {
-                    seen_nb = true;
-                    out.segments.push(Segment::Nonbonded);
+                let cons = &mut out.constraints.terms;
+                let mut is_cons = true;
+                if let Some(t) = is!(DistanceConstraintContrib) {
+                    cons.push(ConstraintTerm::Distance(t.clone()));
+                } else if let Some(t) = is!(AngleConstraintContrib) {
+                    cons.push(ConstraintTerm::Angle(t.clone()));
+                } else if let Some(t) = is!(TorsionConstraintContrib) {
+                    cons.push(ConstraintTerm::Torsion(t.clone()));
+                } else if let Some(t) = is!(PositionConstraintContrib) {
+                    cons.push(ConstraintTerm::Position(t.clone()));
+                } else {
+                    is_cons = false;
                 }
-            } else {
-                out.opaque.push(ci);
-                out.segments.push(Segment::Opaque(ci));
-            }
-        } else {
-            let cons = &mut out.constraints.terms;
-            let mut is_cons = true;
-            if let Some(t) = is!(DistanceConstraintContrib) {
-                cons.push(ConstraintTerm::Distance(t.clone()));
-            } else if let Some(t) = is!(AngleConstraintContrib) {
-                cons.push(ConstraintTerm::Angle(t.clone()));
-            } else if let Some(t) = is!(TorsionConstraintContrib) {
-                cons.push(ConstraintTerm::Torsion(t.clone()));
-            } else if let Some(t) = is!(PositionConstraintContrib) {
-                cons.push(ConstraintTerm::Position(t.clone()));
-            } else {
-                is_cons = false;
-            }
-            if is_cons {
-                if !seen_cons {
-                    seen_cons = true;
-                    out.segments.push(Segment::Constraints);
+                if is_cons {
+                    if !seen_cons {
+                        seen_cons = true;
+                        out.segments.push(Segment::Constraints);
+                    }
+                } else {
+                    if out.opaque.last() != Some(&ci) {
+                        out.opaque.push(ci);
+                        out.segments.push(Segment::Opaque(ci));
+                    }
                 }
-            } else {
-                out.opaque.push(ci);
-                out.segments.push(Segment::Opaque(ci));
             }
         }
     }

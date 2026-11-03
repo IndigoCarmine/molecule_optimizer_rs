@@ -19,6 +19,7 @@ pub mod utils;
 use crate::core::Molecule;
 use crate::error::Result;
 use rayon::prelude::*;
+use std::ops::Range;
 use std::sync::Arc;
 
 pub use assign::{Assignment, ForceFieldKind, assign};
@@ -54,6 +55,103 @@ pub trait Contrib: Send + Sync {
     /// into vectorized tables. `None` = opaque (evaluated as is).
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
+    }
+    /// Number of independent terms that [`ContribForceField`] sums one by
+    /// one, as if each were its own contrib (1 unless this is a
+    /// [`TermList`]).
+    fn num_terms(&self) -> usize {
+        1
+    }
+    /// Adds the energies of the terms `range` (a subrange of
+    /// `0..num_terms()`) to `acc`, one term at a time.
+    fn energy_acc(&self, pos: &[f64], range: Range<usize>, acc: &mut f64) {
+        debug_assert!(range == (0..1));
+        *acc += self.energy(pos);
+    }
+    /// Like [`Contrib::energy_acc`], also adding the gradients to `grad`.
+    fn energy_grad_acc(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>, acc: &mut f64) {
+        debug_assert!(range == (0..1));
+        *acc += self.energy_grad(pos, grad);
+    }
+    /// Calls `f` with the downcasting hook of every term in order (that of
+    /// the contrib itself unless it is a [`TermList`]).
+    fn visit_terms<'a>(&'a self, f: &mut dyn FnMut(Option<&'a dyn std::any::Any>)) {
+        f(self.as_any());
+    }
+}
+
+/// Terms of one type evaluated as one contrib, without dynamic dispatch or
+/// a separate allocation per term. The list stands for its terms as
+/// separate contribs: [`ContribForceField`] adds their energies to its
+/// running sum one by one in list order and its parallel split may cut
+/// through the list (see [`Contrib::num_terms`]), so the results are the
+/// same as with one contrib per term. (Only [`Contrib::energy`] /
+/// [`Contrib::energy_grad`] of the list itself return the partial sum.)
+#[derive(Debug, Clone)]
+pub struct TermList<T> {
+    terms: Vec<T>,
+}
+
+impl<T> TermList<T> {
+    pub fn new(terms: Vec<T>) -> Self {
+        TermList { terms }
+    }
+    pub fn terms(&self) -> &[T] {
+        &self.terms
+    }
+}
+
+impl<T: Contrib + 'static> TermList<T> {
+    /// The boxed list, or `None` if `terms` is empty.
+    pub fn boxed(terms: Vec<T>) -> Option<Box<dyn Contrib>> {
+        (!terms.is_empty()).then(|| Box::new(TermList::new(terms)) as Box<dyn Contrib>)
+    }
+}
+
+impl<T: Contrib + 'static> Contrib for TermList<T> {
+    fn energy(&self, pos: &[f64]) -> f64 {
+        let mut e = 0.0;
+        self.energy_acc(pos, 0..self.terms.len(), &mut e);
+        e
+    }
+    fn grad(&self, pos: &[f64], grad: &mut [f64]) {
+        for t in &self.terms {
+            t.grad(pos, grad);
+        }
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        let mut e = 0.0;
+        self.energy_grad_acc(pos, grad, 0..self.terms.len(), &mut e);
+        e
+    }
+    fn label(&self) -> &'static str {
+        self.terms.first().map_or("Other", |t| t.label())
+    }
+    fn energy_terms(&self, pos: &[f64], out: &mut dyn FnMut(&'static str, f64)) {
+        for t in &self.terms {
+            t.energy_terms(pos, out);
+        }
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn num_terms(&self) -> usize {
+        self.terms.len()
+    }
+    fn energy_acc(&self, pos: &[f64], range: Range<usize>, acc: &mut f64) {
+        for t in &self.terms[range] {
+            *acc += t.energy(pos);
+        }
+    }
+    fn energy_grad_acc(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>, acc: &mut f64) {
+        for t in &self.terms[range] {
+            *acc += t.energy_grad(pos, grad);
+        }
+    }
+    fn visit_terms<'a>(&'a self, f: &mut dyn FnMut(Option<&'a dyn std::any::Any>)) {
+        for t in &self.terms {
+            t.visit_terms(f);
+        }
     }
 }
 
@@ -156,7 +254,8 @@ impl<T: ForceFieldBuilder + ?Sized> ForceFieldBuilder for Arc<T> {
     }
 }
 
-/// Number of contribs above which energy/gradient are evaluated in parallel.
+/// Number of terms (see [`Contrib::num_terms`]) above which energy/gradient
+/// are evaluated in parallel.
 pub const DEFAULT_PARALLEL_THRESHOLD: usize = 4096;
 
 /// Force field made of a list of contributions (RDKit `ForceField`).
@@ -164,8 +263,11 @@ pub struct ContribForceField {
     dim: usize,
     n_points: usize,
     contribs: Vec<Box<dyn Contrib>>,
+    /// `term_start[c]`: number of terms before contrib `c` (the extra last
+    /// entry is the total).
+    term_start: Vec<usize>,
     fixed: Vec<usize>,
-    /// Contrib count above which evaluation uses rayon (0 = never).
+    /// Term count above which evaluation uses rayon (0 = never).
     pub parallel_threshold: usize,
 }
 
@@ -186,21 +288,29 @@ impl ContribForceField {
             dim,
             n_points,
             contribs: Vec::new(),
+            term_start: vec![0],
             fixed: Vec::new(),
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
         }
     }
     pub fn add_contrib(&mut self, c: Box<dyn Contrib>) {
+        self.term_start.push(self.num_terms() + c.num_terms());
         self.contribs.push(c);
     }
     pub fn add_contribs(&mut self, cs: impl IntoIterator<Item = Box<dyn Contrib>>) {
-        self.contribs.extend(cs);
+        for c in cs {
+            self.add_contrib(c);
+        }
     }
     pub fn contribs(&self) -> &[Box<dyn Contrib>] {
         &self.contribs
     }
     pub fn num_contribs(&self) -> usize {
         self.contribs.len()
+    }
+    /// Number of terms (each term of a [`TermList`] counts).
+    pub fn num_terms(&self) -> usize {
+        self.term_start[self.contribs.len()]
     }
     /// Marks a point as fixed (its gradient is zeroed).
     pub fn fix_point(&mut self, i: usize) {
@@ -216,7 +326,20 @@ impl ContribForceField {
     }
 
     fn parallel(&self) -> bool {
-        self.parallel_threshold > 0 && self.contribs.len() >= self.parallel_threshold
+        self.parallel_threshold > 0 && self.num_terms() >= self.parallel_threshold
+    }
+
+    /// Calls `f(contrib, its term range)` for the terms `lo..hi` in order.
+    fn for_terms(&self, lo: usize, hi: usize, mut f: impl FnMut(&dyn Contrib, Range<usize>)) {
+        let mut c = self.term_start.partition_point(|&s| s <= lo) - 1;
+        while c < self.contribs.len() && self.term_start[c] < hi {
+            let s = self.term_start[c];
+            let r = lo.max(s) - s..hi.min(self.term_start[c + 1]) - s;
+            if !r.is_empty() {
+                f(&*self.contribs[c], r);
+            }
+            c += 1;
+        }
     }
 }
 
@@ -228,26 +351,36 @@ impl ForceField for ContribForceField {
         self.n_points
     }
     fn energy(&self, pos: &[f64]) -> f64 {
+        // terms summed one by one, starting from -0.0 like `Iterator::sum`
         if self.parallel() {
-            self.contribs.par_iter().map(|c| c.energy(pos)).sum()
+            (0..self.num_terms())
+                .into_par_iter()
+                .map(|t| {
+                    let mut e = -0.0;
+                    self.for_terms(t, t + 1, |c, r| c.energy_acc(pos, r, &mut e));
+                    e
+                })
+                .sum()
         } else {
-            self.contribs.iter().map(|c| c.energy(pos)).sum()
+            let mut e = -0.0;
+            for c in &self.contribs {
+                c.energy_acc(pos, 0..c.num_terms(), &mut e);
+            }
+            e
         }
     }
     fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
         let n = self.n_points * self.dim;
         grad[..n].iter_mut().for_each(|g| *g = 0.0);
         if self.parallel() {
-            let chunk = (self.contribs.len() / (rayon::current_num_threads() * 4)).max(256);
-            let (g, e) = self
-                .contribs
-                .par_chunks(chunk)
-                .map(|cs| {
+            let total = self.num_terms();
+            let chunk = (total / (rayon::current_num_threads() * 4)).max(256);
+            let (g, e) = (0..total.div_ceil(chunk))
+                .into_par_iter()
+                .map(|k| {
                     let mut g = vec![0.0; n];
                     let mut e = 0.0;
-                    for c in cs {
-                        e += c.energy_grad(pos, &mut g);
-                    }
+                    self.for_terms(k * chunk, total.min((k + 1) * chunk), |c, r| c.energy_grad_acc(pos, &mut g, r, &mut e));
                     (g, e)
                 })
                 .reduce(
@@ -267,7 +400,7 @@ impl ForceField for ContribForceField {
         } else {
             let mut e = 0.0;
             for c in &self.contribs {
-                e += c.energy_grad(pos, grad);
+                c.energy_grad_acc(pos, grad, 0..c.num_terms(), &mut e);
             }
             for &f in &self.fixed {
                 for d in 0..self.dim {

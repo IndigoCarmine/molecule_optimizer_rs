@@ -347,7 +347,8 @@ impl FastForceField {
                 Segment::Opaque(i) => {
                     if let Some(src) = &self.opaque_src {
                         let c = &src.contribs()[i];
-                        acc += if G { c.energy_grad(pos, grad) } else { c.energy(pos) };
+                        let r = 0..c.num_terms();
+                        if G { c.energy_grad_acc(pos, grad, r, &mut acc) } else { c.energy_acc(pos, r, &mut acc) }
                     }
                 }
                 Segment::Nonbonded if !with_nb => {}

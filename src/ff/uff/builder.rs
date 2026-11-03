@@ -19,7 +19,7 @@ use super::torsion_angle::TorsionAngleContrib;
 use crate::core::geometry::{dot, norm, sub};
 use crate::core::{BondOrder, Hybridization, Molecule};
 use crate::error::{Error, Result};
-use crate::ff::{Contrib, ContribForceField};
+use crate::ff::{Contrib, ContribForceField, TermList};
 use crate::perception::rings::RingInfo;
 
 type Params = [Option<&'static AtomicParams>];
@@ -46,20 +46,20 @@ fn bond_order_between(mol: &Molecule, a: usize, b: usize) -> Result<f64> {
     Ok(bo)
 }
 
-fn add_bonds(mol: &Molecule, params: &Params, out: &mut Vec<Box<dyn Contrib>>) -> Result<()> {
+fn add_bonds(mol: &Molecule, params: &Params, out: &mut Vec<BondStretchContrib>) -> Result<()> {
     for b in mol.bonds() {
         if let (Some(p1), Some(p2)) = (params[b.begin], params[b.end]) {
             let bo = bond_type_as_double(b.order);
             if bo <= 0.0 {
                 return Err(Error::ForceField(format!("UFF: bad bond order for bond {}-{}", b.begin, b.end)));
             }
-            out.push(Box::new(BondStretchContrib::new(b.begin, b.end, bo, p1, p2)));
+            out.push(BondStretchContrib::new(b.begin, b.end, bo, p1, p2));
         }
     }
     Ok(())
 }
 
-fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<Box<dyn Contrib>>) -> Result<()> {
+fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<AngleBendContrib>) -> Result<()> {
     for j in 0..mol.num_atoms() {
         let Some(pj) = params[j] else { continue };
         if mol.degree(j) == 1 {
@@ -100,7 +100,7 @@ fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<B
                 };
                 let b1 = bond_order_between(mol, i, j)?;
                 let b2 = bond_order_between(mol, k, j)?;
-                out.push(Box::new(AngleBendContrib::new(i, j, k, b1, b2, pi, pj, pk, order)));
+                out.push(AngleBendContrib::new(i, j, k, b1, b2, pi, pj, pk, order));
             }
         }
     }
@@ -117,7 +117,7 @@ fn add_trigonal_bipyramid_angles(
     mol: &Molecule,
     aid: usize,
     params: &Params,
-    out: &mut Vec<Box<dyn Contrib>>,
+    out: &mut Vec<AngleBendContrib>,
 ) -> Result<()> {
     let bonds = mol.atom_bonds(aid);
     let mut ax: Option<(usize, usize)> = None; // (bond idx, other atom) pairs
@@ -153,7 +153,7 @@ fn add_trigonal_bipyramid_angles(
             if o1 <= 0.0 || o2 <= 0.0 {
                 return Err(Error::ForceField(format!("UFF: bad bond order at atom {aid}")));
             }
-            out.push(Box::new(AngleBendContrib::new(i, aid, j, o1, o2, pi, center, pj, order)));
+            out.push(AngleBendContrib::new(i, aid, j, o1, o2, pi, center, pj, order));
         }
         Ok(())
     };
@@ -173,7 +173,7 @@ fn add_trigonal_bipyramid_angles(
     Ok(())
 }
 
-fn add_angle_special_cases(mol: &Molecule, params: &Params, out: &mut Vec<Box<dyn Contrib>>) -> Result<()> {
+fn add_angle_special_cases(mol: &Molecule, params: &Params, out: &mut Vec<AngleBendContrib>) -> Result<()> {
     for i in 0..mol.num_atoms() {
         if mol.atom(i).hybridization == Hybridization::SP3D && mol.degree(i) == 5 {
             add_trigonal_bipyramid_angles(mol, i, params, out)?;
@@ -208,7 +208,7 @@ fn add_nonbonded(
     params: &Params,
     vdw_thresh: f64,
     ignore_interfrag: bool,
-    out: &mut Vec<Box<dyn Contrib>>,
+    out: &mut Vec<VdwContrib>,
 ) {
     let n = mol.num_atoms();
     let mut frag = vec![0usize; n];
@@ -232,7 +232,7 @@ fn add_nonbonded(
             }
             let dist = norm(sub(mol.coords[i], mol.coords[j]));
             if dist < vdw_thresh * calc_nonbonded_minimum(pi, pj) {
-                out.push(Box::new(VdwContrib::new(i, j, pi, pj, 10.0)));
+                out.push(VdwContrib::new(i, j, pi, pj, 10.0));
             }
         }
     }
@@ -243,7 +243,7 @@ fn torsion_atom_ok(mol: &Molecule, i: usize) -> bool {
     mol.degree(i) != 1 && !mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Triple)
 }
 
-fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<Box<dyn Contrib>>) {
+fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContrib>) {
     use Hybridization::{SP2, SP3};
     let n = mol.num_atoms();
     // Matches of the default torsion SMARTS `[!$(*#*)&!D1]~[!$(*#*)&!D1]`
@@ -291,13 +291,13 @@ fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<Box<dyn Contrib>>
             let count = here.len();
             for mut t in here {
                 t.scale_force_constant(count);
-                out.push(Box::new(t));
+                out.push(t);
             }
         }
     }
 }
 
-fn add_inversions(mol: &Molecule, out: &mut Vec<Box<dyn Contrib>>) {
+fn add_inversions(mol: &Molecule, out: &mut Vec<InversionContrib>) {
     for center in 0..mol.num_atoms() {
         let at2 = mol.atom(center).atomic_num;
         if !matches!(at2, 6 | 7 | 8 | 15 | 33 | 51 | 83) || mol.degree(center) != 3 {
@@ -312,18 +312,20 @@ fn add_inversions(mol: &Molecule, out: &mut Vec<Box<dyn Contrib>>) {
         // RDKit stores the neighbours at idx[0], idx[2], idx[3]
         let idx = [nb[0], center, nb[1], nb[2]];
         for perm in [[0, 1, 2, 3], [0, 1, 3, 2], [2, 1, 3, 0]] {
-            out.push(Box::new(InversionContrib::new(
+            out.push(InversionContrib::new(
                 [idx[perm[0]], idx[perm[1]], idx[perm[2]], idx[perm[3]]],
                 at2,
                 is_bound_to_sp2_o,
                 1.0,
-            )));
+            ));
         }
     }
 }
 
 /// Builds all UFF contribs for `mol` with the given per-atom parameters
-/// (RDKit `constructForceField`), in RDKit's order.
+/// (RDKit `constructForceField`), in RDKit's order: one [`TermList`] per
+/// term kind (bond stretch, angle bend, vdW, torsion, inversion; empty
+/// kinds are left out).
 pub fn build_contribs(
     mol: &Molecule,
     params: &Params,
@@ -341,14 +343,24 @@ pub fn build_contribs(
             &computed
         }
     };
-    let mut out: Vec<Box<dyn Contrib>> = Vec::new();
-    add_bonds(mol, params, &mut out)?;
-    add_angles(mol, rings, params, &mut out)?;
-    add_angle_special_cases(mol, params, &mut out)?;
-    add_nonbonded(mol, params, vdw_thresh, ignore_interfrag_interactions, &mut out);
-    add_torsions(mol, params, &mut out);
-    add_inversions(mol, &mut out);
-    Ok(out)
+    // one term list per kind (in RDKit's order; summed term by term)
+    let (mut bonds, mut angles, mut vdw, mut torsions, mut inversions) = (vec![], vec![], vec![], vec![], vec![]);
+    add_bonds(mol, params, &mut bonds)?;
+    add_angles(mol, rings, params, &mut angles)?;
+    add_angle_special_cases(mol, params, &mut angles)?;
+    add_nonbonded(mol, params, vdw_thresh, ignore_interfrag_interactions, &mut vdw);
+    add_torsions(mol, params, &mut torsions);
+    add_inversions(mol, &mut inversions);
+    Ok([
+        TermList::boxed(bonds),
+        TermList::boxed(angles),
+        TermList::boxed(vdw),
+        TermList::boxed(torsions),
+        TermList::boxed(inversions),
+    ]
+    .into_iter()
+    .flatten()
+    .collect())
 }
 
 /// Builds a [`ContribForceField`] for `mol` (no constraints).

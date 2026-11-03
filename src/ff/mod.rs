@@ -37,6 +37,11 @@ pub trait Contrib: Send + Sync {
     fn energy_terms(&self, pos: &[f64], out: &mut dyn FnMut(&'static str, f64)) {
         out(self.label(), self.energy(pos));
     }
+    /// Downcasting hook used by `crate::fast` to compile known term types
+    /// into vectorized tables. `None` = opaque (evaluated as is).
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// A differentiable energy function of the coordinates.
@@ -59,6 +64,9 @@ pub trait ForceField: Send + Sync {
     fn fixed_points(&self) -> &[usize] {
         &[]
     }
+    /// Called by the minimizers after each accepted step (e.g. to update
+    /// neighbor lists). Default: nothing.
+    fn on_accepted_step(&self, _pos: &[f64]) {}
 }
 
 impl<T: ForceField + ?Sized> ForceField for Box<T> {
@@ -79,6 +87,9 @@ impl<T: ForceField + ?Sized> ForceField for Box<T> {
     }
     fn fixed_points(&self) -> &[usize] {
         (**self).fixed_points()
+    }
+    fn on_accepted_step(&self, pos: &[f64]) {
+        (**self).on_accepted_step(pos)
     }
 }
 
@@ -101,6 +112,9 @@ impl<T: ForceField + ?Sized> ForceField for Arc<T> {
     fn fixed_points(&self) -> &[usize] {
         (**self).fixed_points()
     }
+    fn on_accepted_step(&self, pos: &[f64]) {
+        (**self).on_accepted_step(pos)
+    }
 }
 
 /// Creates force fields for molecules (UFF, MMFF94, user-defined ...).
@@ -109,6 +123,12 @@ pub trait ForceFieldBuilder: Send + Sync {
     fn name(&self) -> &str;
     /// Builds a force field for `mol` with additional `constraints`.
     fn build(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<ContribForceField>;
+    /// Builds a force field as a trait object. Builders whose force field is
+    /// not a [`ContribForceField`] (e.g. the fast path) override this; the
+    /// calculations in [`crate::calc`] always call it.
+    fn build_dyn(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<Box<dyn ForceField>> {
+        Ok(Box::new(self.build(mol, constraints)?))
+    }
 }
 
 impl<T: ForceFieldBuilder + ?Sized> ForceFieldBuilder for Arc<T> {
@@ -117,6 +137,9 @@ impl<T: ForceFieldBuilder + ?Sized> ForceFieldBuilder for Arc<T> {
     }
     fn build(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<ContribForceField> {
         (**self).build(mol, constraints)
+    }
+    fn build_dyn(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<Box<dyn ForceField>> {
+        (**self).build_dyn(mol, constraints)
     }
 }
 

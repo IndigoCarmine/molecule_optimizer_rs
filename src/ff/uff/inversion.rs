@@ -89,6 +89,9 @@ impl InversionContrib {
 }
 
 impl Contrib for InversionContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let [i1, i2, i3, i4] = self.idx;
         let cos_y = calculate_cos_y(p3(pos, i1), p3(pos, i2), p3(pos, i3), p3(pos, i4));

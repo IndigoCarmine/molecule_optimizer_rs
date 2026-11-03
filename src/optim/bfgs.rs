@@ -181,6 +181,7 @@ pub fn minimize_bfgs(
             }
             dgrad[i] = grad[i];
         }
+        ff.on_accepted_step(pos);
         if test < TOLX {
             notify(observer, iter, pos, fp, &grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
@@ -285,6 +286,7 @@ pub fn minimize_lbfgs(
             pos[i] = new_pos[i];
             test = test.max(s[i].abs() / pos[i].abs().max(1.0));
         }
+        ff.on_accepted_step(pos);
         if test < TOLX {
             notify(observer, iter, pos, fp, &grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };

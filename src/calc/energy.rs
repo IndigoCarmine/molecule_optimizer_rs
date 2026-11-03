@@ -27,7 +27,7 @@ pub fn energy(mol: &Molecule, builder: &dyn ForceFieldBuilder) -> Result<EnergyR
 
 /// Energy of `mol` at the given coordinates.
 pub fn energy_at(mol: &Molecule, coords: &[[f64; 3]], builder: &dyn ForceFieldBuilder) -> Result<EnergyResult> {
-    let ff = builder.build(mol, &[])?;
+    let ff = builder.build_dyn(mol, &[])?;
     Ok(evaluate(&ff, coords))
 }
 

@@ -227,7 +227,7 @@ fn insert_found(found: &mut Vec<Conformer>, c: Conformer, atoms: &[usize], opts:
 fn run_one(
     mol: &Molecule,
     builder: &dyn ForceFieldBuilder,
-    ff: &crate::ff::ContribForceField,
+    ff: &dyn crate::ff::ForceField,
     opts: &ConformerSearchOptions,
     id: usize,
     job: Option<&JobContext<ConformerSearchSnapshot>>,
@@ -286,7 +286,7 @@ fn search(
     opts: &ConformerSearchOptions,
     job: Option<&JobContext<ConformerSearchSnapshot>>,
 ) -> Result<ConformerSearchResult> {
-    let ff = builder.build(mol, &[])?;
+    let ff = builder.build_dyn(mol, &[])?;
     let atoms = rmsd_atoms(mol, opts.rmsd_with_hydrogens);
     let results: Vec<Result<Conformer>> = (0..opts.num_conformers)
         .into_par_iter()

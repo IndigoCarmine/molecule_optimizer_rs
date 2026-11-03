@@ -39,6 +39,9 @@ impl VdwContrib {
 }
 
 impl Contrib for VdwContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let dist = rd_distance(pos, self.idx1, self.idx2);
         if dist > self.thresh || dist <= 0.0 {

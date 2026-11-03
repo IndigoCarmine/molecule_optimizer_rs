@@ -110,6 +110,9 @@ impl BondStretchContrib {
 }
 
 impl Contrib for BondStretchContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut e = 0.0;
         for t in 0..self.at1.len() {
@@ -208,6 +211,9 @@ fn calc_angle_bend_grad(r: &[P3; 2], dist: &[f64; 2], g: &mut [f64], idx: [usize
 }
 
 impl Contrib for AngleBendContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut res = 0.0;
         for t in 0..self.at.len() {
@@ -282,6 +288,9 @@ impl StretchBendContrib {
 }
 
 impl Contrib for StretchBendContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut total = 0.0;
         for t in 0..self.at.len() {
@@ -392,6 +401,9 @@ impl OopBendContrib {
 }
 
 impl Contrib for OopBendContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut total = 0.0;
         for t in 0..self.at.len() {
@@ -582,6 +594,9 @@ impl TorsionAngleContrib {
 }
 
 impl Contrib for TorsionAngleContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut total = 0.0;
         for t in 0..self.at.len() {
@@ -735,6 +750,9 @@ impl NonbondedContrib {
 }
 
 impl Contrib for NonbondedContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let mut e = 0.0;
         for t in 0..self.at1.len() {

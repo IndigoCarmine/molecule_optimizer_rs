@@ -240,8 +240,8 @@ impl ScanCtx<'_> {
             };
             cons.push(sc.constraint(v, f));
         }
-        let ff = self.builder.build(self.mol, &cons)?;
-        let ff_plain = self.builder.build(self.mol, &self.opts.extra_constraints)?;
+        let ff = self.builder.build_dyn(self.mol, &cons)?;
+        let ff_plain = self.builder.build_dyn(self.mol, &self.opts.extra_constraints)?;
         let mut pos = to_flat(&c);
         let fi = flat_index(idx, &self.shape);
         let r = match job {

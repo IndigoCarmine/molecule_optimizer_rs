@@ -43,6 +43,9 @@ impl BondStretchContrib {
 }
 
 impl Contrib for BondStretchContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let dist_term = rd_distance(pos, self.idx1, self.idx2) - self.rest_len;
         0.5 * self.force_constant * dist_term * dist_term

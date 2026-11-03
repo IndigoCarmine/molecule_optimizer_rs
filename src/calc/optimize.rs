@@ -50,7 +50,7 @@ pub fn optimize_coords(
     opts: &OptimizeOptions,
     observer: &mut dyn Observer,
 ) -> Result<OptimizeResult> {
-    let ff = builder.build(mol, &opts.constraints)?;
+    let ff = builder.build_dyn(mol, &opts.constraints)?;
     let mut pos = to_flat(coords);
     let r = optim::minimize(&ff, &mut pos, &opts.minimize, observer);
     let ff_energy = if opts.constraints.is_empty() { r.energy } else { energy_without_constraints(&ff, r.energy, &pos) };

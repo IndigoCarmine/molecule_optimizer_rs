@@ -161,6 +161,9 @@ impl AngleBendContrib {
 }
 
 impl Contrib for AngleBendContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let dist1 = rd_distance(pos, self.idx1, self.idx2);
         let dist2 = rd_distance(pos, self.idx2, self.idx3);

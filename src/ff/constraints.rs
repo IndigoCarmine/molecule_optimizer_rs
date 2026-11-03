@@ -86,6 +86,9 @@ pub struct DistanceConstraintContrib {
 }
 
 impl Contrib for DistanceConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let d = distance(pos, self.i, self.j);
         let t = if d < self.min {
@@ -140,6 +143,9 @@ impl AngleConstraintContrib {
 }
 
 impl Contrib for AngleConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let r0 = sub(p3(pos, self.i), p3(pos, self.j));
         let r1 = sub(p3(pos, self.k), p3(pos, self.j));
@@ -195,6 +201,9 @@ impl TorsionConstraintContrib {
 }
 
 impl Contrib for TorsionConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let [a, b, c, d] = self.idx;
         let dd = compute_dihedral(pos, a, b, c, d);
@@ -246,6 +255,9 @@ pub struct PositionConstraintContrib {
 }
 
 impl Contrib for PositionConstraintContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let d = norm(sub(p3(pos, self.i), self.pos0));
         let t = (d - self.max_displ).max(0.0);

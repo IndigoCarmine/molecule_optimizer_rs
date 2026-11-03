@@ -188,6 +188,9 @@ impl TorsionAngleContrib {
 }
 
 impl Contrib for TorsionAngleContrib {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         let [i1, i2, i3, i4] = self.idx;
         let cos_phi = calculate_cos_torsion(p3(pos, i1), p3(pos, i2), p3(pos, i3), p3(pos, i4));

@@ -9,6 +9,7 @@ pub mod hydrogens;
 pub mod kekulize;
 pub mod legacy_stereo;
 pub mod matching;
+mod ring_decomposer;
 pub mod rings;
 pub mod stereo;
 pub mod valence;

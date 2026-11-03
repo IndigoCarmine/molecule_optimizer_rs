@@ -1,7 +1,7 @@
-//! Stereochemistry from 3D coordinates.
+//! Stereochemistry from 3D coordinates, or from the wedges of a 2D drawing.
 
 use crate::core::geometry::{cross, dot, sub};
-use crate::core::{BondOrder, BondStereo, ChiralTag, Molecule};
+use crate::core::{BondDir, BondOrder, BondStereo, ChiralTag, Molecule};
 
 const ZERO_VOLUME_TOL: f64 = 0.1;
 
@@ -176,5 +176,204 @@ pub fn apply_nontetrahedral_hybridization_from_3d(mol: &mut Molecule) {
         };
         mol.atom_mut(i).chiral_tag = ChiralTag::Unspecified;
         mol.atom_mut(i).hybridization = h;
+    }
+}
+
+/// Sets the stereo a 2D drawing shows: tetrahedral chiral tags from its
+/// wedges ([`crate::core::Bond::dir`]) and cis/trans from the drawn double
+/// bonds, in the same convention as [`assign_chiral_tags_from_3d`] and
+/// [`assign_double_bond_stereo_from_3d`], so the embedder reproduces the
+/// stereoisomer drawn.
+///
+/// A centre counts only when a wedge starts at it (its narrow end, the
+/// bond's `begin`); centres without one, and those with a wavy bond, are
+/// left unspecified. Hydrogens may be implicit or explicit: an explicit,
+/// unwedged hydrogen on a centre with three other neighbours is taken to
+/// point away from them, wherever
+/// [`crate::perception::hydrogens::add_hydrogens`] placed it in the plane.
+/// Double bonds drawn crossed, or next to a wavy bond, are left unspecified.
+pub fn assign_stereo_from_2d(mol: &mut Molecule) {
+    for i in 0..mol.num_atoms() {
+        let tag = wedge_chirality(mol, i);
+        mol.atom_mut(i).chiral_tag = tag;
+    }
+    assign_double_bond_stereo_from_3d(mol);
+    for b in 0..mol.num_bonds() {
+        let bond = mol.bond(b);
+        if bond.stereo == BondStereo::None {
+            continue;
+        }
+        let wavy = bond.dir == BondDir::Either
+            || [bond.begin, bond.end].iter().any(|&a| {
+                mol.atom_bonds(a).iter().any(|&(_, ob)| ob != b && mol.bond(ob).dir == BondDir::Either)
+            });
+        if wavy {
+            let bm = mol.bond_mut(b);
+            bm.stereo = BondStereo::None;
+            bm.stereo_atoms = None;
+        }
+    }
+}
+
+/// The chiral tag the wedges at atom `i` give it (see [`assign_stereo_from_2d`]).
+fn wedge_chirality(mol: &Molecule, i: usize) -> ChiralTag {
+    let bonds = mol.atom_bonds(i);
+    let deg = bonds.len();
+    let atom = mol.atom(i);
+    if !(3..=4).contains(&deg) || atom.is_aromatic || atom.atomic_num == 1 {
+        return ChiralTag::Unspecified;
+    }
+    if deg + atom.total_hidden_hs() as usize > 4 {
+        return ChiralTag::Unspecified;
+    }
+    if !bonds.iter().all(|&(_, b)| matches!(mol.bond(b).order, BondOrder::Single | BondOrder::Dative)) {
+        return ChiralTag::Unspecified;
+    }
+    // The wedge's height for each neighbour: only wedges starting at `i` count.
+    let mut heights = Vec::with_capacity(deg);
+    for &(_, b) in bonds {
+        let bond = mol.bond(b);
+        let h = if bond.begin != i {
+            0.0
+        } else {
+            match bond.dir {
+                BondDir::Up => 1.0,
+                BondDir::Down => -1.0,
+                BondDir::None => 0.0,
+                BondDir::Either => return ChiralTag::Unspecified,
+            }
+        };
+        heights.push(h);
+    }
+    if heights.iter().all(|&h| h == 0.0) {
+        return ChiralTag::Unspecified;
+    }
+    let c = mol.pos(i);
+    let mut v: Vec<[f64; 3]> = bonds
+        .iter()
+        .zip(&heights)
+        .map(|(&(n, _), &h)| {
+            let p = mol.pos(n);
+            let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
+            let l = (dx * dx + dy * dy).sqrt().max(1e-8);
+            [dx / l, dy / l, h]
+        })
+        .collect();
+    if deg == 4 {
+        // A single unwedged explicit H: it points away from the three others.
+        let hs: Vec<usize> = (0..4).filter(|&k| mol.atom(bonds[k].0).atomic_num == 1 && heights[k] == 0.0).collect();
+        if let [k] = hs[..] {
+            let mut o = [0.0; 3];
+            for (m, w) in v.iter().enumerate() {
+                if m != k {
+                    for d in 0..3 {
+                        o[d] -= w[d];
+                    }
+                }
+            }
+            v[k] = o;
+        }
+    }
+    let mut vol = dot(v[0], cross(v[1], v[2]));
+    if vol.abs() <= 1e-3 && deg == 4 {
+        vol = -dot(v[0], cross(v[1], v[3]));
+    }
+    if vol > 1e-3 {
+        ChiralTag::Ccw
+    } else if vol < -1e-3 {
+        ChiralTag::Cw
+    } else {
+        ChiralTag::Unspecified
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Atom;
+
+    /// CHFClBr drawn flat with the Br bond wedged `dir`; the H implicit.
+    fn drawn(dir: BondDir) -> Molecule {
+        let mut m = Molecule::new();
+        let c = m.add_atom(Atom::new(6), [0.0, 0.0, 0.0]);
+        let f = m.add_atom(Atom::new(9), [1.0, 0.0, 0.0]);
+        let cl = m.add_atom(Atom::new(17), [-0.5, 0.87, 0.0]);
+        let br = m.add_atom(Atom::new(35), [-0.5, -0.87, 0.0]);
+        m.add_bond(c, f, BondOrder::Single);
+        m.add_bond(c, cl, BondOrder::Single);
+        let b = m.add_bond(c, br, BondOrder::Single);
+        m.bond_mut(b).dir = dir;
+        crate::perception::sanitize(&mut m).unwrap();
+        m
+    }
+
+    #[test]
+    fn up_and_down_wedges_give_opposite_tags() {
+        let mut up = drawn(BondDir::Up);
+        let mut down = drawn(BondDir::Down);
+        assign_stereo_from_2d(&mut up);
+        assign_stereo_from_2d(&mut down);
+        assert_ne!(up.atom(0).chiral_tag, ChiralTag::Unspecified);
+        assert_ne!(down.atom(0).chiral_tag, ChiralTag::Unspecified);
+        assert_ne!(up.atom(0).chiral_tag, down.atom(0).chiral_tag);
+    }
+
+    #[test]
+    fn unwedged_or_wavy_centres_stay_unspecified() {
+        for dir in [BondDir::None, BondDir::Either] {
+            let mut m = drawn(dir);
+            assign_stereo_from_2d(&mut m);
+            assert_eq!(m.atom(0).chiral_tag, ChiralTag::Unspecified, "{dir:?}");
+        }
+    }
+
+    /// The tag from the wedges is the one the matching 3D geometry gives,
+    /// with the hydrogen implicit or added as an atom.
+    #[test]
+    fn wedge_tag_matches_the_3d_tag() {
+        for dir in [BondDir::Up, BondDir::Down] {
+            let z = if dir == BondDir::Up { 0.9 } else { -0.9 };
+
+            let mut with_h = drawn(dir);
+            crate::perception::hydrogens::add_hydrogens(&mut with_h);
+            assign_stereo_from_2d(&mut with_h);
+            // Br lifted (or lowered), the H on the other side.
+            let mut real = with_h.clone();
+            real.coords[3][2] = z;
+            real.coords[4] = [0.0, 0.0, -z];
+            assign_chiral_tags_from_3d(&mut real);
+            assert_eq!(with_h.atom(0).chiral_tag, real.atom(0).chiral_tag, "{dir:?}");
+
+            // Three neighbours: the embedder takes the centre as the fourth point.
+            let mut flat = drawn(dir);
+            assign_stereo_from_2d(&mut flat);
+            let mut p = flat.coords.clone();
+            p[3][2] = z;
+            let v = |k: usize| sub(p[k], p[0]);
+            let vol = dot(v(1), cross(v(2), v(3)));
+            let want = if vol > 0.0 { ChiralTag::Ccw } else { ChiralTag::Cw };
+            assert_eq!(flat.atom(0).chiral_tag, want, "{dir:?}");
+        }
+    }
+
+    #[test]
+    fn drawn_double_bonds_get_cis_trans_unless_crossed() {
+        // 2-butene drawn trans
+        let mut m = Molecule::new();
+        let a = m.add_atom(Atom::new(6), [-1.0, 0.8, 0.0]);
+        let b = m.add_atom(Atom::new(6), [-0.5, 0.0, 0.0]);
+        let c = m.add_atom(Atom::new(6), [0.5, 0.0, 0.0]);
+        let d = m.add_atom(Atom::new(6), [1.0, -0.8, 0.0]);
+        m.add_bond(a, b, BondOrder::Single);
+        let db = m.add_bond(b, c, BondOrder::Double);
+        m.add_bond(c, d, BondOrder::Single);
+        crate::perception::sanitize(&mut m).unwrap();
+        let mut trans = m.clone();
+        assign_stereo_from_2d(&mut trans);
+        assert_eq!(trans.bond(db).stereo, BondStereo::Trans);
+        let mut crossed = m.clone();
+        crossed.bond_mut(db).dir = BondDir::Either;
+        assign_stereo_from_2d(&mut crossed);
+        assert_eq!(crossed.bond(db).stereo, BondStereo::None);
     }
 }

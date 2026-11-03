@@ -65,6 +65,20 @@ pub enum BondStereo {
     Trans,
 }
 
+/// Wedge drawn on a bond of a 2D drawing (MDL molfile bond stereo), as seen
+/// from [`Bond::begin`], the narrow end of the wedge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BondDir {
+    #[default]
+    None,
+    /// Solid wedge: `end` lies in front of the drawing plane.
+    Up,
+    /// Hashed wedge: `end` lies behind the drawing plane.
+    Down,
+    /// Wavy bond: the configuration is unknown.
+    Either,
+}
+
 /// PDB residue information.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ResidueInfo {
@@ -127,6 +141,8 @@ pub struct Bond {
     pub stereo: BondStereo,
     /// Reference atoms for [`BondStereo`] (neighbor of `begin`, neighbor of `end`).
     pub stereo_atoms: Option<(usize, usize)>,
+    /// Wedge of a 2D drawing (see [`crate::perception::stereo::assign_stereo_from_2d`]).
+    pub dir: BondDir,
 }
 
 impl Bond {
@@ -139,6 +155,7 @@ impl Bond {
             is_conjugated: false,
             stereo: BondStereo::None,
             stereo_atoms: None,
+            dir: BondDir::None,
         }
     }
     pub fn other(&self, idx: usize) -> usize {

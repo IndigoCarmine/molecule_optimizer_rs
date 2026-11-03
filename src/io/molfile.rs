@@ -1,6 +1,6 @@
 //! MDL Molfile (V2000 / V3000) and SD file reading/writing.
 
-use crate::core::{Atom, BondOrder, Molecule, atomic_number};
+use crate::core::{Atom, BondDir, BondOrder, Molecule, atomic_number};
 use crate::error::{Error, Result};
 use crate::perception;
 use std::fmt::Write as _;
@@ -107,7 +107,15 @@ fn parse_v2000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
         if a1 == 0 || a2 == 0 || a1 > na || a2 > na {
             return Err(Error::parse(base + ln + 1, "bond atom index out of range"));
         }
-        mol.add_bond(a1 - 1, a2 - 1, bond_from_code(t, base + ln + 1)?);
+        let b = mol.add_bond(a1 - 1, a2 - 1, bond_from_code(t, base + ln + 1)?);
+        let stereo: i32 = field(l, 9, 3).parse().unwrap_or(0);
+        mol.bond_mut(b).dir = match stereo {
+            1 => BondDir::Up,
+            6 => BondDir::Down,
+            // 4: wavy single bond; 3: crossed (either) double bond
+            3 | 4 => BondDir::Either,
+            _ => BondDir::None,
+        };
     }
     // properties block
     let mut has_chg = false;
@@ -253,7 +261,14 @@ fn parse_v3000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
                 let t: i32 = f[1].parse().map_err(|_| Error::parse(*ln, "bad bond type"))?;
                 let a1 = *idx_map.get(f[2]).ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
                 let a2 = *idx_map.get(f[3]).ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
-                mol.add_bond(a1, a2, bond_from_code(t, *ln)?);
+                let b = mol.add_bond(a1, a2, bond_from_code(t, *ln)?);
+                let cfg = f[4..].iter().find_map(|kv| kv.strip_prefix("CFG="));
+                mol.bond_mut(b).dir = match cfg {
+                    Some("1") => BondDir::Up,
+                    Some("3") => BondDir::Down,
+                    Some("2") => BondDir::Either,
+                    _ => BondDir::None,
+                };
             }
             _ => {}
         }

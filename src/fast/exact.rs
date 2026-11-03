@@ -27,6 +27,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // MMFF buffered 14-7 constants (RDKit `MMFF::Utils`).
 const VDW1: f64 = 1.07;
@@ -94,6 +95,44 @@ pub struct Pair {
     pub ct: f64,
 }
 
+/// Pairs in evaluation order, one array per field (the layout of
+/// [`ExactNonbonded`], built directly so that selecting pairs needs no
+/// array of [`Pair`] records next to it).
+#[derive(Debug, Default)]
+pub(crate) struct PairArrays {
+    mmff: bool,
+    i: Vec<u32>,
+    j: Vec<u32>,
+    p: Vec<u32>,
+    flags: Vec<u8>,
+    /// Charge terms (MMFF only).
+    ct: Vec<f64>,
+}
+
+impl PairArrays {
+    /// Empty arrays with room for `cap` pairs.
+    pub(crate) fn with_capacity(mmff: bool, cap: usize) -> Self {
+        PairArrays {
+            mmff,
+            i: Vec::with_capacity(cap),
+            j: Vec::with_capacity(cap),
+            p: Vec::with_capacity(cap),
+            flags: Vec::with_capacity(cap),
+            ct: Vec::with_capacity(if mmff { cap } else { 0 }),
+        }
+    }
+    #[inline]
+    pub(crate) fn push(&mut self, pr: Pair) {
+        self.i.push(pr.i);
+        self.j.push(pr.j);
+        self.p.push(pr.p);
+        self.flags.push(pr.flags);
+        if self.mmff {
+            self.ct.push(pr.ct);
+        }
+    }
+}
+
 /// A parallel chunk: rows and the lowest atom index it touches.
 #[derive(Debug, Clone, PartialEq)]
 struct NbChunk {
@@ -134,35 +173,31 @@ impl std::fmt::Debug for ExactNonbonded {
 
 impl ExactNonbonded {
     /// Builds the backend from pairs ordered by row (`i`).
-    pub(crate) fn from_sorted_pairs(
-        mmff: bool,
-        n_atoms: usize,
-        pairs: &[Pair],
-        params: Arc<ParamTable>,
-        grain: usize,
-        simd: bool,
-    ) -> Self {
+    pub(crate) fn from_sorted_pairs(n_atoms: usize, pairs: PairArrays, params: Arc<ParamTable>, grain: usize, simd: bool) -> Self {
+        let PairArrays { mmff, mut i, mut j, mut p, mut flags, mut ct } = pairs;
         // the kernels index without bounds checks: validate here
         let np = params.len();
         assert!(n_atoms < u32::MAX as usize / 3, "too many atoms");
+        assert!(j.len() == i.len() && p.len() == i.len() && flags.len() == i.len() && ct.len() == if mmff { i.len() } else { 0 });
         let mut row_start = vec![0u32; n_atoms + 1];
         let mut last = 0u32;
-        for pr in pairs {
-            assert!(pr.i >= last, "pairs must be ordered by their first atom");
-            assert!((pr.i as usize) < n_atoms && (pr.j as usize) < n_atoms, "pair atom index out of range");
-            assert!((pr.p as usize) < np, "pair parameter index out of range");
-            last = pr.i;
-            row_start[pr.i as usize + 1] += 1;
+        for t in 0..i.len() {
+            assert!(i[t] >= last, "pairs must be ordered by their first atom");
+            assert!((i[t] as usize) < n_atoms && (j[t] as usize) < n_atoms, "pair atom index out of range");
+            assert!((p[t] as usize) < np, "pair parameter index out of range");
+            last = i[t];
+            row_start[i[t] as usize + 1] += 1;
         }
         for k in 0..n_atoms {
             row_start[k + 1] += row_start[k];
         }
-        let i: Vec<u32> = pairs.iter().map(|p| p.i).collect();
-        let j: Vec<u32> = pairs.iter().map(|p| p.j).collect();
-        let p: Vec<u32> = pairs.iter().map(|p| p.p).collect();
-        let flags: Vec<u8> = pairs.iter().map(|p| p.flags).collect();
-        let ct: Vec<f64> = if mmff { pairs.iter().map(|p| p.ct).collect() } else { Vec::new() };
-        let has_vdw = if mmff { flags.iter().any(|f| f & F_VDW != 0) } else { !pairs.is_empty() };
+        // built by pushing: release the unused capacity
+        crate::ff::utils::shrink_vec(&mut i);
+        crate::ff::utils::shrink_vec(&mut j);
+        crate::ff::utils::shrink_vec(&mut p);
+        crate::ff::utils::shrink_vec(&mut flags);
+        crate::ff::utils::shrink_vec(&mut ct);
+        let has_vdw = if mmff { flags.iter().any(|f| f & F_VDW != 0) } else { !i.is_empty() };
         let has_ele = mmff && flags.iter().any(|f| f & F_ELE != 0);
         let mut nb = ExactNonbonded {
             mmff,
@@ -634,7 +669,11 @@ impl PairCollector {
     /// Builds the backend (pairs stably grouped by their first atom).
     pub fn finish(mut self, n_atoms: usize, grain: usize, simd: bool) -> ExactNonbonded {
         self.pairs.sort_by_key(|p| p.i);
-        ExactNonbonded::from_sorted_pairs(self.mmff == Some(true), n_atoms, &self.pairs, Arc::new(self.table), grain, simd)
+        let mut arrays = PairArrays::with_capacity(self.mmff == Some(true), self.pairs.len());
+        for pr in std::mem::take(&mut self.pairs) {
+            arrays.push(pr);
+        }
+        ExactNonbonded::from_sorted_pairs(n_atoms, arrays, Arc::new(self.table), grain, simd)
     }
 }
 
@@ -675,6 +714,19 @@ pub struct NbTemplate {
     pub rel_start: Vec<u32>,
     pub rel_j: Vec<u32>,
     pub rel_v: Vec<u8>,
+    /// Number of pairs of the last selection (capacity hint).
+    pair_hint: PairHint,
+}
+
+/// Capacity hint of [`NbTemplate::select_pairs`] (shared by the threads
+/// using one cached template).
+#[derive(Debug, Default)]
+struct PairHint(AtomicUsize);
+
+impl Clone for PairHint {
+    fn clone(&self) -> Self {
+        PairHint(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
 }
 
 /// Topological neighbors up to `depth` bonds (BFS shortest-path distance),
@@ -752,6 +804,7 @@ impl NbTemplate {
             rel_start,
             rel_j,
             rel_v,
+            pair_hint: PairHint::default(),
         }
     }
 
@@ -813,6 +866,7 @@ impl NbTemplate {
             rel_start,
             rel_j,
             rel_v,
+            pair_hint: PairHint::default(),
         }
     }
 
@@ -883,9 +937,13 @@ impl NbTemplate {
     }
 
     /// Selects the pairs for `coords` exactly like the builder would.
-    pub fn select_pairs(&self, coords: &[[f64; 3]]) -> Vec<Pair> {
+    pub(crate) fn select_pairs(&self, coords: &[[f64; 3]]) -> PairArrays {
         let n = self.n;
-        let mut out = Vec::new();
+        // room for the number of pairs selected last time (geometries of one
+        // molecule select similar numbers): usually no regrowth and little
+        // unused capacity
+        let hint = self.pair_hint.0.load(Ordering::Relaxed);
+        let mut out = PairArrays::with_capacity(matches!(self.rule, NbRule::Mmff { .. }), hint + hint / 64 + 8);
         let mut mark = vec![u32::MAX; n];
         let mut relv = vec![0u8; n];
         let set_rel = |i: usize, mark: &mut [u32], relv: &mut [u8]| {
@@ -923,17 +981,19 @@ impl NbTemplate {
                         }
                     });
                     row.sort_unstable_by_key(|p| p.j);
-                    out.extend_from_slice(&row);
+                    for &p in &row {
+                        out.push(p);
+                    }
                 }
             }
         }
+        self.pair_hint.0.store(out.i.len(), Ordering::Relaxed);
         out
     }
 
     /// Builds the exact backend for `coords`.
     pub fn select(&self, coords: &[[f64; 3]], grain: usize, simd: bool) -> ExactNonbonded {
-        let pairs = self.select_pairs(coords);
-        ExactNonbonded::from_sorted_pairs(matches!(self.rule, NbRule::Mmff { .. }), self.n, &pairs, self.params.clone(), grain, simd)
+        ExactNonbonded::from_sorted_pairs(self.n, self.select_pairs(coords), self.params.clone(), grain, simd)
     }
 }
 

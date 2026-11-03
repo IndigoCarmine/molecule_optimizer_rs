@@ -6,7 +6,6 @@
 
 use super::{IterationInfo, MinimizeOptions, MinimizeResult, MinimizeStatus, Observer};
 use crate::ff::ForceField;
-use std::collections::VecDeque;
 use std::ops::ControlFlow;
 
 const FUNCTOL: f64 = 1e-4;
@@ -137,7 +136,123 @@ fn notify(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f6
     matches!(observer.on_iteration(&IterationInfo { iteration, pos, energy, grad }), ControlFlow::Break(()))
 }
 
+/// Runs `$body` (a call to an `#[inline(always)]` kernel) compiled for AVX
+/// when the CPU has it. Plain AVX multiplies and adds are the same IEEE
+/// operations as the scalar/SSE2 ones (no FMA contraction), so the result
+/// does not depend on the path taken.
+macro_rules! dispatch_avx {
+    ($body:expr) => {{
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[target_feature(enable = "avx")]
+            unsafe fn avx<R>(f: impl FnOnce() -> R) -> R {
+                f()
+            }
+            if std::arch::is_x86_feature_detected!("avx") {
+                // SAFETY: the CPU supports AVX (checked above).
+                return unsafe { avx(#[inline(always)] || $body) };
+            }
+        }
+        $body
+    }};
+}
+
+/// `out = H·v` for the symmetric row-major `h`, evaluated as a sum of rows
+/// (`out += H[j,:]·v[j]` for `j = 0, 1, …`). Because `H` is exactly
+/// symmetric, every `out[i]` sees the same products added in the same order
+/// as the row-wise dot product `Σ_j H[i,j]·v[j]` RDKit evaluates, so the
+/// result is bit-identical — but the inner loop is a contiguous, vectorizable
+/// axpy instead of a serial reduction.
+#[inline(always)]
+fn sym_matvec_kernel(h: &[f64], v: &[f64], out: &mut [f64]) {
+    let dim = v.len();
+    out.fill(0.0);
+    if dim == 0 {
+        return;
+    }
+    for (row, &vj) in h.chunks_exact(dim).zip(v) {
+        for (o, &r) in out.iter_mut().zip(row) {
+            *o += r * vj;
+        }
+    }
+}
+
+fn sym_matvec(h: &[f64], v: &[f64], out: &mut [f64]) {
+    dispatch_avx!(sym_matvec_kernel(h, v, out))
+}
+
+/// Rank-two BFGS update of the inverse Hessian `h` (when `upd` is given)
+/// fused with `dir = -H·grad` for the updated `H`.
+///
+/// RDKit updates the upper triangle, `H[i][j] += pxi[i]*xi[j] -
+/// hdg[i]*hdgrad[j] + dgs[i]*dgrad[j]` for `j >= i`, and mirrors it. Here
+/// row `i` is rewritten in place: the part left of the diagonal takes the
+/// mirrored expression (row index `j < i`), reading the old, symmetric
+/// `H[i][j]` — the same value with the same operations, without strided
+/// writes. The finished row then feeds `dir` like [`sym_matvec_kernel`].
+#[inline(always)]
+fn update_direction_kernel(h: &mut [f64], upd: Option<UpdateVecs<'_>>, grad: &[f64], dir: &mut [f64]) {
+    let dim = grad.len();
+    dir.fill(0.0);
+    if dim == 0 {
+        return;
+    }
+    for (i, row) in h.chunks_exact_mut(dim).enumerate() {
+        if let Some(u) = &upd {
+            let (lo, hi) = row.split_at_mut(i);
+            let (x, hd, dg) = (u.xi[i], u.hdgrad[i], u.dgrad[i]);
+            for (((h, &p), &q), &r) in lo.iter_mut().zip(&u.pxi[..i]).zip(&u.hdg[..i]).zip(&u.dgs[..i]) {
+                *h += p * x - q * hd + r * dg;
+            }
+            let (p, q, r) = (u.pxi[i], u.hdg[i], u.dgs[i]);
+            for (((h, &x), &hd), &dg) in hi.iter_mut().zip(&u.xi[i..]).zip(&u.hdgrad[i..]).zip(&u.dgrad[i..]) {
+                *h += p * x - q * hd + r * dg;
+            }
+        }
+        let g = grad[i];
+        for (s, &h) in dir.iter_mut().zip(row.iter()) {
+            *s -= h * g;
+        }
+    }
+}
+
+/// Vectors of the BFGS update (see [`update_direction_kernel`]).
+struct UpdateVecs<'a> {
+    xi: &'a [f64],
+    hdgrad: &'a [f64],
+    dgrad: &'a [f64],
+    pxi: &'a [f64],
+    hdg: &'a [f64],
+    dgs: &'a [f64],
+}
+
+fn update_direction(h: &mut [f64], upd: Option<UpdateVecs<'_>>, grad: &[f64], dir: &mut [f64]) {
+    dispatch_avx!(update_direction_kernel(h, upd, grad, dir))
+}
+
+/// Scratch vectors of [`minimize_bfgs`] (one allocation).
+struct BfgsWork {
+    buf: Vec<f64>,
+}
+
+impl BfgsWork {
+    const N: usize = 8;
+    fn new(dim: usize) -> Self {
+        BfgsWork { buf: vec![0.0; Self::N * dim] }
+    }
+    fn split(&mut self) -> [&mut [f64]; Self::N] {
+        let dim = self.buf.len() / Self::N;
+        let mut it = self.buf.chunks_exact_mut(dim.max(1));
+        std::array::from_fn(|_| it.next().unwrap_or(&mut []))
+    }
+}
+
 /// RDKit BFGS minimization.
+///
+/// Arithmetic is identical to RDKit `BFGSOpt.h` operation by operation
+/// (same products, same summation order), only the loops are rearranged:
+/// the inverse-Hessian update is done row by row without the strided
+/// mirror writes, and is fused with the product for the next direction.
 pub fn minimize_bfgs(
     ff: &dyn ForceField,
     pos: &mut [f64],
@@ -146,15 +261,12 @@ pub fn minimize_bfgs(
 ) -> MinimizeResult {
     let dim = pos.len();
     let scaling = opts.rdkit_grad_scaling;
-    let mut grad = vec![0.0; dim];
-    let mut dgrad = vec![0.0; dim];
-    let mut hess_dgrad = vec![0.0; dim];
-    let mut xi = vec![0.0; dim];
+    let mut work = BfgsWork::new(dim);
+    let [grad, dgrad, hess_dgrad, xi, new_pos, pxi, hdg, dgs] = work.split();
     let mut inv_hessian = vec![0.0; dim * dim];
-    let mut new_pos = vec![0.0; dim];
 
     let mut fp = ff.energy(pos);
-    calc_grad(ff, pos, &mut grad, scaling);
+    calc_grad(ff, pos, grad, scaling);
     let mut sum = 0.0;
     for i in 0..dim {
         inv_hessian[i * dim + i] = 1.0;
@@ -164,7 +276,7 @@ pub fn minimize_bfgs(
     let max_step = MAXSTEP * sum.sqrt().max(dim as f64);
     let mut func_val = fp;
     for iter in 1..=opts.max_iters {
-        let (status, fv) = linear_search(ff, pos, fp, &grad, &mut xi, &mut new_pos, max_step);
+        let (status, fv) = linear_search(ff, pos, fp, grad, xi, new_pos, max_step);
         func_val = fv;
         if status < 0 {
             // bad direction: reset to steepest descent once, otherwise stop
@@ -179,67 +291,102 @@ pub fn minimize_bfgs(
             if t > test {
                 test = t;
             }
-            dgrad[i] = grad[i];
         }
+        dgrad.copy_from_slice(grad);
         ff.on_accepted_step(pos);
         if test < TOLX {
-            notify(observer, iter, pos, fp, &grad);
+            notify(observer, iter, pos, fp, grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
-        let grad_scale = calc_grad(ff, pos, &mut grad, scaling);
-        let converged = grad_converged(&grad, pos, func_val, grad_scale, opts.force_tol);
-        for i in 0..dim {
-            dgrad[i] = grad[i] - dgrad[i];
+        let grad_scale = calc_grad(ff, pos, grad, scaling);
+        let converged = grad_converged(grad, pos, func_val, grad_scale, opts.force_tol);
+        for (d, g) in dgrad.iter_mut().zip(grad.iter()) {
+            *d = g - *d;
         }
-        if notify(observer, iter, pos, fp, &grad) {
+        if notify(observer, iter, pos, fp, grad) {
             return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
         if converged {
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
         // BFGS inverse Hessian update
+        sym_matvec(&inv_hessian, dgrad, hess_dgrad);
         let (mut fac, mut fae, mut sum_dgrad, mut sum_xi) = (0.0, 0.0, 0.0, 0.0);
         for i in 0..dim {
-            let row = &inv_hessian[i * dim..(i + 1) * dim];
-            let mut h = 0.0;
-            for j in 0..dim {
-                h += row[j] * dgrad[j];
-            }
-            hess_dgrad[i] = h;
             fac += dgrad[i] * xi[i];
-            fae += dgrad[i] * h;
+            fae += dgrad[i] * hess_dgrad[i];
             sum_dgrad += dgrad[i] * dgrad[i];
             sum_xi += xi[i] * xi[i];
         }
-        if fac > (EPS * sum_dgrad * sum_xi).sqrt() {
+        // New direction `-H·grad` (into `new_pos`, free until the next line
+        // search).
+        let upd = if fac > (EPS * sum_dgrad * sum_xi).sqrt() {
             fac = 1.0 / fac;
             let fad = 1.0 / fae;
             for i in 0..dim {
                 dgrad[i] = fac * xi[i] - fad * hess_dgrad[i];
             }
             for i in 0..dim {
-                let pxi = fac * xi[i];
-                let hdgi = fad * hess_dgrad[i];
-                let dgi = fae * dgrad[i];
-                for j in i..dim {
-                    // RDKit: `invHessian[itab + j] += pxi * *pxj - hdgi * *hdgj + dgi * *dgj;`
-                    // (the right-hand side is summed before being added)
-                    let v = inv_hessian[i * dim + j] + (pxi * xi[j] - hdgi * hess_dgrad[j] + dgi * dgrad[j]);
-                    inv_hessian[i * dim + j] = v;
-                    inv_hessian[j * dim + i] = v;
-                }
+                pxi[i] = fac * xi[i];
+                hdg[i] = fad * hess_dgrad[i];
+                dgs[i] = fae * dgrad[i];
             }
-        }
-        for i in 0..dim {
-            let row = &inv_hessian[i * dim..(i + 1) * dim];
-            let mut s = 0.0;
-            for j in 0..dim {
-                s -= row[j] * grad[j];
-            }
-            xi[i] = s;
-        }
+            Some(UpdateVecs { xi, hdgrad: hess_dgrad, dgrad, pxi, hdg, dgs })
+        } else {
+            None
+        };
+        update_direction(&mut inv_hessian, upd, grad, new_pos);
+        let dir = &*new_pos;
+        xi.copy_from_slice(dir);
     }
     MinimizeResult { status: MinimizeStatus::MaxIterations, energy: func_val, iterations: opts.max_iters, grad_rms: 0.0 }
+}
+
+/// Ring buffer of the last `m` L-BFGS correction pairs, preallocated.
+struct LbfgsHistory {
+    dim: usize,
+    m: usize,
+    s: Vec<f64>,
+    y: Vec<f64>,
+    rho: Vec<f64>,
+    /// Slot of the oldest pair.
+    head: usize,
+    len: usize,
+}
+
+impl LbfgsHistory {
+    fn new(dim: usize, m: usize) -> Self {
+        LbfgsHistory { dim, m, s: vec![0.0; m * dim], y: vec![0.0; m * dim], rho: vec![0.0; m], head: 0, len: 0 }
+    }
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+    /// Slot of the `k`-th oldest pair.
+    fn slot(&self, k: usize) -> usize {
+        (self.head + k) % self.m
+    }
+    /// Slot to write the next pair into (dropping the oldest when full).
+    fn push_slot(&mut self) -> usize {
+        if self.len == self.m {
+            let s = self.head;
+            self.head = (self.head + 1) % self.m;
+            s
+        } else {
+            self.len += 1;
+            self.slot(self.len - 1)
+        }
+    }
+    fn s(&self, slot: usize) -> &[f64] {
+        &self.s[slot * self.dim..(slot + 1) * self.dim]
+    }
+    fn y(&self, slot: usize) -> &[f64] {
+        &self.y[slot * self.dim..(slot + 1) * self.dim]
+    }
+}
+
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
 /// L-BFGS (two-loop recursion) with the same line search and convergence
@@ -252,35 +399,35 @@ pub fn minimize_lbfgs(
     observer: &mut dyn Observer,
 ) -> MinimizeResult {
     let dim = pos.len();
+    let m = m.max(1);
     let scaling = opts.rdkit_grad_scaling;
-    let mut grad = vec![0.0; dim];
-    let mut new_pos = vec![0.0; dim];
-    let mut s_hist: VecDeque<Vec<f64>> = VecDeque::new();
-    let mut y_hist: VecDeque<Vec<f64>> = VecDeque::new();
-    let mut rho_hist: VecDeque<f64> = VecDeque::new();
+    let mut work = BfgsWork::new(dim);
+    let [grad, new_pos, xi, s, y, q, _, _] = work.split();
+    let mut hist = LbfgsHistory::new(dim, m);
 
     let mut fp = ff.energy(pos);
-    calc_grad(ff, pos, &mut grad, scaling);
-    let mut xi: Vec<f64> = grad.iter().map(|g| -g).collect();
+    calc_grad(ff, pos, grad, scaling);
+    for (x, g) in xi.iter_mut().zip(grad.iter()) {
+        *x = -g;
+    }
     let sum: f64 = pos.iter().map(|p| p * p).sum();
     let max_step = MAXSTEP * sum.sqrt().max(dim as f64);
     let mut alpha = vec![0.0; m];
     for iter in 1..=opts.max_iters {
-        let (status, fv) = linear_search(ff, pos, fp, &grad, &mut xi, &mut new_pos, max_step);
+        let (status, fv) = linear_search(ff, pos, fp, grad, xi, new_pos, max_step);
         if status < 0 {
-            if s_hist.is_empty() {
+            if hist.len == 0 {
                 return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
             }
             // reset memory, retry steepest descent next iteration
-            s_hist.clear();
-            y_hist.clear();
-            rho_hist.clear();
-            xi = grad.iter().map(|g| -g).collect();
+            hist.clear();
+            for (x, g) in xi.iter_mut().zip(grad.iter()) {
+                *x = -g;
+            }
             continue;
         }
         fp = fv;
         let mut test: f64 = 0.0;
-        let mut s = vec![0.0; dim];
         for i in 0..dim {
             s[i] = new_pos[i] - pos[i];
             pos[i] = new_pos[i];
@@ -288,52 +435,55 @@ pub fn minimize_lbfgs(
         }
         ff.on_accepted_step(pos);
         if test < TOLX {
-            notify(observer, iter, pos, fp, &grad);
+            notify(observer, iter, pos, fp, grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
-        let old_grad = grad.clone();
-        let grad_scale = calc_grad(ff, pos, &mut grad, scaling);
-        let converged = grad_converged(&grad, pos, fp, grad_scale, opts.force_tol);
-        if notify(observer, iter, pos, fp, &grad) {
+        y.copy_from_slice(grad); // old gradient
+        let grad_scale = calc_grad(ff, pos, grad, scaling);
+        let converged = grad_converged(grad, pos, fp, grad_scale, opts.force_tol);
+        if notify(observer, iter, pos, fp, grad) {
             return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
         if converged {
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
-        let y: Vec<f64> = grad.iter().zip(&old_grad).map(|(a, b)| a - b).collect();
-        let sy: f64 = s.iter().zip(&y).map(|(a, b)| a * b).sum();
+        for (yi, g) in y.iter_mut().zip(grad.iter()) {
+            *yi = g - *yi;
+        }
+        let sy = dot(s, y);
         if sy > 1e-12 {
-            if s_hist.len() == m {
-                s_hist.pop_front();
-                y_hist.pop_front();
-                rho_hist.pop_front();
-            }
-            s_hist.push_back(s);
-            y_hist.push_back(y);
-            rho_hist.push_back(1.0 / sy);
+            let slot = hist.push_slot();
+            hist.s[slot * dim..(slot + 1) * dim].copy_from_slice(s);
+            hist.y[slot * dim..(slot + 1) * dim].copy_from_slice(y);
+            hist.rho[slot] = 1.0 / sy;
         }
         // two-loop recursion
-        let mut q = grad.clone();
-        let k = s_hist.len();
+        q.copy_from_slice(grad);
+        let k = hist.len;
         for idx in (0..k).rev() {
-            let a = rho_hist[idx] * s_hist[idx].iter().zip(&q).map(|(x, y)| x * y).sum::<f64>();
+            let sl = hist.slot(idx);
+            let a = hist.rho[sl] * dot(hist.s(sl), q);
             alpha[idx] = a;
-            for (qi, yi) in q.iter_mut().zip(&y_hist[idx]) {
+            for (qi, yi) in q.iter_mut().zip(hist.y(sl)) {
                 *qi -= a * yi;
             }
         }
         if k > 0 {
-            let yy: f64 = y_hist[k - 1].iter().map(|v| v * v).sum();
-            let gamma = 1.0 / (rho_hist[k - 1] * yy);
+            let sl = hist.slot(k - 1);
+            let yy: f64 = hist.y(sl).iter().map(|v| v * v).sum();
+            let gamma = 1.0 / (hist.rho[sl] * yy);
             q.iter_mut().for_each(|v| *v *= gamma);
         }
         for idx in 0..k {
-            let b = rho_hist[idx] * y_hist[idx].iter().zip(&q).map(|(x, y)| x * y).sum::<f64>();
-            for (qi, si) in q.iter_mut().zip(&s_hist[idx]) {
+            let sl = hist.slot(idx);
+            let b = hist.rho[sl] * dot(hist.y(sl), q);
+            for (qi, si) in q.iter_mut().zip(hist.s(sl)) {
                 *qi += (alpha[idx] - b) * si;
             }
         }
-        xi = q.iter().map(|v| -v).collect();
+        for (x, v) in xi.iter_mut().zip(q.iter()) {
+            *x = -v;
+        }
     }
     MinimizeResult { status: MinimizeStatus::MaxIterations, energy: fp, iterations: opts.max_iters, grad_rms: 0.0 }
 }

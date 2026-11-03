@@ -21,6 +21,8 @@ pub mod backend;
 pub mod bonded;
 pub mod compile;
 pub mod exact;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod workspace;
 
 pub use backend::NonbondedBackend;

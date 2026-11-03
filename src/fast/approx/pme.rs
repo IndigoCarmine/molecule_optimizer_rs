@@ -81,14 +81,14 @@ pub(crate) struct Pme {
     pub order: usize,
     pub k: [usize; 3],
     pub beta: f64,
-    recip: [[f64; 3]; 3],
+    pub(crate) recip: [[f64; 3]; 3],
     /// Influence function `D(m)` in the transposed (y, z, x) layout.
-    infl: Vec<f64>,
+    pub(crate) infl: Vec<f64>,
     fwd: [Arc<dyn Fft<f64>>; 3],
     inv: [Arc<dyn Fft<f64>>; 3],
     /// Charged atoms and their charges (times `sqrt(C)`).
-    atoms: Vec<u32>,
-    q: Vec<f64>,
+    pub(crate) atoms: Vec<u32>,
+    pub(crate) q: Vec<f64>,
     work: Mutex<Option<(Vec<Complex64>, Vec<Complex64>)>>,
 }
 

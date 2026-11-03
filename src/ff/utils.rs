@@ -53,12 +53,14 @@ pub fn compute_dihedral_pts(p1: V3, p2: V3, p3_: V3, p4: V3) -> DihedralData {
     let r1 = sub(p3_, p2);
     let r2 = scale(r1, -1.0);
     let r3 = sub(p4, p3_);
-    let mut t0 = cross(r0, r1);
+    // RDKit divides component-wise (`Point3D::operator/=`); multiplying by
+    // the reciprocal would differ in the last bit.
+    let t0 = cross(r0, r1);
     let d0 = norm(t0).max(1.0e-5);
-    t0 = scale(t0, 1.0 / d0);
-    let mut t1 = cross(r2, r3);
+    let t0 = [t0[0] / d0, t0[1] / d0, t0[2] / d0];
+    let t1 = cross(r2, r3);
     let d1 = norm(t1).max(1.0e-5);
-    t1 = scale(t1, 1.0 / d1);
+    let t1 = [t1[0] / d1, t1[1] / d1, t1[2] / d1];
     let cos_phi = dot(t0, t1).clamp(-1.0, 1.0);
     let m = cross(t0, r1);
     let ml = norm(m).max(1.0e-5);

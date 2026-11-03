@@ -221,7 +221,9 @@ pub fn minimize_bfgs(
                 let hdgi = fad * hess_dgrad[i];
                 let dgi = fae * dgrad[i];
                 for j in i..dim {
-                    let v = inv_hessian[i * dim + j] + pxi * xi[j] - hdgi * hess_dgrad[j] + dgi * dgrad[j];
+                    // RDKit: `invHessian[itab + j] += pxi * *pxj - hdgi * *hdgj + dgi * *dgj;`
+                    // (the right-hand side is summed before being added)
+                    let v = inv_hessian[i * dim + j] + (pxi * xi[j] - hdgi * hess_dgrad[j] + dgi * dgrad[j]);
                     inv_hessian[i * dim + j] = v;
                     inv_hessian[j * dim + i] = v;
                 }

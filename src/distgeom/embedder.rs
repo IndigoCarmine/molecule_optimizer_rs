@@ -22,7 +22,7 @@ use super::torsion_prefs::{EtkdgDetails, ForceConsts, TorsionOptions, get_experi
 use crate::core::{BondOrder, BondStereo, ChiralTag, Molecule};
 use crate::error::{Error, Result};
 use crate::ff::{ContribForceField, ForceField};
-use crate::optim::{MinimizeOptions, MinimizeStatus, Observer, bfgs::minimize_bfgs};
+use crate::optim::{MinimizeOptions, MinimizeStatus, Observer, bfgs::minimize_bfgs_impl};
 
 const ERROR_TOL: f64 = 0.00001;
 const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
@@ -348,7 +348,7 @@ fn ff_minimize(ff: &ContribForceField, pos: &mut [f64], max_its: usize, tol: f64
         return Ok(false);
     }
     let opts = MinimizeOptions { max_iters: max_its, force_tol: tol, ..Default::default() };
-    let r = minimize_bfgs(ff, pos, &opts, obs);
+    let r = minimize_bfgs_impl(ff, pos, &opts, false, obs);
     match r.status {
         MinimizeStatus::Cancelled => Err(Error::Cancelled),
         MinimizeStatus::MaxIterations => Ok(true),

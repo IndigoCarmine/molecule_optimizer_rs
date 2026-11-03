@@ -69,6 +69,47 @@ pub fn optimize(mol: &Molecule, builder: &dyn ForceFieldBuilder, opts: &Optimize
     optimize_coords(mol, &mol.coords, builder, opts, &mut optim::NoObserver)
 }
 
+impl JobHandle<OptimizeResult, OptimizeSnapshot> {
+    /// Intermediate structures of an [`Engine::optimize`] job as a `Stream`
+    /// of [`Frame`]s (coordinates, energy, iteration), ending with the final
+    /// structure. Same semantics as [`JobHandle::stream`] (latest value,
+    /// never slows the optimization; frames arrive every
+    /// [`crate::tasks::EngineConfig::publish_interval`]), with consecutive
+    /// duplicates removed.
+    ///
+    /// ```no_run
+    /// # use molecule_optimizer_rs::{calc::OptimizeOptions, ff::uff::UffBuilder, tasks::Engine, Molecule};
+    /// # use futures::StreamExt;
+    /// # use std::sync::Arc;
+    /// # async fn f(mol: Arc<Molecule>) {
+    /// let mut opts = OptimizeOptions::default();
+    /// opts.minimize.force_tol = 0.0; // endless: run until cancelled
+    /// let job = Engine::global().optimize(mol, Arc::new(UffBuilder::default()), opts);
+    /// let mut frames = job.frames();
+    /// while let Some(f) = frames.next().await {
+    ///     println!("iter {} E = {}", f.iteration, f.energy);
+    ///     if f.iteration > 1000 {
+    ///         job.cancel(); // the stream still yields the final frame, then ends
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn frames(&self) -> futures::stream::BoxStream<'static, Frame> {
+        use futures::StreamExt;
+        let mut last: Option<Frame> = None;
+        self.snapshot_stream()
+            .filter_map(move |s| {
+                let f = &s.data.frame;
+                let dup = last.as_ref().is_some_and(|l| l.iteration == f.iteration && l.energy.to_bits() == f.energy.to_bits() && l.coords == f.coords);
+                if !dup {
+                    last = Some(f.clone());
+                }
+                futures::future::ready((!dup).then(|| f.clone()))
+            })
+            .boxed()
+    }
+}
+
 /// Snapshot of a batch optimization.
 #[derive(Debug, Clone, Default)]
 pub struct BatchOptimizeSnapshot {
@@ -79,6 +120,10 @@ pub struct BatchOptimizeSnapshot {
 impl Engine {
     /// Optimizes one structure asynchronously. The snapshot always contains
     /// the latest coordinates; `cancel()` returns the current geometry.
+    /// Intermediate structures are available as a stream with
+    /// [`JobHandle::frames`]. With `opts.minimize.force_tol <= 0` (endless
+    /// mode, see [`MinimizeOptions::force_tol`]) the job runs until cancelled
+    /// and reports progress with `total == 0`.
     pub fn optimize(
         &self,
         mol: Arc<Molecule>,
@@ -86,7 +131,8 @@ impl Engine {
         opts: OptimizeOptions,
     ) -> JobHandle<OptimizeResult, OptimizeSnapshot> {
         let init = OptimizeSnapshot { frame: Frame { coords: mol.coords.clone(), energy: f64::NAN, iteration: 0 }, finished: false };
-        let total = opts.minimize.max_iters;
+        // progress total 0 = unknown (endless mode has no iteration limit)
+        let total = if opts.minimize.is_endless() { 0 } else { opts.minimize.max_iters };
         self.spawn(init, total, move |ctx: JobContext<OptimizeSnapshot>| {
             let mut obs = CtxObserver::new(&ctx, |ctx, info| {
                 let coords = to_points(info.pos);

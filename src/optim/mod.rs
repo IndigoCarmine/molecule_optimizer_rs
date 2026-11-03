@@ -28,8 +28,24 @@ pub const AUTO_LBFGS_DIM: usize = 3000;
 /// Minimizer options. Defaults follow RDKit `ForceField::minimize`.
 #[derive(Debug, Clone)]
 pub struct MinimizeOptions {
+    /// Iteration limit (ignored in endless mode, see [`force_tol`](Self::force_tol)).
     pub max_iters: usize,
     /// Gradient convergence tolerance (RDKit `forceTol`, default 1e-4).
+    ///
+    /// **Endless mode:** `force_tol <= 0` means "never converge". The
+    /// minimizer then skips the gradient and step-size (TOLX) convergence
+    /// tests, ignores `max_iters`, and when the line search finds no descent
+    /// or cannot move it restarts from steepest descent (BFGS: inverse
+    /// Hessian reset to identity; L-BFGS: history cleared) instead of
+    /// returning. It runs until the [`Observer`] returns
+    /// `ControlFlow::Break` (status [`MinimizeStatus::Cancelled`]); for
+    /// [`crate::tasks::Engine`] jobs that is [`crate::tasks::JobHandle::cancel`].
+    /// At a point that is stationary to machine precision it keeps calling
+    /// the observer (with a 1 ms pause per iteration) so it stays responsive.
+    /// Intended for single optimizations ([`crate::tasks::Engine::optimize`]
+    /// plus [`crate::tasks::JobHandle::stream`]); calculations that minimize
+    /// many structures in turn (scans, conformer / assembly searches) would
+    /// never get past their first minimization.
     pub force_tol: f64,
     /// Energy tolerance (accepted for API compatibility; RDKit ignores it).
     pub energy_tol: f64,
@@ -47,6 +63,13 @@ impl Default for MinimizeOptions {
             algorithm: Algorithm::Auto,
             rdkit_grad_scaling: true,
         }
+    }
+}
+
+impl MinimizeOptions {
+    /// `true` in endless mode (`force_tol <= 0`, see [`force_tol`](Self::force_tol)).
+    pub fn is_endless(&self) -> bool {
+        self.force_tol <= 0.0
     }
 }
 
@@ -77,6 +100,13 @@ pub struct IterationInfo<'a> {
 }
 
 /// Called after every accepted step; return `ControlFlow::Break(())` to stop.
+///
+/// This is the synchronous way to get every intermediate structure:
+/// [`IterationInfo::pos`] holds the current coordinates (copy them if they
+/// are needed later), e.g. with a closure
+/// `|info: &IterationInfo<'_>| { frames.push(info.pos.to_vec()); ControlFlow::Continue(()) }`.
+/// For [`crate::tasks::Engine`] jobs use [`crate::tasks::JobHandle::stream`]
+/// instead.
 pub trait Observer {
     fn on_iteration(&mut self, info: &IterationInfo<'_>) -> ControlFlow<()>;
 }

@@ -107,7 +107,7 @@ impl Engine {
     /// Optimizes many structures in parallel.
     pub fn optimize_batch(
         &self,
-        items: Vec<(Arc<Molecule>, Option<Vec<[f64; 3]>>)>,
+        items: Vec<super::StructureItem>,
         builder: SharedBuilder,
         opts: OptimizeOptions,
     ) -> JobHandle<Vec<Result<OptimizeResult>>, BatchOptimizeSnapshot> {

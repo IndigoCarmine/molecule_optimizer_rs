@@ -22,8 +22,11 @@ pub struct Frame {
     pub iteration: usize,
 }
 
+/// A structure to process: a molecule with optional replacement coordinates.
+pub type StructureItem = (Arc<crate::core::Molecule>, Option<Vec<[f64; 3]>>);
+
 pub(crate) fn to_points(flat: &[f64]) -> Vec<[f64; 3]> {
-    flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+    flat.as_chunks::<3>().0.to_vec()
 }
 
 pub(crate) fn to_flat(pts: &[[f64; 3]]) -> Vec<f64> {

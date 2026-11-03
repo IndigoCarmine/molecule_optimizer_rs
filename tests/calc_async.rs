@@ -68,6 +68,7 @@ impl Contrib for Rep {
 }
 
 struct Toy;
+#[allow(clippy::needless_range_loop)]
 impl ForceFieldBuilder for Toy {
     fn name(&self) -> &str {
         "Toy"

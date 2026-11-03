@@ -51,7 +51,7 @@ impl Engine {
     /// optional replacement coordinates (e.g. conformers of one molecule).
     pub fn energy_batch(
         &self,
-        items: Vec<(Arc<Molecule>, Option<Vec<[f64; 3]>>)>,
+        items: Vec<super::StructureItem>,
         builder: SharedBuilder,
     ) -> JobHandle<Vec<Result<EnergyResult>>, EnergyBatchSnapshot> {
         let n = items.len();

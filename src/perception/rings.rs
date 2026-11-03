@@ -17,75 +17,88 @@ pub struct RingInfo {
     /// Each ring as bond indices (same order as `atom_rings`, bond k joins
     /// atoms k and k+1).
     pub bond_rings: Vec<Vec<usize>>,
-    atom_membership: Vec<Vec<usize>>,
-    bond_membership: Vec<Vec<usize>>,
+    /// ring ids of every atom, ascending (atom `a` owns
+    /// `atom_membership[atom_start[a]..atom_start[a + 1]]`)
+    atom_start: Vec<usize>,
+    atom_membership: Vec<usize>,
+    /// ring ids of every bond, laid out like the atom memberships
+    bond_start: Vec<usize>,
+    bond_membership: Vec<usize>,
+}
+
+/// Flat (CSR) membership lists: for each of `n` items the ids of the
+/// `rings` (lists of item indices) containing it, in ring order.
+fn membership(n: usize, rings: &[Vec<usize>]) -> (Vec<usize>, Vec<usize>) {
+    let mut start = vec![0usize; n + 1];
+    for r in rings {
+        for &x in r {
+            start[x + 1] += 1;
+        }
+    }
+    for i in 0..n {
+        start[i + 1] += start[i];
+    }
+    let mut fill = start[..n].to_vec();
+    let mut ids = vec![0usize; start[n]];
+    for (id, r) in rings.iter().enumerate() {
+        for &x in r {
+            ids[fill[x]] = id;
+            fill[x] += 1;
+        }
+    }
+    (start, ids)
 }
 
 impl RingInfo {
     pub fn compute(mol: &Molecule) -> RingInfo {
-        let rings = rdkit_atom_rings(mol);
-        let mut info = RingInfo {
-            atom_membership: vec![Vec::new(); mol.num_atoms()],
-            bond_membership: vec![Vec::new(); mol.num_bonds()],
-            ..Default::default()
-        };
-        for ring in rings {
-            let mut bonds = Vec::with_capacity(ring.len());
-            for k in 0..ring.len() {
-                let a = ring[k];
-                let b = ring[(k + 1) % ring.len()];
-                bonds.push(mol.bond_between(a, b).expect("ring bond"));
-            }
-            let id = info.atom_rings.len();
-            for &a in &ring {
-                info.atom_membership[a].push(id);
-            }
-            for &b in &bonds {
-                info.bond_membership[b].push(id);
-            }
-            info.atom_rings.push(ring);
-            info.bond_rings.push(bonds);
-        }
-        info
+        let atom_rings = rdkit_atom_rings(mol);
+        let bond_rings: Vec<Vec<usize>> = atom_rings
+            .iter()
+            .map(|ring| (0..ring.len()).map(|k| mol.bond_between(ring[k], ring[(k + 1) % ring.len()]).expect("ring bond")).collect())
+            .collect();
+        let (atom_start, atom_membership) = membership(mol.num_atoms(), &atom_rings);
+        let (bond_start, bond_membership) = membership(mol.num_bonds(), &bond_rings);
+        RingInfo { atom_rings, bond_rings, atom_start, atom_membership, bond_start, bond_membership }
     }
 
     pub fn num_rings(&self) -> usize {
         self.atom_rings.len()
     }
     pub fn num_atom_rings(&self, a: usize) -> usize {
-        self.atom_membership[a].len()
+        self.atom_start[a + 1] - self.atom_start[a]
     }
     pub fn num_bond_rings(&self, b: usize) -> usize {
-        self.bond_membership[b].len()
+        self.bond_start[b + 1] - self.bond_start[b]
     }
     pub fn atom_ring_ids(&self, a: usize) -> &[usize] {
-        &self.atom_membership[a]
+        &self.atom_membership[self.atom_start[a]..self.atom_start[a + 1]]
     }
     pub fn bond_ring_ids(&self, b: usize) -> &[usize] {
-        &self.bond_membership[b]
+        &self.bond_membership[self.bond_start[b]..self.bond_start[b + 1]]
     }
     pub fn is_atom_in_ring(&self, a: usize) -> bool {
-        !self.atom_membership[a].is_empty()
+        self.num_atom_rings(a) > 0
     }
     pub fn is_bond_in_ring(&self, b: usize) -> bool {
-        !self.bond_membership[b].is_empty()
+        self.num_bond_rings(b) > 0
     }
     pub fn is_atom_in_ring_of_size(&self, a: usize, size: usize) -> bool {
-        self.atom_membership[a].iter().any(|&r| self.atom_rings[r].len() == size)
+        self.atom_ring_ids(a).iter().any(|&r| self.atom_rings[r].len() == size)
     }
     pub fn is_bond_in_ring_of_size(&self, b: usize, size: usize) -> bool {
-        self.bond_membership[b].iter().any(|&r| self.bond_rings[r].len() == size)
+        self.bond_ring_ids(b).iter().any(|&r| self.bond_rings[r].len() == size)
     }
     /// Size of the smallest ring containing atom `a` (0 if acyclic).
     pub fn min_atom_ring_size(&self, a: usize) -> usize {
-        self.atom_membership[a].iter().map(|&r| self.atom_rings[r].len()).min().unwrap_or(0)
+        self.atom_ring_ids(a).iter().map(|&r| self.atom_rings[r].len()).min().unwrap_or(0)
     }
     pub fn min_bond_ring_size(&self, b: usize) -> usize {
-        self.bond_membership[b].iter().map(|&r| self.bond_rings[r].len()).min().unwrap_or(0)
+        self.bond_ring_ids(b).iter().map(|&r| self.bond_rings[r].len()).min().unwrap_or(0)
     }
     /// `true` if atoms `a` and `b` share a ring.
     pub fn are_atoms_in_same_ring(&self, a: usize, b: usize) -> bool {
-        self.atom_membership[a].iter().any(|r| self.atom_membership[b].contains(r))
+        let rb = self.atom_ring_ids(b);
+        self.atom_ring_ids(a).iter().any(|r| rb.contains(r))
     }
 }
 

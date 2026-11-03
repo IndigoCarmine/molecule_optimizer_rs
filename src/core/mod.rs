@@ -8,5 +8,5 @@ pub mod molecule;
 pub use cell::UnitCell;
 pub use element::{ElementData, atomic_number, element};
 pub use molecule::{
-    Atom, Bond, BondOrder, BondStereo, ChiralTag, Hybridization, Molecule, ResidueInfo,
+    Atom, Bond, BondDir, BondOrder, BondStereo, ChiralTag, Hybridization, Molecule, ResidueInfo,
 };

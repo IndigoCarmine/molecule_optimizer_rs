@@ -116,6 +116,15 @@ impl ConformerSearchOptions {
             max_conformers: None,
         }
     }
+
+    /// Options using the ETKDG generator ([`crate::distgeom::EtkdgGenerator`]):
+    /// starting geometry `i` equals conformer `i` of RDKit
+    /// `EmbedMultipleConfs(mol, num_conformers, params)`.
+    pub fn etkdg(params: crate::distgeom::EmbedParams, num_conformers: usize) -> Self {
+        let mut o = Self::new(Arc::new(crate::distgeom::EtkdgGenerator::new(params)));
+        o.num_conformers = num_conformers;
+        o
+    }
 }
 
 /// An optimized conformer.

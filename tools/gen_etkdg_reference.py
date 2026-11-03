@@ -307,18 +307,24 @@ def stage_confsearch(mols):
         ps = rdDistGeom.ETKDGv3()
         ps.randomSeed = 0xF00D
         cids = list(rdDistGeom.EmbedMultipleConfs(mm, n, ps))
-        res = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mm, maxIters=2000)
-        best = None
-        energies = []
-        for cid, (conv, e) in zip(cids, res):
-            energies.append(e)
-            if best is None or e < best[1]:
-                best = (cid, e)
-        out[name] = {"num_confs": n, "num_embedded": len(cids), "seed": 0xF00D,
-                     "min_energy": best[1], "min_conf_index": cids.index(best[0]),
-                     "min_coords": coords(mm, best[0]), "energies": energies,
-                     "molblock": Chem.MolToMolBlock(mm, confId=best[0])}
-        print(name, n, best[1])
+        embedded = Chem.Mol(mm)
+        rec = {"num_confs": n, "num_embedded": len(cids), "seed": 0xF00D}
+        for ffname, opt in (("mmff", rdForceFieldHelpers.MMFFOptimizeMoleculeConfs),
+                            ("uff", rdForceFieldHelpers.UFFOptimizeMoleculeConfs)):
+            mo = Chem.Mol(embedded)
+            res = opt(mo, maxIters=2000)
+            best = None
+            energies = []
+            for cid, (conv, e) in zip(cids, res):
+                energies.append(e)
+                if best is None or e < best[1]:
+                    best = (cid, e)
+            rec[ffname] = {"min_energy": best[1], "min_conf_index": cids.index(best[0]),
+                           "min_coords": coords(mo, best[0]),
+                           "min_embedded_coords": coords(embedded, best[0]),
+                           "energies": energies}
+            print(name, ffname, n, best[1])
+        out[name] = rec
     write_json("confsearch.json", out)
 
 

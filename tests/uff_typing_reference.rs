@@ -13,14 +13,9 @@ const DATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/etkdg/");
 /// Molecules whose UFF typing differs from RDKit because of a perception
 /// difference upstream of the typer (not in `uff_params`).  The test fails if
 /// this set changes in either direction, so fixing the cause forces an update.
-///
-/// * caffeine: `Molecule::total_valence` is recomputed from the aromatic bond
-///   orders (exocyclic C=O on an aromatic C: 1.5 + 1.5 + 2 = 5), whereas RDKit
-///   uses the valence cached on the Kekule structure (4).  Our
-///   `is_atom_conjug_cand` therefore sees the carbonyl C as hypervalent, the
-///   C=O bond is not marked conjugated and the O is typed `O_2` instead of
-///   `O_R` (r0 1.2168 vs 1.2579 for the two C=O bonds).
-const KNOWN_PERCEPTION_DIFFS: &[&str] = &["caffeine"];
+/// (Currently empty: caffeine's exocyclic C=O typing was fixed by the RDKit
+/// aromatic valence rules in `Molecule::explicit_valence`.)
+const KNOWN_PERCEPTION_DIFFS: &[&str] = &[];
 
 fn check(sdf: &str, json: &str) -> (usize, usize) {
     let text = std::fs::read_to_string(format!("{DATA}{sdf}")).unwrap();

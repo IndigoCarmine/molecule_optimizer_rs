@@ -7,6 +7,7 @@ pub mod bond_perception;
 pub mod hybridization;
 pub mod hydrogens;
 pub mod kekulize;
+pub mod legacy_stereo;
 pub mod matching;
 pub mod rings;
 pub mod stereo;

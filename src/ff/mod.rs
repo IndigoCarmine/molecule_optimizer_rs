@@ -10,6 +10,7 @@
 
 pub mod constraints;
 pub mod mmff;
+pub mod softcore;
 pub mod uff;
 pub mod utils;
 

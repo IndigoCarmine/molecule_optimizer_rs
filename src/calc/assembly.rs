@@ -803,7 +803,7 @@ fn minimize_monomer<B: SoftCoreInner>(
     m.coords = coords.to_vec();
     let ff = builder.with_interfrag(true).build_dyn(&m, &[])?;
     let mut pos = to_flat(coords);
-    let r = optim::minimize(&ff, &mut pos, opts, &mut optim::NoObserver);
+    let r = optim::minimize_with(&ff, &mut pos, opts, false, &mut optim::NoObserver);
     Ok((to_points(&pos), r.energy))
 }
 
@@ -1041,9 +1041,9 @@ fn minimize_observed(
                     );
                 });
             });
-            optim::minimize(ff, pos, mopts, &mut obs)
+            optim::minimize_with(ff, pos, mopts, false, &mut obs)
         }
-        None => optim::minimize(ff, pos, mopts, &mut optim::NoObserver),
+        None => optim::minimize_with(ff, pos, mopts, false, &mut optim::NoObserver),
     }
 }
 

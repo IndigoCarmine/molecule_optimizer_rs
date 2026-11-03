@@ -136,6 +136,19 @@ fn notify(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f6
     matches!(observer.on_iteration(&IterationInfo { iteration, pos, energy, grad }), ControlFlow::Break(()))
 }
 
+/// Endless mode ([`MinimizeOptions::is_endless`]): the line search could not
+/// move (bad direction or no measurable step) and the minimizer restarts
+/// from steepest descent. `stalled_before` = the previous iteration was such
+/// a restart too; then the point is stationary to machine precision, and a
+/// short sleep keeps the loop from spinning hot while it stays responsive
+/// to the observer (cancellation, publishing). Returns `true` to stop.
+fn endless_restart(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f64, grad: &[f64], stalled_before: bool) -> bool {
+    if stalled_before {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    notify(observer, iteration, pos, energy, grad)
+}
+
 /// Packed upper triangle of the symmetric `dim × dim` inverse Hessian: row
 /// `i` holds `H[i][i..dim]`, rows stored one after another (`dim·(dim+1)/2`
 /// values, half the memory of the full matrix).
@@ -157,6 +170,13 @@ impl PackedSym {
     #[inline(always)]
     fn row_start(&self, i: usize) -> usize {
         i * self.dim - i * i.saturating_sub(1) / 2
+    }
+    fn reset_identity(&mut self) {
+        self.a.fill(0.0);
+        for i in 0..self.dim {
+            let o = self.row_start(i);
+            self.a[o] = 1.0;
+        }
     }
 }
 
@@ -427,10 +447,27 @@ impl BfgsWork {
 /// of iteration `k + 1` that also computes `H·dgrad` and `H·grad`
 /// ([`fused_pass`]); the new direction `-H'·grad` is formed from `H·grad`
 /// and the rank-2 update terms. Results agree with RDKit to rounding.
+///
+/// With `opts.force_tol <= 0` it runs in endless mode (see
+/// [`MinimizeOptions::force_tol`]): no convergence test, no iteration
+/// limit, and a stalled line search resets the inverse Hessian to identity
+/// instead of returning; only the observer can stop it.
 pub fn minimize_bfgs(
     ff: &dyn ForceField,
     pos: &mut [f64],
     opts: &MinimizeOptions,
+    observer: &mut dyn Observer,
+) -> MinimizeResult {
+    minimize_bfgs_impl(ff, pos, opts, opts.is_endless(), observer)
+}
+
+/// [`minimize_bfgs`] with endless mode chosen explicitly (`false` keeps the
+/// RDKit semantics for any `force_tol`, as the distance-geometry embedder needs).
+pub(crate) fn minimize_bfgs_impl(
+    ff: &dyn ForceField,
+    pos: &mut [f64],
+    opts: &MinimizeOptions,
+    endless: bool,
     observer: &mut dyn Observer,
 ) -> MinimizeResult {
     let dim = pos.len();
@@ -450,10 +487,25 @@ pub fn minimize_bfgs(
     }
     let max_step = MAXSTEP * sum.sqrt().max(dim as f64);
     let mut func_val = fp;
-    for iter in 1..=opts.max_iters {
+    let max_iters = if endless { usize::MAX } else { opts.max_iters };
+    let mut stalled = false;
+    for iter in 1..=max_iters {
         let (status, fv) = linear_search(ff, pos, fp, grad, xi, new_pos, max_step);
         func_val = fv;
         if status < 0 {
+            if endless {
+                // bad direction: restart from steepest descent
+                inv_hessian.reset_identity();
+                pending = None;
+                for (x, g) in xi.iter_mut().zip(grad.iter()) {
+                    *x = -g;
+                }
+                if endless_restart(observer, iter, pos, fp, grad, stalled) {
+                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                }
+                stalled = true;
+                continue;
+            }
             // bad direction: reset to steepest descent once, otherwise stop
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
@@ -470,11 +522,26 @@ pub fn minimize_bfgs(
         dgrad.copy_from_slice(grad);
         ff.on_accepted_step(pos);
         if test < TOLX {
+            if endless {
+                // no measurable step: restart from steepest descent
+                calc_grad(ff, pos, grad, scaling);
+                inv_hessian.reset_identity();
+                pending = None;
+                for (x, g) in xi.iter_mut().zip(grad.iter()) {
+                    *x = -g;
+                }
+                if endless_restart(observer, iter, pos, fp, grad, stalled) {
+                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                }
+                stalled = true;
+                continue;
+            }
             notify(observer, iter, pos, fp, grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
+        stalled = false;
         let grad_scale = calc_grad(ff, pos, grad, scaling);
-        let converged = grad_converged(grad, pos, func_val, grad_scale, opts.force_tol);
+        let converged = !endless && grad_converged(grad, pos, func_val, grad_scale, opts.force_tol);
         for (d, g) in dgrad.iter_mut().zip(grad.iter()) {
             *d = g - *d;
         }
@@ -573,12 +640,26 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 }
 
 /// L-BFGS (two-loop recursion) with the same line search and convergence
-/// criteria as [`minimize_bfgs`].
+/// criteria as [`minimize_bfgs`]. With `opts.force_tol <= 0` it runs in
+/// endless mode like [`minimize_bfgs`] (a stalled line search clears the
+/// correction history instead of returning).
 pub fn minimize_lbfgs(
     ff: &dyn ForceField,
     pos: &mut [f64],
     opts: &MinimizeOptions,
     m: usize,
+    observer: &mut dyn Observer,
+) -> MinimizeResult {
+    minimize_lbfgs_impl(ff, pos, opts, m, opts.is_endless(), observer)
+}
+
+/// [`minimize_lbfgs`] with endless mode chosen explicitly.
+pub(crate) fn minimize_lbfgs_impl(
+    ff: &dyn ForceField,
+    pos: &mut [f64],
+    opts: &MinimizeOptions,
+    m: usize,
+    endless: bool,
     observer: &mut dyn Observer,
 ) -> MinimizeResult {
     let dim = pos.len();
@@ -596,9 +677,23 @@ pub fn minimize_lbfgs(
     let sum: f64 = pos.iter().map(|p| p * p).sum();
     let max_step = MAXSTEP * sum.sqrt().max(dim as f64);
     let mut alpha = vec![0.0; m];
-    for iter in 1..=opts.max_iters {
+    let max_iters = if endless { usize::MAX } else { opts.max_iters };
+    let mut stalled = false;
+    for iter in 1..=max_iters {
         let (status, fv) = linear_search(ff, pos, fp, grad, xi, new_pos, max_step);
         if status < 0 {
+            if endless {
+                // bad direction: restart from steepest descent
+                hist.clear();
+                for (x, g) in xi.iter_mut().zip(grad.iter()) {
+                    *x = -g;
+                }
+                if endless_restart(observer, iter, pos, fp, grad, stalled) {
+                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                }
+                stalled = true;
+                continue;
+            }
             if hist.len == 0 {
                 return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
             }
@@ -618,12 +713,26 @@ pub fn minimize_lbfgs(
         }
         ff.on_accepted_step(pos);
         if test < TOLX {
+            if endless {
+                // no measurable step: restart from steepest descent
+                calc_grad(ff, pos, grad, scaling);
+                hist.clear();
+                for (x, g) in xi.iter_mut().zip(grad.iter()) {
+                    *x = -g;
+                }
+                if endless_restart(observer, iter, pos, fp, grad, stalled) {
+                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                }
+                stalled = true;
+                continue;
+            }
             notify(observer, iter, pos, fp, grad);
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
+        stalled = false;
         y.copy_from_slice(grad); // old gradient
         let grad_scale = calc_grad(ff, pos, grad, scaling);
-        let converged = grad_converged(grad, pos, fp, grad_scale, opts.force_tol);
+        let converged = !endless && grad_converged(grad, pos, fp, grad_scale, opts.force_tol);
         if notify(observer, iter, pos, fp, grad) {
             return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
         }

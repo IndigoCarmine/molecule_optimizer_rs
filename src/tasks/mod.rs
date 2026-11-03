@@ -6,7 +6,8 @@
 //!   [`JobHandle::wait_blocking`]).
 //! * Every job publishes a typed snapshot `S` of its current state. Readers
 //!   get it lock-free at any time with [`JobHandle::snapshot`], or ask the
-//!   workers for a fresh one with [`JobHandle::request_snapshot`].
+//!   workers for a fresh one with [`JobHandle::request_snapshot`], or
+//!   follow the intermediate states as a `Stream` with [`JobHandle::stream`].
 //! * Workers publish when a snapshot was requested, or periodically
 //!   (default every 50 ms); between those points no copies are made.
 //! * [`JobHandle::cancel`] stops the job at the next iteration boundary; jobs
@@ -239,7 +240,45 @@ impl<R, S: Clone + Send + Sync + 'static> JobHandle<R, S> {
         })
     }
 
-    /// Snapshots as a `Stream`, yielding each newly published version.
+    /// Intermediate states of the job as a `Stream` of snapshot data (works
+    /// for every job type: `optimize`, `optimize_batch`, `scan`,
+    /// `conformer_search`, `assembly_search`, custom [`Engine::spawn`] jobs).
+    /// For optimizations, [`JobHandle::frames`] yields just the [`Frame`](crate::calc::Frame)s.
+    ///
+    /// Same semantics as [`snapshot_stream`](Self::snapshot_stream): it
+    /// yields what the workers publish (periodically every
+    /// [`EngineConfig::publish_interval`], on [`request_snapshot`](Self::request_snapshot),
+    /// and once at the end; with `Duration::ZERO` only requested and final
+    /// states) and never makes them publish more often, so it
+    /// does not slow the computation. A slow consumer skips intermediate
+    /// states (latest value, no buffering). The stream ends after the final
+    /// state, also when the job is cancelled or fails. Any number of streams
+    /// may be open at once.
+    ///
+    /// ```no_run
+    /// # use molecule_optimizer_rs::{calc::OptimizeOptions, ff::uff::UffBuilder, tasks::Engine, Molecule};
+    /// # use futures::StreamExt;
+    /// # use std::sync::Arc;
+    /// # async fn f(mol: Arc<Molecule>) {
+    /// let job = Engine::global().optimize(mol, Arc::new(UffBuilder::default()), OptimizeOptions::default());
+    /// let mut states = job.stream();
+    /// while let Some(s) = states.next().await {
+    ///     println!("iter {} E = {}", s.frame.iteration, s.frame.energy);
+    /// }
+    /// let result = job.await.unwrap();
+    /// # }
+    /// ```
+    pub fn stream(&self) -> futures::stream::BoxStream<'static, S>
+    where
+        R: Send + 'static,
+    {
+        use futures::StreamExt;
+        self.snapshot_stream().map(|s| s.data.clone()).boxed()
+    }
+
+    /// Snapshots as a `Stream`, yielding each newly published version (with
+    /// version number and elapsed time; see [`stream`](Self::stream) for the
+    /// semantics). The initial state (version 0) is not yielded.
     pub fn snapshot_stream(&self) -> impl Stream<Item = Arc<Snapshot<S>>> + Send + 'static
     where
         R: Send + 'static,
@@ -254,8 +293,10 @@ impl<R, S: Clone + Send + Sync + 'static> JobHandle<R, S> {
                     let notified = shared.notify.notified();
                     tokio::pin!(notified);
                     notified.as_mut().enable();
-                    let snap = shared.published.load_full();
+                    // `finished` first: the final snapshot is published
+                    // before it is set, so it is visible once `fin` is seen
                     let fin = shared.finished.load(Ordering::Acquire);
+                    let snap = shared.published.load_full();
                     if snap.version > last || (fin && last == 0) {
                         Some(Some(snap))
                     } else if fin {

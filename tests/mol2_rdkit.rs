@@ -53,5 +53,5 @@ fn mol2_energies_match_rdkit() {
     }
     println!("checked {checked} energies, {} mismatches", bad.len());
     assert!(checked > 200, "fixture too small");
-    assert!(bad.iter().all(|b| b.contains("fullerene_C60")), "mismatches:\n{}", bad.join("\n"));
+    assert!(bad.is_empty(), "mismatches:\n{}", bad.join("\n"));
 }

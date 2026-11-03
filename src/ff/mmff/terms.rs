@@ -3,7 +3,8 @@
 //! Port of RDKit `Code/ForceField/MMFF/{BondStretch,AngleBend,StretchBend,
 //! OopBend,TorsionAngle,Nonbonded}.cpp` and of
 //! `ForceFieldsHelper::computeDihedral` (`Code/ForceField/ForceField.cpp`).
-//! As in RDKit, every contrib holds all terms of one kind, and every
+//! As in RDKit, every contrib holds all terms of one kind (a block contrib,
+//! see [`Contrib::num_terms`], so the parallel path can split it), and every
 //! floating-point expression is evaluated in the same order as in RDKit so
 //! that energies, gradients and minimization trajectories agree to the last
 //! bit wherever the platform math library agrees.
@@ -17,6 +18,7 @@ use crate::ff::Contrib;
 use crate::ff::mmff::typer::is_double_zero;
 use crate::ff::utils::rd_distance as distance;
 use crate::ff::utils::{OutOfPlane, Torsion};
+use std::ops::Range;
 
 // ---------------------------------------------------------------------------
 // RDKit Point3D arithmetic (component-wise, same operation order)
@@ -119,11 +121,7 @@ impl Contrib for BondStretchContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
-        let mut e = 0.0;
-        for t in 0..self.at1.len() {
-            e += calc_bond_stretch_energy(self.r0[t], self.kb[t], distance(pos, self.at1[t], self.at2[t]));
-        }
-        e
+        self.energy_range(pos, 0..self.len())
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at1.len() {
@@ -131,8 +129,21 @@ impl Contrib for BondStretchContrib {
         }
     }
     fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut e = 0.0;
-        for t in 0..self.at1.len() {
+        for t in range {
+            e += calc_bond_stretch_energy(self.r0[t], self.kb[t], distance(pos, self.at1[t], self.at2[t]));
+        }
+        e
+    }
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
+        let mut e = 0.0;
+        for t in range {
             let dist = distance(pos, self.at1[t], self.at2[t]);
             e += calc_bond_stretch_energy(self.r0[t], self.kb[t], dist);
             self.grad_term(t, pos, dist, grad);
@@ -233,8 +244,17 @@ impl Contrib for AngleBendContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_range(pos, 0..self.len())
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut res = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let [i, j, k] = self.at[t];
             let dist1 = distance(pos, i, j);
             let dist2 = distance(pos, j, k);
@@ -249,9 +269,9 @@ impl Contrib for AngleBendContrib {
             self.grad_term(t, [pt(pos, i), pt(pos, j), pt(pos, k)], [distance(pos, i, j), distance(pos, j, k)], grad);
         }
     }
-    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut res = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let [i, j, k] = self.at[t];
             let dist = [distance(pos, i, j), distance(pos, j, k)];
             let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
@@ -366,8 +386,17 @@ impl Contrib for StretchBendContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_range(pos, 0..self.len())
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let [i, j, k] = self.at[t];
             total += self.energy_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k));
         }
@@ -379,9 +408,9 @@ impl Contrib for StretchBendContrib {
             self.grad_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k), grad);
         }
     }
-    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let [i, j, k] = self.at[t];
             let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
             let (dist1, dist2) = (distance(pos, i, j), distance(pos, j, k));
@@ -464,8 +493,17 @@ impl Contrib for OopBendContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_range(pos, 0..self.len())
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let u = OutOfPlane::at(pos, self.at[t]).unit();
             total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
         }
@@ -477,9 +515,9 @@ impl Contrib for OopBendContrib {
             self.grad_term(t, &g, &g.unit(), grad);
         }
     }
-    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let g = OutOfPlane::at(pos, self.at[t]);
             let u = g.unit();
             total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
@@ -553,8 +591,17 @@ impl Contrib for TorsionAngleContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
+        self.energy_range(pos, 0..self.len())
+    }
+    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], Torsion::at(pos, self.at[t]).cos_torsion());
         }
         total
@@ -564,9 +611,9 @@ impl Contrib for TorsionAngleContrib {
             self.grad_term(t, &Torsion::at(pos, self.at[t]), grad);
         }
     }
-    fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
-        for t in 0..self.at.len() {
+        for t in range {
             let g = Torsion::at(pos, self.at[t]);
             total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], g.cos_torsion());
             self.grad_term(t, &g, grad);
@@ -760,17 +807,7 @@ impl Contrib for NonbondedContrib {
         Some(self)
     }
     fn energy(&self, pos: &[f64]) -> f64 {
-        let mut e = 0.0;
-        for t in 0..self.at1.len() {
-            let dist = distance(pos, self.at1[t], self.at2[t]);
-            if self.kind[t] & VDW_BIT != 0 {
-                e += self.vdw_energy(t, dist);
-            }
-            if self.kind[t] & ELE_BIT != 0 {
-                e += self.ele_energy(t, dist);
-            }
-        }
-        e
+        self.energy_range(pos, 0..self.len())
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at1.len() {
@@ -781,9 +818,34 @@ impl Contrib for NonbondedContrib {
         }
     }
     fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
+        self.energy_grad_range(pos, grad, 0..self.len())
+    }
+    fn num_terms(&self) -> usize {
+        self.len()
+    }
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
+        let mut e = 0.0;
+        for t in range {
+            let dist = distance(pos, self.at1[t], self.at2[t]);
+            if self.kind[t] & VDW_BIT != 0 {
+                e += self.vdw_energy(t, dist);
+            }
+            if self.kind[t] & ELE_BIT != 0 {
+                e += self.ele_energy(t, dist);
+            }
+        }
+        e
+    }
+    /// RDKit stops adding pair gradients after a zero-distance pair. Over
+    /// the full range (serial evaluation) this is exactly RDKit's
+    /// behaviour; when the parallel path splits the pairs into ranges, the
+    /// stop applies to the rest of that range only (pairs in later ranges
+    /// still add their gradients). A zero distance between non-bonded atoms
+    /// is degenerate input either way.
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut e = 0.0;
         let mut with_grad = true;
-        for t in 0..self.at1.len() {
+        for t in range {
             let dist = distance(pos, self.at1[t], self.at2[t]);
             if self.kind[t] & VDW_BIT != 0 {
                 e += self.vdw_energy(t, dist);

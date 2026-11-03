@@ -55,22 +55,45 @@ pub trait Contrib: Send + Sync {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
-    /// Number of independent terms that [`ContribForceField`] sums one by
-    /// one, as if each were its own contrib (1 unless this is a
-    /// [`TermList`]).
+    /// Number of terms [`ContribForceField`] may split this contrib into
+    /// (for its parallel path and its parallel threshold). 1 for a plain
+    /// contrib. Contribs holding many terms report their count in one of
+    /// two ways:
+    ///
+    /// * a [`TermList`] adds every term to the running sum on its own
+    ///   ([`Contrib::energy_acc`]), exactly as one contrib per term;
+    /// * a *block* contrib (all terms of one kind in one contrib, summed
+    ///   inside the contrib as RDKit's MMFF contribs do) implements
+    ///   [`Contrib::energy_range`] / [`Contrib::energy_grad_range`]: the
+    ///   terms of the range are summed from `0.0` in order and that partial
+    ///   sum is added to the running sum. Over the full range this is
+    ///   exactly [`Contrib::energy`]; only the parallel path, which cuts the
+    ///   block into several ranges, groups the sum differently (rounding
+    ///   level).
     fn num_terms(&self) -> usize {
         1
     }
-    /// Adds the energies of the terms `range` (a subrange of
-    /// `0..num_terms()`) to `acc`, one term at a time.
-    fn energy_acc(&self, pos: &[f64], range: Range<usize>, acc: &mut f64) {
+    /// Sum (from `0.0`, in term order) of the energies of the terms `range`
+    /// (a subrange of `0..num_terms()`). Block contribs override this.
+    fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         debug_assert!(range == (0..1));
-        *acc += self.energy(pos);
+        self.energy(pos)
+    }
+    /// Like [`Contrib::energy_range`], also adding the gradients of the
+    /// terms `range` to `grad`.
+    fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
+        debug_assert!(range == (0..1));
+        self.energy_grad(pos, grad)
+    }
+    /// Adds the energies of the terms `range` (a subrange of
+    /// `0..num_terms()`) to `acc` (a [`TermList`] one term at a time, any
+    /// other contrib as the partial sum [`Contrib::energy_range`]).
+    fn energy_acc(&self, pos: &[f64], range: Range<usize>, acc: &mut f64) {
+        *acc += self.energy_range(pos, range);
     }
     /// Like [`Contrib::energy_acc`], also adding the gradients to `grad`.
     fn energy_grad_acc(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>, acc: &mut f64) {
-        debug_assert!(range == (0..1));
-        *acc += self.energy_grad(pos, grad);
+        *acc += self.energy_grad_range(pos, grad, range);
     }
     /// Calls `f` with the downcasting hook of every term in order (that of
     /// the contrib itself unless it is a [`TermList`]).
@@ -327,7 +350,7 @@ impl ContribForceField {
     pub fn num_contribs(&self) -> usize {
         self.contribs.len()
     }
-    /// Number of terms (each term of a [`TermList`] counts).
+    /// Number of terms (each term of a [`TermList`] or block contrib counts).
     pub fn num_terms(&self) -> usize {
         self.term_start[self.contribs.len()]
     }

@@ -15,7 +15,8 @@ pub struct GpuContextOptions {
     /// Allow a software adapter (WARP, lavapipe, SwiftShader) if no hardware
     /// adapter is available (default `true`).
     pub allow_software: bool,
-    /// Use a software adapter only (for testing).
+    /// Use a software adapter only (for testing; default from the
+    /// environment variable `MOLOPT_GPU_SOFTWARE=1`).
     pub force_software: bool,
 }
 
@@ -25,7 +26,7 @@ impl Default for GpuContextOptions {
             backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
             power_preference: wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance),
             allow_software: true,
-            force_software: false,
+            force_software: std::env::var_os("MOLOPT_GPU_SOFTWARE").is_some_and(|v| v == "1"),
         }
     }
 }
@@ -41,6 +42,13 @@ struct Inner {
 #[derive(Clone)]
 pub struct GpuContext {
     inner: Arc<Inner>,
+}
+
+/// Two contexts are equal if they share the same device.
+impl PartialEq for GpuContext {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
 }
 
 impl std::fmt::Debug for GpuContext {

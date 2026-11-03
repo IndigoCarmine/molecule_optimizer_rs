@@ -76,6 +76,22 @@ struct SysLayout {
     natoms: usize,
 }
 
+/// Unrolled 4×4 body of the cluster kernel (bit `4a + b` of the mask).
+fn cluster_body() -> String {
+    let mut s = String::new();
+    for a in 0..4 {
+        s.push_str(&format!("            if (((mask >> {}u) & 15u) != 0u) {{\n", 4 * a));
+        for b in 0..4 {
+            s.push_str(&format!(
+                "                if ((mask & {}u) != 0u) {{\n                    let d = pi{a}.xyz - xj{b};\n                    let o = interact(d, pi{a}.w * pj{b}.w, ti{a} + tj{b});\n                    en += o.xyz;\n                    g{a} += o.w * d;\n                }}\n",
+                1u32 << (4 * a + b)
+            ));
+        }
+        s.push_str("            }\n");
+    }
+    s
+}
+
 fn same_kernel_settings(a: &KernelParams, b: &KernelParams) -> bool {
     a.vdw == b.vdw
         && a.rc2 == b.rc2
@@ -297,7 +313,8 @@ impl Engine {
         let (ctx, header, layout) = (&self.ctx, &self.header, &self.cluster_layout);
         self.cluster_pipes.entry((tpc, grad)).or_insert_with(|| {
             let h = util::header(&[("WG", Const::U(WG)), ("TPC", Const::U(tpc)), ("GRAD", Const::B(grad)), ("SPLIT_C", Const::B(true))]);
-            let m = util::module(ctx, "cluster", &[header, &h, PAIR_WGSL, CLUSTER_WGSL]);
+            let src = CLUSTER_WGSL.replace("//!BODY\n", &cluster_body()).replace("//!BODY\r\n", &cluster_body());
+            let m = util::module(ctx, "cluster", &[header, &h, PAIR_WGSL, &src]);
             util::pipeline(ctx, "cluster", &m, "main", layout)
         })
     }
@@ -422,7 +439,7 @@ impl Engine {
         // invocations per i-cluster from the average list length
         let avg = self.nentries as f64 / self.nclusters.max(1) as f64;
         let mut tpc = 1u32;
-        while tpc < 64 && (2 * tpc) as f64 * 4.0 <= avg {
+        while tpc < 64 && (2 * tpc) as f64 * 32.0 <= avg {
             tpc *= 2;
         }
         if let Some(v) = std::env::var("MOLOPT_GPU_TPC").ok().and_then(|s| s.parse::<u32>().ok())

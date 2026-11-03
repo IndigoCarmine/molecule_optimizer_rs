@@ -1,7 +1,7 @@
 //! 3D complex FFT in WGSL compute shaders (f32, unnormalized).
 //!
 //! Each axis is transformed by a sequence of out-of-place Stockham
-//! autosort passes (radix 4, 2, 3, 5, 7 — every length produced by
+//! autosort passes (radix 8, 9, 4, 2, 3, 5, 7 — every length produced by
 //! [`crate::fast::approx::fft_friendly_size`]); a pass processes all lines
 //! of the grid along its axis in one dispatch and ping-pongs between two
 //! buffers. Twiddle factors are computed in `f64` on the CPU and stored as
@@ -13,16 +13,18 @@ use crate::error::{Error, Result};
 use std::collections::HashMap;
 
 const FFT_WGSL: &str = include_str!("shaders/fft.wgsl");
-const RADICES: [usize; 5] = [4, 2, 3, 5, 7];
+const RADICES: [usize; 7] = [8, 9, 4, 2, 3, 5, 7];
 
-/// Radix sequence of `n` (radix 4 first), or `None` if `n` has other prime
+/// Radix sequence of `n` (radix 8, 9, 4 first), or `None` if `n` has other prime
 /// factors.
 pub(crate) fn factorize(n: usize) -> Option<Vec<usize>> {
     let mut r = n;
     let mut out = Vec::new();
-    while r.is_multiple_of(4) {
-        out.push(4);
-        r /= 4;
+    for f in [8, 9, 4] {
+        while r.is_multiple_of(f) {
+            out.push(f);
+            r /= f;
+        }
     }
     for f in [2, 3, 5, 7] {
         while r.is_multiple_of(f) {

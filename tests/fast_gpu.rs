@@ -129,7 +129,7 @@ fn cpu_fft3(data: &mut [Complex64], dims: [usize; 3], inverse: bool) {
         let f = if inverse { planner.plan_fft_inverse(n) } else { planner.plan_fft_forward(n) };
         let mut line = vec![Complex64::new(0.0, 0.0); n];
         for start in 0..total {
-            if (start / strides[d]) % n != 0 {
+            if !(start / strides[d]).is_multiple_of(n) {
                 continue;
             }
             for k in 0..n {
@@ -447,4 +447,72 @@ fn water_box_minimization_gpu_matches_cpu() {
         // the GPU energy at the final geometry agrees with the CPU model
         assert!(rel(rg.energy, eg_cpu) < 1e-5, "{} vs {eg_cpu}", rg.energy);
     }
+}
+
+// ---------------------------------------------------------------------------
+// FastBuilder integration
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fast_builder_gpu_matches_cpu_approximate() {
+    use molecule_optimizer_rs::fast::{FastBuilder, FastMode, FastOptions};
+    use molecule_optimizer_rs::ff::ForceFieldBuilder;
+    let ctx = gpu_or_skip!();
+    let para = paracetamol();
+    let drug = fixture_molecule();
+    let base = [
+        FastOptions::approximate().electrostatics(Electrostatics::Full),
+        FastOptions::approximate().cutoff(8.0).buffer(0.5).electrostatics(RF_INF).vdw_modifier(VdwModifier::Switch { r_switch: 6.5 }),
+    ];
+    for o in base {
+        for mol in [&para, &drug] {
+            let check = |name: &str, cpu: Box<dyn ForceField>, gpu: Box<dyn ForceField>| {
+                let pos = mol.flat_coords();
+                let mut gc = vec![0.0; pos.len()];
+                let mut gg = vec![0.0; pos.len()];
+                let ec = cpu.energy_grad(&pos, &mut gc);
+                let eg = gpu.energy_grad(&pos, &mut gg);
+                println!(
+                    "FastBuilder {name} {:?} {} atoms: CPU {ec:.8} GPU {eg:.8} dE/E {:.1e} dg {:.1e}",
+                    o.mode,
+                    mol.num_atoms(),
+                    rel(eg, ec),
+                    rel_rms(&gg, &gc)
+                );
+                // scale: sum of the magnitudes of the energy terms (the total
+                // can be close to zero)
+                let scale: f64 = cpu.energy_breakdown(&pos).iter().filter(|(k, _)| k != "Total").map(|(_, v)| v.abs()).sum::<f64>().max(ec.abs());
+                assert!((eg - ec).abs() < 1e-5 * scale, "{name}: {eg} vs {ec} (scale {scale})");
+                // gradient error relative to the nonbonded gradient (the total
+                // gradient can be small near a minimum)
+                let FastMode::Approximate(a) = &o.mode else { unreachable!() };
+                let nb = if name == "MMFF" {
+                    build_approx_nonbonded(mol, &MmffBuilder::default(), a, true).unwrap()
+                } else {
+                    build_approx_nonbonded(mol, &UffBuilder::default(), a, true).unwrap()
+                };
+                let (_, gnb) = eval(&nb, &pos);
+                let dg: f64 = gg.iter().zip(&gc).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt();
+                let gn: f64 = gnb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                assert!(dg < 1e-4 * gn, "{name}: gradient error {dg} vs nonbonded gradient norm {gn}");
+                assert!((gpu.energy(&pos) - ec).abs() < 1e-5 * scale);
+            };
+            let cpu = FastBuilder::new(MmffBuilder::default(), o.clone()).build_dyn(mol, &[]).unwrap();
+            let gpu = FastBuilder::new(MmffBuilder::default(), o.clone().gpu(ctx.clone())).build_dyn(mol, &[]).unwrap();
+            check("MMFF", cpu, gpu);
+            let cpu = FastBuilder::new(UffBuilder::default(), o.clone()).build_dyn(mol, &[]).unwrap();
+            let gpu = FastBuilder::new(UffBuilder::default(), o.clone().gpu(ctx.clone())).build_dyn(mol, &[]).unwrap();
+            check("UFF", cpu, gpu);
+        }
+    }
+    // minimization through the ForceField trait
+    let o = FastOptions::approximate().electrostatics(Electrostatics::Full);
+    let cpu = FastBuilder::new(MmffBuilder::default(), o.clone()).build_dyn(&drug, &[]).unwrap();
+    let gpu = FastBuilder::new(MmffBuilder::default(), o.gpu(ctx.clone())).build_dyn(&drug, &[]).unwrap();
+    let mo = MinimizeOptions { max_iters: 500, algorithm: Algorithm::Lbfgs(10), ..MinimizeOptions::default() };
+    let (mut pc, mut pg) = (drug.flat_coords(), drug.flat_coords());
+    let rc = minimize(cpu.as_ref(), &mut pc, &mo, &mut NoObserver);
+    let rg = minimize(gpu.as_ref(), &mut pg, &mo, &mut NoObserver);
+    println!("FastBuilder minimize drug: CPU {:.6} ({} it), GPU {:.6} ({} it)", rc.energy, rc.iterations, rg.energy, rg.iterations);
+    assert!((rc.energy - rg.energy).abs() < 1e-3 * rc.energy.abs().max(1.0));
 }

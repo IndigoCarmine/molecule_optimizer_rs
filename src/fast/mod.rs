@@ -7,7 +7,11 @@
 //!
 //! * [`FastMode::Exact`]: identical term set and energy expressions as the
 //!   RDKit-compatible path (nonbonded pairs selected at build time exactly
-//!   like RDKit); results differ only by floating-point summation order.
+//!   like RDKit). Serial evaluation reproduces the reference contribs'
+//!   operation, summation and gradient-scatter order and is bit-identical
+//!   to [`ContribForceField`]; parallel evaluation (systems above
+//!   [`FastOptions::parallel_grain`]) uses fixed chunks reduced in a fixed
+//!   order, so results do not depend on the thread count.
 //! * [`FastMode::Approximate`]: cutoff nonbonded interactions with a
 //!   buffered (Verlet) cluster-pair list that is rebuilt only when atoms
 //!   moved more than half the buffer, optional periodic boundary

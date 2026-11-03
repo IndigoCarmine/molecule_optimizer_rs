@@ -8,13 +8,20 @@
 //! same IEEE operations per term in the same order as the reference contribs
 //! (transcendental functions are evaluated per lane with the platform `libm`),
 //! so per-term energies and gradients are bit-identical to the
-//! [`crate::ff::ContribForceField`] path; only the order in which the terms
-//! are summed differs.
+//! [`crate::ff::ContribForceField`] path.
 //!
-//! Gradient scatter: within a block the terms are added to the gradient
-//! lane by lane (term order), so a kernel run is deterministic. Parallel
+//! Summation and scatter order: block energies are added to the running
+//! total lane by lane and gradients are scattered lane by lane, i.e. in term
+//! order, exactly as evaluating the contribs one after the other; serial
+//! evaluation therefore reproduces `ContribForceField` bit for bit. Parallel
 //! evaluation (see [`super::FastForceField`]) gives every fixed chunk its own
-//! gradient buffer and reduces the buffers in chunk order.
+//! gradient buffer and reduces the buffers in chunk order (deterministic for
+//! any thread count, but a different summation order than the serial path).
+//!
+//! `wide` chooses its instruction set at compile time: on the default
+//! x86-64 target `f64x4` runs as two 128-bit halves; building with
+//! `RUSTFLAGS="-C target-feature=+avx2"` (or `-C target-cpu=native`) gives
+//! 256-bit vectors (about 30 % faster here) with identical results.
 
 use std::ops::{Add, BitAnd, BitOr, Div, Mul, Neg, Not, Range, Sub};
 use wide::{CmpEq, CmpGt, CmpLt, f64x4};

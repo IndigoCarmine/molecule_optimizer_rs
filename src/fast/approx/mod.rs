@@ -4,8 +4,9 @@
 //! [`ApproxNonbonded`] evaluates the van der Waals and electrostatic terms
 //! of MMFF94 / UFF with an interaction cutoff:
 //!
-//! * pairs are found with a buffered cluster-pair list ([`pairlist`]
-//!   internals: clusters of four atoms, `rlist = cutoff + buffer`), rebuilt
+//! * pairs are found with a buffered cluster-pair list (clusters of
+//!   four atoms, `rlist = cutoff + buffer`; full list memory is `O(N²/16)`
+//!   with `Full` electrostatics, which needs no rebuilds), rebuilt
 //!   lazily whenever an atom moved more than `buffer / 2` since the last
 //!   build (checked on every evaluation and in
 //!   [`NonbondedBackend::on_accepted_step`]);
@@ -35,12 +36,14 @@
 //!
 //! MMFF uses `332.0716 qi qj / (D (r + 0.05))` (or `/(D (r + 0.05)²)` with
 //! the distance-dependent dielectric). With `Full` and `ReactionField` the
-//! buffered distance `ρ = r + 0.05` is kept (see [`kernel`] for the
-//! reaction-field form). The buffer is incompatible with the Ewald
+//! buffered distance `ρ = r + 0.05` is kept (reaction field:
+//! `f = 1/ρ^n + k r² - c`, `k = κ n / (rc ρc^(n+1))`, `κ = (eps_rf - D)/(2 eps_rf + D)`,
+//! `c = 1/ρc^n + k rc²`, so that for `eps_rf = ∞` energy and force vanish
+//! at the cutoff). The buffer is incompatible with the Ewald
 //! splitting `1/r = erfc(βr)/r + erf(βr)/r`, so **PME uses the plain
 //! Coulomb law `332.0716 qi qj / (D r)`** for all pairs (including 1-4
-//! pairs, scaled by 0.75); the difference to the buffered form is
-//! `≈ -0.05/r²` relative and is ignored. The distance-dependent dielectric
+//! pairs, scaled by 0.75); the relative difference to the buffered form,
+//! `≈ 0.05/r` (0.5 % at 10 Å), is ignored. The distance-dependent dielectric
 //! is rejected with PME.
 //!
 //! # Periodic systems
@@ -55,7 +58,7 @@
 //!
 //! `E = E_real + E_recip + E_self + E_excl + E_net`, with `β` chosen so that
 //! `erfc(β rc) = ewald_rtol`; the real-space part `erfc(βr)/r` is evaluated
-//! in the cluster kernels, the reciprocal part with smooth PME ([`pme`]),
+//! in the cluster kernels, the reciprocal part with smooth PME (Essmann et al. 1995),
 //! `E_self = -β/√π Σ qi²`, the exclusion corrections subtract
 //! `erf(βr)/r` for 1-2/1-3 pairs and replace the 1-4 pairs' Coulomb energy
 //! by its 0.75 fraction, and `E_net = -π Q²/(2 V β²)` is the neutralizing

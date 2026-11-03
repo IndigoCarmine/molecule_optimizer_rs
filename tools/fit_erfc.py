@@ -1,3 +1,11 @@
+"""Fits the Chebyshev series used by src/fast/approx/erfc.rs.
+
+h(x) = (x + K) * exp(x^2) * erfc(x) is fitted in t = (x - K)/(x + K) on
+x in [0, X] against 110-digit decimal reference values.
+
+Usage: python tools/fit_erfc.py X K DEGREE [print]
+(the coefficients in erfc.rs come from `python tools/fit_erfc.py 8 2.0 20 print`).
+"""
 from decimal import Decimal as D, getcontext
 import numpy as np, sys
 getcontext().prec = 110

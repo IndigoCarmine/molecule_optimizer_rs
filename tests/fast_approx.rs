@@ -76,6 +76,13 @@ fn check_against_reference(mol: &Molecule, inner: &dyn std::any::Any, o: &Approx
         assert!(rel_diff(v, r.vdw) < tol, "{o:?} simd={simd}: vdw {v} vs {}", r.vdw);
         assert!(rel_diff(e, r.electrostatic) < tol || (e - r.electrostatic).abs() < 1e-12, "{o:?} simd={simd}: ele {e} vs {}", r.electrostatic);
         let gd = grad_diff(&g, &gr);
+        println!(
+            "{} {:?} simd={simd}: |dE_vdw|/E {:.1e}, |dE_ele|/E {:.1e}, max|dg|/max|g| {gd:.1e}",
+            if mol.cell.is_some() { "periodic" } else { "isolated" },
+            o.electrostatics,
+            rel_diff(v, r.vdw),
+            rel_diff(e, r.electrostatic),
+        );
         assert!(gd < tol, "{o:?} simd={simd}: gradient rel diff {gd}");
         let en = b.energy(&pos);
         assert!(rel_diff(en.vdw, v) < 1e-14 && rel_diff(en.electrostatic, e) < 1e-14);
@@ -359,7 +366,8 @@ fn reaction_field_vanishes_smoothly_at_cutoff() {
 
 /// High-precision direct Ewald sum of the Coulomb energy (kcal/mol) of point
 /// charges in an orthorhombic box, excluding the listed pairs (n = 0 image).
-fn direct_ewald(pos: &[[f64; 3]], q: &[f64], l: [f64; 3], excluded: &[(usize, usize)]) -> f64 {
+/// Pairs in `scaled14` have their (n = 0) Coulomb energy scaled by 0.75.
+fn direct_ewald(pos: &[[f64; 3]], q: &[f64], l: [f64; 3], excluded: &[(usize, usize)], scaled14: &[(usize, usize)]) -> f64 {
     let c = 332.0716;
     let n = q.len();
     let beta = 0.45;
@@ -421,6 +429,11 @@ fn direct_ewald(pos: &[[f64; 3]], q: &[f64], l: [f64; 3], excluded: &[(usize, us
         let r = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
         excl -= q[i] * q[j] * (1.0 - erfc(beta * r)) / r;
     }
+    for &(i, j) in scaled14 {
+        let d = [0, 1, 2].map(|k| pos[i][k] - pos[j][k]);
+        let r = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        excl -= 0.25 * q[i] * q[j] / r;
+    }
     let qt: f64 = q.iter().sum();
     let net = -pi * qt * qt / (2.0 * v * beta * beta);
     c * (real + recip + selfe + excl + net)
@@ -445,7 +458,7 @@ fn pme_matches_direct_ewald_sum() {
     let mol = water_box([4, 4, 4], 3.1, 11);
     let q = water_charges(&mol);
     let l = [12.4; 3];
-    let reference = direct_ewald(&mol.coords, &q, l, &water_exclusions(64));
+    let reference = direct_ewald(&mol.coords, &q, l, &water_exclusions(64), &[]);
     let inner = mmff_periodic();
     let pos = mol.flat_coords();
     println!("direct Ewald reference: {reference:.10} kcal/mol");
@@ -463,6 +476,53 @@ fn pme_matches_direct_ewald_sum() {
         );
         assert!(err < tol, "relative error {err} (tol {tol})");
     }
+}
+
+/// PME with MMFF: plain Coulomb `332.0716 qi qj / r` (no 0.05 Å buffer),
+/// 1-2/1-3 pairs excluded, 1-4 pairs scaled by 0.75. Checked against a
+/// direct Ewald sum for a drug-like molecule in a periodic box.
+#[test]
+fn pme_mmff_molecule_plain_coulomb_with_scaled_14() {
+    let mut mol = fixture_molecule();
+    let q = water_charges(&mol);
+    let topo = mol.topological_distances();
+    let n = mol.num_atoms();
+    let (mut excl, mut p14) = (Vec::new(), Vec::new());
+    for (i, row) in topo.iter().enumerate() {
+        for (j, &d) in row.iter().enumerate().skip(i + 1) {
+            match d {
+                1 | 2 => excl.push((i, j)),
+                3 => p14.push((i, j)),
+                _ => {}
+            }
+        }
+    }
+    assert!(!p14.is_empty());
+    // center the molecule in a 24 Å box
+    let mut c = [0.0; 3];
+    for p in &mol.coords {
+        for d in 0..3 {
+            c[d] += p[d] / n as f64;
+        }
+    }
+    for p in mol.coords.iter_mut() {
+        for d in 0..3 {
+            p[d] += 12.0 - c[d];
+        }
+    }
+    let l = 24.0;
+    mol.cell = Some(UnitCell::cubic(l).unwrap());
+    let reference = direct_ewald(&mol.coords, &q, [l; 3], &excl, &p14);
+    let b = build_approx_nonbonded(&mol, &MmffBuilder::default(), &opts(11.0, 0.5, VdwModifier::PotentialShift, pme(1e-10, 0.3, 10)), true).unwrap();
+    let e = b.energy(&mol.flat_coords()).electrostatic;
+    let err = (e - reference).abs() / ewald_scale(&b, &q);
+    println!("molecule in box: PME {e:.10} vs direct Ewald {reference:.10} (|dE|/E_self {err:.2e})");
+    assert!(err < 1e-9, "{e} vs {reference}");
+    // the buffered isolated energy differs (as documented)
+    let mut iso = mol.clone();
+    iso.cell = None;
+    let full = build_approx_nonbonded(&iso, &MmffBuilder::default(), &opts(60.0, 0.0, VdwModifier::PotentialShift, Electrostatics::Full), true).unwrap();
+    println!("isolated buffered (r + 0.05) electrostatics: {:.6}", full.energy(&iso.flat_coords()).electrostatic);
 }
 
 #[test]

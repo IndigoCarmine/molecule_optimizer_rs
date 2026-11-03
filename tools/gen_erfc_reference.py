@@ -1,3 +1,8 @@
+"""Writes tests/data/erfc_reference.rs: (x, erfc(x)) pairs computed with
+110-digit decimal arithmetic.
+
+Usage: python tools/gen_erfc_reference.py > tests/data/erfc_reference.rs
+"""
 from decimal import Decimal as D, getcontext
 import random
 getcontext().prec = 110

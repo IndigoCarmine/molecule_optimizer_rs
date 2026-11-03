@@ -33,7 +33,7 @@
 use super::params::NbParams;
 use crate::core::UnitCell;
 use rayon::prelude::*;
-use wide::f64x4;
+use wide::{CmpLt, f64x4};
 
 /// Entry of the j-cluster list of an i-cluster.
 #[derive(Debug, Clone, Copy)]
@@ -222,32 +222,90 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
     };
     let (rx, ry) = (reach(wa, nx), reach(wb, ny));
     let sc_range: &[i64] = if periodic { &[-1, 0, 1] } else { &[0] };
+    // cluster-ordered wrapped positions, atom-index ranges and the range of
+    // masked partners (to skip exclusion lookups for unrelated clusters)
+    // (dummies far away so that they never pass the distance test)
+    const FAR: f64 = 1.0e15;
+    let wcl: Vec<[f64x4; 3]> = atoms
+        .par_iter()
+        .map(|a| {
+            let c = |d: usize| f64x4::new(a.map(|i| if i == DUMMY { FAR } else { wpos[i as usize][d] }));
+            [c(0), c(1), c(2)]
+        })
+        .collect();
+    let ranges: Vec<[u32; 4]> = atoms
+        .par_iter()
+        .map(|a| {
+            let mut r = [u32::MAX, 0, u32::MAX, 0];
+            for &i in a.iter().filter(|&&i| i != DUMMY) {
+                r[0] = r[0].min(i);
+                r[1] = r[1].max(i);
+                for &j in &p.masked[i as usize] {
+                    r[2] = r[2].min(j);
+                    r[3] = r[3].max(j);
+                }
+            }
+            r
+        })
+        .collect();
+    // bounding boxes of whole columns (coarse culling)
+    let col_box: Vec<([f64; 3], [f64; 3])> = (0..ncols)
+        .into_par_iter()
+        .map(|c| {
+            let mut lo = [f64::INFINITY; 3];
+            let mut hi = [f64::NEG_INFINITY; 3];
+            for cl in &clusters[col_start[c] as usize..col_start[c + 1] as usize] {
+                for d in 0..3 {
+                    lo[d] = lo[d].min(cl.lo[d]);
+                    hi[d] = hi[d].max(cl.hi[d]);
+                }
+            }
+            (lo, hi)
+        })
+        .collect();
+    let box_dist2 = |alo: &[f64; 3], ahi: &[f64; 3], blo: &[f64; 3], bhi: &[f64; 3], s: &[f64; 3]| -> f64 {
+        let mut d2 = 0.0;
+        for d in 0..3 {
+            let g = (blo[d] + s[d] - ahi[d]).max(alo[d] - bhi[d] - s[d]).max(0.0);
+            d2 += g * g;
+        }
+        d2
+    };
     let mask_of = |ci: usize, cj: usize, shift: usize| -> u16 {
         let s = shifts[shift];
+        let (ri, rj) = (&ranges[ci], &ranges[cj]);
+        let check_excl = p.ignore_interfrag || !(ri[2] > rj[1] || ri[3] < rj[0]);
+        let self_pair = ci == cj && shift == ZERO_SHIFT as usize;
+        let xi = wcl[ci].map(|v| v.to_array());
+        let [xj, yj, zj] = wcl[cj];
+        let (xj, yj, zj) = (xj + f64x4::splat(s[0]), yj + f64x4::splat(s[1]), zj + f64x4::splat(s[2]));
+        let jvalid = atoms[cj].iter().enumerate().fold(0u16, |m, (b, &j)| if j != DUMMY { m | (1 << b) } else { m });
+        let rl2v = f64x4::splat(rl2);
         let mut m = 0u16;
         for a in 0..4 {
             let ia = atoms[ci][a];
             if ia == DUMMY {
                 continue;
             }
-            let wi = wpos[ia as usize];
-            for b in 0..4 {
-                let jb = atoms[cj][b];
-                if jb == DUMMY || (ia == jb && shift == ZERO_SHIFT as usize) {
-                    continue;
-                }
-                if p.is_masked(ia as usize, jb as usize) {
-                    continue;
-                }
-                if !all_pairs {
-                    let wj = wpos[jb as usize];
-                    let d = [wi[0] - wj[0] - s[0], wi[1] - wj[1] - s[1], wi[2] - wj[2] - s[2]];
-                    if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] >= rl2 {
-                        continue;
+            let mut bits = if all_pairs {
+                jvalid
+            } else {
+                let dx = f64x4::splat(xi[0][a]) - xj;
+                let dy = f64x4::splat(xi[1][a]) - yj;
+                let dz = f64x4::splat(xi[2][a]) - zj;
+                (dx * dx + dy * dy + dz * dz).cmp_lt(rl2v).move_mask() as u16 & jvalid
+            };
+            if self_pair {
+                bits &= !(1 << a);
+            }
+            if check_excl {
+                for b in 0..4 {
+                    if bits & (1 << b) != 0 && p.is_masked(ia as usize, atoms[cj][b] as usize) {
+                        bits &= !(1 << b);
                     }
                 }
-                m |= 1 << (4 * a + b);
             }
+            m |= bits << (4 * a);
         }
         m
     };
@@ -294,6 +352,10 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                             for &sc in sc_range {
                                 let shift = ((sa + 1) * 9 + (sb + 1) * 3 + (sc + 1)) as usize;
                                 let s = shifts[shift];
+                                let (clo, chi) = &col_box[col];
+                                if box_dist2(&ic.lo, &ic.hi, clo, chi, &s) >= rl2 {
+                                    continue;
+                                }
                                 let sh = sc as f64 * wc;
                                 let lo_h = ic.hmin - rlist - sh;
                                 let hi_h = ic.hmax + rlist - sh;
@@ -303,12 +365,7 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                                     if jc.hmin > hi_h {
                                         break;
                                     }
-                                    let mut d2 = 0.0;
-                                    for d in 0..3 {
-                                        let g = (jc.lo[d] + s[d] - ic.hi[d]).max(ic.lo[d] - jc.hi[d] - s[d]).max(0.0);
-                                        d2 += g * g;
-                                    }
-                                    if d2 >= rl2 {
+                                    if box_dist2(&ic.lo, &ic.hi, &jc.lo, &jc.hi, &s) >= rl2 {
                                         continue;
                                     }
                                     let m = mask_of(ci, cj, shift);
@@ -325,16 +382,15 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
             (counts, out)
         })
         .collect();
-    let total: usize = blocks.iter().map(|b| b.1.len()).sum();
     let mut ci = Vec::with_capacity(nclusters + 1);
-    let mut cj = Vec::with_capacity(total);
     ci.push(0u32);
-    for (counts, out) in blocks {
-        for c in counts {
+    for (counts, _) in &blocks {
+        for &c in counts {
             ci.push(ci.last().unwrap() + c);
         }
-        cj.extend(out);
     }
+    let mut cj = Vec::with_capacity(*ci.last().unwrap() as usize);
+    cj.par_extend(blocks.into_par_iter().flat_map_iter(|b| b.1));
     PairList { nclusters, atoms, slot, tshift, ref_pos: pos[..3 * n].to_vec(), ci, cj, shifts, q, types, all_pairs }
 }
 

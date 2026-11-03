@@ -21,7 +21,7 @@
 //!     reaction field);
 //!   - Ewald real space (`r < rc`): `f = erfc(βr)/r` (no buffer).
 
-use super::erfc::erfc_exp;
+use super::erfc::{ERFC_K, erfc_exp, erfc_exp_inv};
 use super::pairlist::PairList;
 use super::params::{NbParams, VdwKind};
 use wide::{CmpLt, f64x4};
@@ -296,24 +296,45 @@ fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &C
             }
             let r2s = (em | vm).blend(r2, one);
             let r = r2s.sqrt();
-            let rinv = one / r;
             let base = ti[a] as usize * nt;
+            // All reciprocals from one division: denominators r, A, B, C
+            // (constant 1 when unused, folded by the compiler).
+            let (rs, eps, rs7) = if VDW == VDW_MMFF {
+                (gather(&p.p1, base, tj), gather(&p.p2, base, tj), gather(&p.p3, base, tj))
+            } else {
+                (gather(&p.p1, base, tj), gather(&p.p2, base, tj), zero)
+            };
+            let r6 = r2s * r2s * r2s;
+            let (da, db) = if VDW == VDW_MMFF {
+                (r + f64x4::splat(0.07) * rs, r6 * r + f64x4::splat(0.12) * rs7)
+            } else {
+                (one, one)
+            };
+            let dc = match EL {
+                EL_FULL | EL_RF => r + delta,
+                EL_EWALD => beta * r + f64x4::splat(ERFC_K),
+                _ => one,
+            };
+            let p1 = r * da;
+            let p2 = p1 * db;
+            let inv = one / (p2 * dc);
+            let inv_c = p2 * inv;
+            let t = dc * inv;
+            let inv_b = p1 * t;
+            let t2 = db * t;
+            let inv_a = r * t2;
+            let rinv = da * t2;
             // van der Waals
             let (ev, dev) = if VDW == VDW_MMFF {
-                let rs = gather(&p.p1, base, tj);
-                let eps = gather(&p.p2, base, tj);
-                let rs7 = gather(&p.p3, base, tj);
-                let d1 = one / (r + f64x4::splat(0.07) * rs);
+                let d1 = inv_a;
                 let at = f64x4::splat(1.07) * rs * d1;
                 let a2 = at * at;
                 let a7 = a2 * a2 * a2 * at;
-                let r6 = r2s * r2s * r2s;
-                let den = one / (r6 * r + f64x4::splat(0.12) * rs7);
+                let den = inv_b;
                 let b = f64x4::splat(1.12) * rs7 * den - f64x4::splat(2.0);
                 (eps * a7 * b, f64x4::splat(-7.0) * eps * a7 * (b * d1 + f64x4::splat(1.12) * rs7 * r6 * den * den))
             } else {
-                let x2 = gather(&p.p1, base, tj);
-                let d = gather(&p.p2, base, tj);
+                let (x2, d) = (rs, eps);
                 let s = x2 * rinv * rinv;
                 let s3 = s * s * s;
                 let s6 = s3 * s3;
@@ -339,11 +360,11 @@ fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &C
             if EL != EL_NONE {
                 let qq = f64x4::splat(qi[a]) * qj;
                 let (f, df) = if EL == EL_EWALD {
-                    let (ec, ex) = erfc_exp(beta * r);
+                    let (ec, ex) = erfc_exp_inv(beta * r, inv_c);
                     let f = ec * rinv;
                     (f, -(f + beta * f64x4::splat(TWO_OVER_SQRT_PI) * ex) * rinv)
                 } else {
-                    let inv = one / (r + delta);
+                    let inv = inv_c;
                     let (mut f, mut df) = if kp.ele_n2 {
                         let f = inv * inv;
                         (f, f64x4::splat(-2.0) * f * inv)

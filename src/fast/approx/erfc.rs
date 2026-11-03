@@ -2,17 +2,19 @@
 //!
 //! `erfc(x) = exp(-x²) · erfcx(x)` for `x ≥ 0`. The scaled function
 //! `h(x) = (x + K) · erfcx(x)` (`K = 2`) is smooth on `[0, ∞)` and is
-//! approximated by a degree-20 Chebyshev series in the variable
-//! `t = (x - K) / (x + K)`, fitted on `x ∈ [0, 8]` (`t ∈ [-1, 0.6]`) against
-//! 110-digit reference values (`tools/fit_erfc.py`). The maximum relative
-//! error of the series is 2.4e-15; together with the exponential the
-//! function stays below ~1e-14 relative error on `[0, 8]` (checked against
-//! the high-precision table `tests/data/erfc_reference.rs`). Beyond `x = 8`
-//! (`erfc < 1.2e-29`) the series argument is clamped, which keeps the
-//! result positive and tiny.
+//! approximated by a degree-20 polynomial in the variable
+//! `t = (x - K) / (x + K)`, obtained from a Chebyshev least-squares fit on
+//! `x ∈ [0, 8]` (`t ∈ [-1, 0.6]`) against 110-digit reference values
+//! (`tools/fit_erfc.py`). The maximum relative error of the polynomial is
+//! ~7e-15 (Horner evaluation in double precision included); together with
+//! the exponential the function stays below ~1e-14 relative error on
+//! `[0, 8]` (checked against the high-precision table
+//! `tests/data/erfc_reference.rs`). Beyond `x = 8` (`erfc < 1.2e-29`) the
+//! polynomial argument is clamped, which keeps the result positive and
+//! tiny.
 //!
 //! The same code runs on `f64` and on `wide::f64x4` (one division, one
-//! exponential and a Clenshaw recurrence; no branches).
+//! exponential and 21 multiply-adds in Estrin form; no branches).
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 use wide::f64x4;
@@ -67,51 +69,69 @@ impl Real for f64x4 {
     }
 }
 
-const K: f64 = 2.0;
-/// Chebyshev coefficients of `h` in `u = (2t - (t0 + t1)) / (t1 - t0)`,
-/// `t0 = -1`, `t1 = 0.6`.
-const C: [f64; 21] = [
-    1.2613618203624972,
-    -0.6481722720349398,
-    0.08971441914264203,
-    -0.0019513067668896307,
-    -0.0011738365250954647,
-    4.9506406006450516e-05,
-    2.399540986781604e-05,
-    -5.116356114444789e-08,
-    -5.78313112994305e-07,
-    -4.8040309865920996e-08,
-    1.0915188019145735e-08,
-    2.6848181320554665e-09,
-    2.552755769461299e-11,
-    -8.126050367611704e-11,
-    -1.366787924235073e-11,
-    4.565523975612429e-13,
-    5.617014138945596e-13,
-    8.980641136317777e-14,
-    -2.8287561446684936e-15,
-    -4.019444146966453e-15,
-    -9.307000792329291e-16,
+/// Shift `K` of the rational variable `t = (x - K)/(x + K)`.
+pub(crate) const ERFC_K: f64 = 2.0;
+const K: f64 = ERFC_K;
+/// Coefficients of `h` as a polynomial in `u = (2t - (t0 + t1)) / (t1 - t0)`
+/// (`t0 = -1`, `t1 = 0.6`, so `u = 1.25 t + 0.25 ∈ [-1, 1]`), obtained from
+/// the Chebyshev fit by conversion to the monomial basis; the sum of their
+/// magnitudes is 2.02, so Horner evaluation is well conditioned.
+const A: [f64; 21] = [
+    1.1704489800963511,
+    -0.6420709245167252,
+    0.18927049639290477,
+    -0.008791835093715953,
+    -0.010639323654088156,
+    0.000773533431277716,
+    0.0009278940610438334,
+    3.277445229738938e-05,
+    -8.740407597056777e-05,
+    -2.1218311125818714e-05,
+    4.79189212584059e-06,
+    3.824073499536508e-06,
+    5.618076879706692e-07,
+    -3.042874142481513e-07,
+    -1.8105876053533158e-07,
+    -2.9249052498640775e-08,
+    1.3304054214044647e-08,
+    1.1736203926800518e-08,
+    2.9108000815876213e-09,
+    -1.230840571099766e-09,
+    -6.717434352491459e-10,
 ];
 
 /// Returns `(erfc(x), exp(-x²))` for `x ≥ 0`.
 #[inline(always)]
 pub(crate) fn erfc_exp<T: Real>(x: T) -> (T, T) {
+    erfc_exp_inv(x, T::splat(1.0) / (x + T::splat(K)))
+}
+
+/// [`erfc_exp`] with a precomputed `inv = 1/(x + ERFC_K)` (lets SIMD
+/// kernels share one division between several reciprocals).
+#[inline(always)]
+pub(crate) fn erfc_exp_inv<T: Real>(x: T, inv: T) -> (T, T) {
     let e = (-(x * x)).exp();
-    let inv = T::splat(1.0) / (x + T::splat(K));
     // t = (x - K)/(x + K) = 1 - 2K/(x + K);  u = 1.25 t + 0.25
     let t = T::splat(1.0) - T::splat(2.0 * K) * inv;
     let u = t.mul_add(T::splat(1.25), T::splat(0.25)).min(T::splat(1.0));
-    let u2 = u + u;
-    // Clenshaw recurrence
-    let mut b1 = T::splat(0.0);
-    let mut b2 = T::splat(0.0);
-    for &c in C[1..].iter().rev() {
-        let b0 = u2.mul_add(b1, T::splat(c)) - b2;
-        b2 = b1;
-        b1 = b0;
-    }
-    let h = u.mul_add(b1, T::splat(C[0])) - b2;
+    // Estrin's scheme (short dependency chains)
+    let c = |k: usize| T::splat(A[k]);
+    let u2 = u * u;
+    let u4 = u2 * u2;
+    let u8 = u4 * u4;
+    let u16 = u8 * u8;
+    let b = |k: usize| c(2 * k + 1).mul_add(u, c(2 * k));
+    let (b0, b1, b2, b3, b4, b5, b6, b7, b8, b9) = (b(0), b(1), b(2), b(3), b(4), b(5), b(6), b(7), b(8), b(9));
+    let c0 = b1.mul_add(u2, b0);
+    let c1 = b3.mul_add(u2, b2);
+    let c2 = b5.mul_add(u2, b4);
+    let c3 = b7.mul_add(u2, b6);
+    let c4 = b9.mul_add(u2, b8);
+    let d0 = c1.mul_add(u4, c0);
+    let d1 = c3.mul_add(u4, c2);
+    let d2 = c(20).mul_add(u4, c4);
+    let e0 = d1.mul_add(u8, d0);
+    let h = d2.mul_add(u16, e0);
     (e * h * inv, e)
 }
 

@@ -53,6 +53,9 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
     let n = mol.num_atoms();
     let params = props.params;
 
+    // neighbor list of the current central atom (reused)
+    let mut nb: Vec<usize> = Vec::new();
+
     // bonds
     let mut bonds = BondStretchContrib::default();
     for b in mol.bonds() {
@@ -71,7 +74,8 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
             continue;
         }
         let central = params.prop.get(props.atom_type(j)).expect("MMFF properties");
-        let nb: Vec<usize> = mol.neighbors(j).collect();
+        nb.clear();
+        nb.extend(mol.neighbors(j));
         for a in 0..nb.len() {
             for c in (a + 1)..nb.len() {
                 if let Some((_, p)) = props.angle_bend_params(nb[a], j, nb[c]) {
@@ -94,7 +98,8 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         if central.linh != 0 {
             continue;
         }
-        let nb: Vec<usize> = mol.neighbors(j).collect();
+        nb.clear();
+        nb.extend(mol.neighbors(j));
         for a in 0..nb.len() {
             for c in (a + 1)..nb.len() {
                 if let Some((_, s, b, ang)) = props.stretch_bend_params(nb[a], j, nb[c]) {
@@ -113,7 +118,8 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         if mol.degree(j) != 3 {
             continue;
         }
-        let nb: Vec<usize> = mol.neighbors(j).collect();
+        nb.clear();
+        nb.extend(mol.neighbors(j));
         let idx = [nb[0], j, nb[1], nb[2]];
         let Some(p) = props.oop_bend_params(idx[0], idx[1], idx[2], idx[3]) else {
             // no parameters: the term is excluded (SURDOX02)

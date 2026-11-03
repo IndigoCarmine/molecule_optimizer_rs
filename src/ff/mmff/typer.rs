@@ -238,9 +238,8 @@ pub(crate) fn angle_in_ring_of_size_3_or_4(mol: &Molecule, i1: usize, i2: usize,
         if mol.bond_between(i3, i1).is_some() {
             return 3;
         }
-        let s1: BTreeSet<usize> = mol.neighbors(i1).filter(|&n| n != i2).collect();
-        let s2: BTreeSet<usize> = mol.neighbors(i3).filter(|&n| n != i2).collect();
-        if s1.intersection(&s2).next().is_some() {
+        // a common neighbor of i1 and i3 other than i2
+        if mol.neighbors(i1).any(|n| n != i2 && mol.neighbors(i3).any(|m| m == n)) {
             return 4;
         }
     }
@@ -253,9 +252,8 @@ pub(crate) fn torsion_in_ring_of_size_4_or_5(mol: &Molecule, i1: usize, i2: usiz
         if mol.bond_between(i4, i1).is_some() {
             return 4;
         }
-        let s1: BTreeSet<usize> = mol.neighbors(i1).filter(|&n| n != i2).collect();
-        let s2: BTreeSet<usize> = mol.neighbors(i4).filter(|&n| n != i3).collect();
-        if s1.intersection(&s2).next().is_some() {
+        // a common neighbor of i1 (other than i2) and i4 (other than i3)
+        if mol.neighbors(i1).any(|n| n != i2 && n != i3 && mol.neighbors(i4).any(|m| m == n)) {
             return 5;
         }
     }

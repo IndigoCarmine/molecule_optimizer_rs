@@ -104,6 +104,20 @@ impl<S: Clone + Send + Sync + 'static> JobContext<S> {
         f(&mut d);
         self.publish_locked(&d);
     }
+    /// Mutates the job state and publishes it only if
+    /// [`should_publish`](Self::should_publish)`(*served_epoch)` (then
+    /// `served_epoch` is updated), i.e. on request or periodically like
+    /// [`CtxObserver`]; otherwise the change is published with the next
+    /// snapshot (at the latest the final one). Use it for frequent updates
+    /// of a large state, whose every publish clones the whole state.
+    pub fn update_throttled(&self, served_epoch: &mut u64, f: impl FnOnce(&mut S)) {
+        if self.should_publish(*served_epoch) {
+            *served_epoch = self.request_epoch();
+            self.update(f);
+        } else {
+            self.update_silent(f);
+        }
+    }
     /// Mutates the job state without publishing (cheap bookkeeping).
     pub fn update_silent(&self, f: impl FnOnce(&mut S)) {
         let mut d = self.shared.data.lock().unwrap();

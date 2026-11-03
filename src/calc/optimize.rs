@@ -104,7 +104,9 @@ impl Engine {
         })
     }
 
-    /// Optimizes many structures in parallel.
+    /// Optimizes many structures in parallel. Like the progress of the
+    /// running structures, finished structures appear in the snapshot when
+    /// one is requested or periodically (and in the final one).
     pub fn optimize_batch(
         &self,
         items: Vec<super::StructureItem>,
@@ -117,19 +119,21 @@ impl Engine {
                 .par_iter()
                 .enumerate()
                 .map(|(i, (mol, coords))| {
-                    let start = coords.clone().unwrap_or_else(|| mol.coords.clone());
+                    let start = coords.as_deref().unwrap_or(&mol.coords);
                     ctx.update_silent(|s| {
-                        s.items[i] = Some(OptimizeSnapshot { frame: Frame { coords: start.clone(), energy: f64::NAN, iteration: 0 }, finished: false })
+                        s.items[i] = Some(OptimizeSnapshot { frame: Frame { coords: start.to_vec(), energy: f64::NAN, iteration: 0 }, finished: false })
                     });
                     let mut obs = CtxObserver::new(&ctx, |ctx, info| {
                         let coords = to_points(info.pos);
                         let (e, it) = (info.energy, info.iteration);
                         ctx.update(|s| s.items[i] = Some(OptimizeSnapshot { frame: Frame { coords, energy: e, iteration: it }, finished: false }));
                     });
-                    let r = optimize_coords(mol, &start, builder.as_ref(), &opts, &mut obs);
+                    let r = optimize_coords(mol, start, builder.as_ref(), &opts, &mut obs);
                     if let Ok(r) = &r {
                         let fr = Frame { coords: r.coords.clone(), energy: r.energy, iteration: r.iterations };
-                        ctx.update(|s| s.items[i] = Some(OptimizeSnapshot { frame: fr, finished: true }));
+                        // published on request / periodically only: publishing
+                        // clones the snapshot of every item
+                        ctx.update_throttled(&mut obs.served_epoch, |s| s.items[i] = Some(OptimizeSnapshot { frame: fr, finished: true }));
                     }
                     ctx.inc_progress();
                     r

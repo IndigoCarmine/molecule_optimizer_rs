@@ -67,7 +67,7 @@ pub(crate) struct TypingMol {
 impl TypingMol {
     fn new(input: &Molecule) -> Result<TypingMol> {
         let mut mol = if input.atoms().iter().any(|a| a.is_aromatic) || input.bonds().iter().any(|b| b.order == BondOrder::Aromatic) {
-            perception::kekulized_copy(input)?
+            perception::kekulized_copy_canonical(input)?
         } else {
             input.clone()
         };

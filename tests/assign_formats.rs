@@ -64,9 +64,6 @@ fn sdf_and_xyz_give_identical_assignments() {
             if a.name == "BODIPY_core" && kind != ForceFieldKind::Uff {
                 continue;
             }
-            if a.name == "fullerene_C60" && kind == ForceFieldKind::Mmff94 {
-                continue; // depends on ring order (RDKit ring-order port pending)
-            }
             if let Err(e) = same(a, &b, kind) {
                 bad.push(format!("{} {kind:?}: {e}", a.name));
             }

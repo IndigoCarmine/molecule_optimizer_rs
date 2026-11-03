@@ -365,7 +365,9 @@ pub fn write_molblock_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
             BondOrder::Dative => 9,
             BondOrder::Zero => 0,
         };
-        let _ = writeln!(s, "{:>3}{:>3}{:>3}  0", b.begin + 1, b.end + 1, t);
+        // crossed ("either") double bonds keep their stereo flag
+        let stereo = if b.order == BondOrder::Double && b.dir == BondDir::Either { 3 } else { 0 };
+        let _ = writeln!(s, "{:>3}{:>3}{:>3}{:>3}", b.begin + 1, b.end + 1, t, stereo);
     }
     let charged: Vec<(usize, i8)> =
         km.atoms().iter().enumerate().filter(|(_, a)| a.formal_charge != 0).map(|(i, a)| (i, a.formal_charge)).collect();

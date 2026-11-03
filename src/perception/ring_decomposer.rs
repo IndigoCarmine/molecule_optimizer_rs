@@ -739,11 +739,18 @@ fn cycle_to_atom_ring(edges: &[[usize; 2]]) -> Vec<usize> {
 /// RDKit's ring set and order (`symmetrizeSSSR` with the default RDL
 /// algorithm): normalized atom rings.
 pub fn rdkit_atom_rings(mol: &Molecule) -> Vec<Vec<usize>> {
-    // findRingFamilies: zero-order and dative bonds are not ring candidates
+    rdkit_atom_rings_with(mol, false)
+}
+
+/// [`rdkit_atom_rings`] with RDKit's `includeDativeBonds` option of
+/// `symmetrizeSSSR` (dative bonds count as ring bonds when `true`).
+pub fn rdkit_atom_rings_with(mol: &Molecule, include_dative: bool) -> Vec<Vec<usize>> {
+    // findRingFamilies: zero-order (and, by default, dative) bonds are not
+    // ring candidates
     let mut graph = Graph::new(mol.num_atoms().max(1));
     for b in 0..mol.num_bonds() {
         let bond = mol.bond(b);
-        if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
+        if bond.order == BondOrder::Zero || (bond.order == BondOrder::Dative && !include_dative) {
             continue;
         }
         graph.add_uedge(bond.begin, bond.end);

@@ -22,7 +22,7 @@
 //! `detectBondStereochemistry` → `assignStereochemistry(cleanIt=true,
 //! force=true, flagPossibleStereoCenters=true)`.
 
-use crate::core::{BondOrder, BondStereo, ChiralTag, Molecule};
+use crate::core::{BondDir, BondOrder, BondStereo, ChiralTag, Molecule};
 use crate::perception::rings::RingInfo;
 
 /// Most common isotope per atomic number (RDKit periodic table,
@@ -312,6 +312,9 @@ struct State<'a> {
     dirs: Vec<Dir>,
     stereo: Vec<St>,
     stereo_atoms: Vec<Option<(usize, usize)>>,
+    /// Double-bond stereo already known (instead of being derived from bond
+    /// directions): used when the molecule's stereo was assigned earlier.
+    preset: Option<Vec<St>>,
 }
 
 /// `Atom::getPerturbationOrder` parity: number of swaps (mod 2 is what
@@ -487,6 +490,15 @@ impl<'a> State<'a> {
                 continue;
             }
             unassigned += 1;
+            if let Some(preset) = &self.preset {
+                if matches!(preset[b], St::E | St::Z) && mol.bond(b).stereo_atoms.is_some() {
+                    self.stereo[b] = preset[b];
+                    self.stereo_atoms[b] = mol.bond(b).stereo_atoms;
+                    assigned = true;
+                    unassigned -= 1;
+                }
+                continue;
+            }
             let bn = self.neighbor_dirs(beg, b, rk);
             let en = self.neighbor_dirs(end, b, rk);
             if bn.is_empty() || en.is_empty() {
@@ -1019,6 +1031,13 @@ fn chiral_tags_from_3d(mol: &Molecule) -> Vec<ChiralTag> {
 /// The coordinates are always treated as 3D. Existing chiral tags and bond
 /// stereo are replaced.
 pub fn assign_stereo_legacy_from_3d(mol: &mut Molecule) {
+    assign_stereo_legacy_from_3d_with_ranks(mol);
+}
+
+/// [`assign_stereo_legacy_from_3d`], also returning the `_CIPRank` values
+/// RDKit leaves on the atoms (`None` when RDKit's perception never needed
+/// to rank the atoms, i.e. there was nothing that could be stereogenic).
+pub fn assign_stereo_legacy_from_3d_with_ranks(mol: &mut Molecule) -> Option<Vec<u32>> {
     let ri_owned;
     let ri: &RingInfo = match mol.ring_info() {
         Some(r) => r,
@@ -1035,77 +1054,18 @@ pub fn assign_stereo_legacy_from_3d(mol: &mut Molecule) {
         tags: chiral_tags_from_3d(mol),
         cip_code: vec![None; n],
         dirs: vec![Dir::None; nb],
-        stereo: vec![St::None; nb],
+        stereo: either_double_stereo(mol),
         stereo_atoms: vec![None; nb],
+        preset: None,
     };
 
     // detectBondStereochemistry
     st.set_double_bond_neighbor_directions();
 
-    // legacyStereoPerception(cleanIt = true, flagPossibleStereoCenters = true)
-    let mut has_stereo_atoms = false;
-    let mut has_potential_stereo_atoms = false;
-    for atom in 0..n {
-        if !has_stereo_atoms && st.tags[atom] != ChiralTag::Unspecified {
-            has_stereo_atoms = true;
-        } else if !has_potential_stereo_atoms {
-            has_potential_stereo_atoms = st.is_potential_chiral_center(atom, None).0;
-        }
-    }
-    let mut has_stereo_bonds = false;
-    let mut has_potential_stereo_bonds = false;
-    for b in 0..nb {
-        let order = mol.bond(b).order;
-        if matches!(order, BondOrder::Double | BondOrder::Aromatic) && !should_detect_double_bond_stereo(ri, b) {
-            if st.stereo[b] != St::None {
-                st.stereo[b] = St::None;
-                st.stereo_atoms[b] = None;
-            }
-            continue;
-        } else if order == BondOrder::Double && st.stereo[b] != St::Any {
-            st.stereo[b] = St::None;
-            st.stereo_atoms[b] = None;
-        }
-        if !has_stereo_bonds && order == BondOrder::Double {
-            let bond = mol.bond(b);
-            let specified = [bond.begin, bond.end]
-                .iter()
-                .any(|&a| mol.atom_bonds(a).iter().any(|&(_, nbd)| is_directional(st.dirs[nbd])));
-            if specified {
-                has_stereo_bonds = true;
-            }
-            if !has_potential_stereo_bonds && !specified && should_detect_double_bond_stereo(ri, b) {
-                has_potential_stereo_bonds = true;
-            }
-        }
-    }
-
-    let mut ranks: Option<Vec<u32>> = None;
-    let mut keep_going = has_stereo_atoms || has_stereo_bonds;
-    if !keep_going {
-        keep_going = has_potential_stereo_atoms || has_potential_stereo_bonds;
-    }
-    while keep_going {
-        let changed_atoms;
-        let changed_bonds;
-        if has_stereo_atoms || has_potential_stereo_atoms {
-            (has_stereo_atoms, changed_atoms) = st.assign_atom_chiral_codes(&mut ranks);
-        } else {
-            changed_atoms = false;
-        }
-        if has_stereo_bonds || has_potential_stereo_bonds {
-            (has_stereo_bonds, changed_bonds) = st.assign_bond_stereo_codes(&mut ranks);
-        } else {
-            changed_bonds = false;
-        }
-        keep_going = (has_stereo_atoms || has_stereo_bonds) && (changed_atoms || changed_bonds);
-        if keep_going && let Some(r) = ranks.as_mut() {
-            st.rerank_atoms(r);
-        }
-    }
+    let ranks = run_legacy_perception(&mut st);
 
     // cleanIt: drop chiral tags on atoms that are not stereocenters
-    let final_ranks = ranks.unwrap_or_default();
+    let final_ranks = ranks.clone().unwrap_or_default();
     let mut new_tags = st.tags.clone();
     if !final_ranks.is_empty() || n == 0 {
         let (possible, rsa) = st.find_chiral_atom_special_cases(&final_ranks);
@@ -1142,4 +1102,117 @@ pub fn assign_stereo_legacy_from_3d(mol: &mut Molecule) {
             }
         }
     }
+    ranks
+}
+
+/// `_CIPRank` values RDKit's legacy `assignStereochemistry` leaves on the
+/// atoms of a molecule whose stereo (chiral tags, double-bond stereo with
+/// RDKit's CIP-highest stereo atoms) is already assigned, e.g. one parsed
+/// from SMILES or from a 2D molblock; `None` when RDKit would not have ranked
+/// the atoms.
+pub fn legacy_cip_ranks_for_assigned_stereo(mol: &Molecule, ri: &RingInfo) -> Option<Vec<u32>> {
+    let n = mol.num_atoms();
+    let nb = mol.num_bonds();
+    let preset: Vec<St> = mol
+        .bonds()
+        .iter()
+        .map(|b| match (b.order, b.stereo) {
+            (BondOrder::Double, BondStereo::Cis) => St::Z,
+            (BondOrder::Double, BondStereo::Trans) => St::E,
+            _ => St::None,
+        })
+        .collect();
+    let mut st = State {
+        mol,
+        ri,
+        tags: mol.atoms().iter().map(|a| a.chiral_tag).collect(),
+        cip_code: vec![None; n],
+        dirs: vec![Dir::None; nb],
+        stereo: either_double_stereo(mol),
+        stereo_atoms: vec![None; nb],
+        preset: Some(preset),
+    };
+    run_legacy_perception(&mut st)
+}
+
+/// Initial bond stereo: `STEREOANY` on crossed ("either") double bonds (as
+/// RDKit's molfile parser sets it), none elsewhere.
+fn either_double_stereo(mol: &Molecule) -> Vec<St> {
+    mol.bonds()
+        .iter()
+        .map(|b| if b.order == BondOrder::Double && b.dir == BondDir::Either { St::Any } else { St::None })
+        .collect()
+}
+
+/// The ranking loop of `legacyStereoPerception(cleanIt = true,
+/// flagPossibleStereoCenters = true)`; returns the final atom ranks, if the
+/// atoms were ranked at all.
+fn run_legacy_perception(st: &mut State) -> Option<Vec<u32>> {
+    let mol = st.mol;
+    let ri = st.ri;
+    let n = mol.num_atoms();
+    let nb = mol.num_bonds();
+    let mut has_stereo_atoms = false;
+    let mut has_potential_stereo_atoms = false;
+    for atom in 0..n {
+        if !has_stereo_atoms && st.tags[atom] != ChiralTag::Unspecified {
+            has_stereo_atoms = true;
+        } else if !has_potential_stereo_atoms {
+            has_potential_stereo_atoms = st.is_potential_chiral_center(atom, None).0;
+        }
+    }
+    let mut has_stereo_bonds = false;
+    let mut has_potential_stereo_bonds = false;
+    for b in 0..nb {
+        let order = mol.bond(b).order;
+        if matches!(order, BondOrder::Double | BondOrder::Aromatic) && !should_detect_double_bond_stereo(ri, b) {
+            if st.stereo[b] != St::None {
+                st.stereo[b] = St::None;
+                st.stereo_atoms[b] = None;
+            }
+            continue;
+        } else if order == BondOrder::Double && st.stereo[b] != St::Any {
+            st.stereo[b] = St::None;
+            st.stereo_atoms[b] = None;
+        }
+        if !has_stereo_bonds && order == BondOrder::Double {
+            let bond = mol.bond(b);
+            let specified = [bond.begin, bond.end]
+                .iter()
+                .any(|&a| mol.atom_bonds(a).iter().any(|&(_, nbd)| is_directional(st.dirs[nbd])))
+                || st.preset.as_ref().is_some_and(|p| matches!(p[b], St::E | St::Z));
+            if specified {
+                has_stereo_bonds = true;
+            }
+            if !has_potential_stereo_bonds && !specified && should_detect_double_bond_stereo(ri, b) {
+                has_potential_stereo_bonds = true;
+            }
+        }
+    }
+
+    let mut ranks: Option<Vec<u32>> = None;
+    let mut keep_going = has_stereo_atoms || has_stereo_bonds;
+    if !keep_going {
+        keep_going = has_potential_stereo_atoms || has_potential_stereo_bonds;
+    }
+    while keep_going {
+        let changed_atoms;
+        let changed_bonds;
+        if has_stereo_atoms || has_potential_stereo_atoms {
+            (has_stereo_atoms, changed_atoms) = st.assign_atom_chiral_codes(&mut ranks);
+        } else {
+            changed_atoms = false;
+        }
+        if has_stereo_bonds || has_potential_stereo_bonds {
+            (has_stereo_bonds, changed_bonds) = st.assign_bond_stereo_codes(&mut ranks);
+        } else {
+            changed_bonds = false;
+        }
+        keep_going = (has_stereo_atoms || has_stereo_bonds) && (changed_atoms || changed_bonds);
+        if keep_going && let Some(r) = ranks.as_mut() {
+            st.rerank_atoms(r);
+        }
+    }
+
+    ranks
 }

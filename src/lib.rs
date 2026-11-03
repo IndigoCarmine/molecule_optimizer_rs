@@ -24,6 +24,7 @@
 
 pub mod calc;
 pub mod core;
+pub mod depict;
 pub mod distgeom;
 pub mod error;
 pub mod fast;

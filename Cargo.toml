@@ -1,6 +1,6 @@
 [package]
 name = "molecule_optimizer_rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "BSD-3-Clause"
 description = "Pure-Rust molecular mechanics: energy, geometry optimization, conformer search (ETKDG) and coordinate scans with async/parallel jobs. Force fields (UFF, MMFF94) and DistGeom ported from RDKit."

@@ -11,11 +11,12 @@ The force fields (UFF, MMFF94/MMFF94s), the BFGS minimizer and the distance-geom
 - **Minimization**: RDKit's BFGS (line search, gradient scaling and convergence criteria), L-BFGS for large systems.
 - **Conformers**: ETKDG (v1/v2/v3) embedding, conformer search with pruning, relaxed coordinate scans.
 - **Async jobs**: every calculation runs on a dedicated rayon pool through `tasks::Engine`; a `JobHandle` gives snapshots, progress, cancellation and a `Stream` of intermediate structures.
+- **2D depiction**: `depict::compute_2d_coords`, a port of RDKit's `Compute2DCoords` (ring systems, E/Z double bonds, collision removal, canonical orientation, fixed-atom coordinate maps, random flip sampling).
 - **I/O**: SDF / MOL, MOL2 and XYZ input (bond orders and charges are inferred for coordinate-only input), SDF / XYZ output, atom typing and charge assignment independent of the file format.
 
 ## RDKit parity
 
-The test suite compares against data generated with RDKit (`tools/gen_*.py`): atom types, partial charges, energies and per-term energies, gradients, ETKDG embeddings, ring perception, SMARTS matching and minimized structures. On the benchmark set (`benches/data/set`, 110 molecules), energies at the initial and at RDKit-optimized structures match RDKit to better than 1e-9 relative, and minimizations from the same start agree within 3e-7 kcal/mol and 1.2e-4 Å heavy-atom RMSD.
+The test suite compares against data generated with RDKit (`tools/gen_*.py`): atom types, partial charges, energies and per-term energies, gradients, ETKDG embeddings, ring perception, SMARTS matching, minimized structures and 2D depictions. On the benchmark set (`benches/data/set`, 110 molecules), energies at the initial and at RDKit-optimized structures match RDKit to better than 1e-9 relative, and minimizations from the same start agree within 3e-7 kcal/mol and 1.2e-4 Å heavy-atom RMSD.
 
 ## Usage
 
@@ -23,7 +24,7 @@ Add the crate (not on crates.io yet):
 
 ```toml
 [dependencies]
-molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.1.0" }
+molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.0" }
 ```
 
 ### Single-point energy
@@ -105,6 +106,19 @@ use molecule_optimizer_rs::ff::mmff::MmffBuilder;
 let builder = Arc::new(FastBuilder::new(MmffBuilder::default(), FastOptions::exact()));
 // use it anywhere a force-field builder is accepted
 ```
+
+### 2D depiction
+
+```rust
+use molecule_optimizer_rs::{depict::{self, Compute2DCoordsParams}, io};
+
+let mut mol = io::read_file("examples/data/paracetamol.mol")?.remove(0);
+// same defaults as rdDepictor.Compute2DCoords(mol); z = 0
+depict::set_2d_coords(&mut mol, &Compute2DCoordsParams::default())?;
+io::write_file("paracetamol_2d.mol", &[&mol])?;
+```
+
+Ring-system templates (`useRingTemplates`) and non-tetrahedral stereo layouts are not ported.
 
 ### More examples
 

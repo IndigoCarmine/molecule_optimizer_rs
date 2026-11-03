@@ -6,7 +6,7 @@
 //! `sanitizeMol`, i.e. RingDecomposerLib's relevant cycles); see
 //! [`super::ring_decomposer`].
 
-use super::ring_decomposer::rdkit_atom_rings;
+use super::ring_decomposer::{rdkit_atom_rings, rdkit_atom_rings_with};
 use crate::core::Molecule;
 
 /// Ring information.
@@ -51,7 +51,16 @@ fn membership(n: usize, rings: &[Vec<usize>]) -> (Vec<usize>, Vec<usize>) {
 
 impl RingInfo {
     pub fn compute(mol: &Molecule) -> RingInfo {
-        let atom_rings = rdkit_atom_rings(mol);
+        Self::from_atom_rings(mol, rdkit_atom_rings(mol))
+    }
+
+    /// Like [`RingInfo::compute`], but dative bonds can be ring bonds (RDKit
+    /// `symmetrizeSSSR(mol, includeDativeBonds = true)`).
+    pub fn compute_including_dative(mol: &Molecule) -> RingInfo {
+        Self::from_atom_rings(mol, rdkit_atom_rings_with(mol, true))
+    }
+
+    fn from_atom_rings(mol: &Molecule, atom_rings: Vec<Vec<usize>>) -> RingInfo {
         let bond_rings: Vec<Vec<usize>> = atom_rings
             .iter()
             .map(|ring| (0..ring.len()).map(|k| mol.bond_between(ring[k], ring[(k + 1) % ring.len()]).expect("ring bond")).collect())

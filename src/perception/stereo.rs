@@ -82,3 +82,99 @@ pub fn assign_double_bond_stereo_from_3d(mol: &mut Molecule) {
         bm.stereo_atoms = Some((ra, rb));
     }
 }
+
+/// Non-tetrahedral coordination geometry perceived from 3D
+/// (RDKit `assignNontetrahedralChiralTypeFrom3D`, tolerance 0.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonTetrahedralGeometry {
+    SquarePlanar,
+    TrigonalBipyramidal,
+    Octahedral,
+}
+
+fn direction(from: [f64; 3], to: [f64; 3]) -> [f64; 3] {
+    let r = sub(to, from);
+    let l = dot(r, r).sqrt();
+    [r[0] / l, r[1] / l, r[2] / l]
+}
+
+/// Port of the geometry classification in RDKit
+/// `assignNontetrahedralChiralTypeFrom3D` (only the chiral *type*, not the
+/// permutation), including the pre-checks done by `assignChiralTypesFrom3D`
+/// (≥3 neighbours that affect chirality, ≤6 including hydrogens, Z ≥ 15).
+pub fn nontetrahedral_geometry_from_3d(mol: &Molecule, i: usize) -> Option<NonTetrahedralGeometry> {
+    use NonTetrahedralGeometry::*;
+    let atom = mol.atom(i);
+    let nz_degree = mol
+        .atom_bonds(i)
+        .iter()
+        .filter(|&&(_, b)| {
+            let bd = mol.bond(b);
+            !(bd.order == BondOrder::Zero || (bd.order == BondOrder::Dative && bd.begin == i))
+        })
+        .count();
+    let tnz = nz_degree + atom.total_hidden_hs() as usize;
+    if nz_degree < 3 || tnz > 6 || atom.atomic_num < 15 {
+        return None;
+    }
+    let cen = mol.pos(i);
+    let v: Vec<[f64; 3]> = mol.neighbors(i).map(|n| direction(cen, mol.pos(n))).collect();
+    let count = v.len();
+    if !(3..=6).contains(&count) {
+        return None;
+    }
+    let tolerance = 0.1;
+    let mut pair = [0usize; 6];
+    let mut pairs = 0;
+    for a in 0..count {
+        for b in a + 1..count {
+            if dot(v[a], v[b]) < -(1.0 - tolerance) {
+                if pair[a] != 0 || pair[b] != 0 {
+                    return None;
+                }
+                pair[a] = b + 1;
+                pair[b] = a + 1;
+                pairs += 1;
+            }
+        }
+    }
+    let angle = |a: usize, b: usize| dot(v[a], v[b]).clamp(-1.0, 1.0).acos();
+    match (pairs, count) {
+        (1, 3) => Some(SquarePlanar),
+        (1, 4) => {
+            // see-saw: octahedral if the two unpaired bonds are < 100° apart
+            let free: Vec<usize> = (0..4).filter(|&k| pair[k] == 0).collect();
+            if angle(free[0], free[1]) < 100.0 * std::f64::consts::PI / 180.0 {
+                Some(Octahedral)
+            } else {
+                Some(TrigonalBipyramidal)
+            }
+        }
+        (1, 5) => Some(TrigonalBipyramidal),
+        (2, 4) => Some(SquarePlanar),
+        (2, 5) => Some(Octahedral),
+        (3, 6) => Some(Octahedral),
+        _ => None,
+    }
+}
+
+/// Applies RDKit's hybridization rule for atoms carrying a non-tetrahedral
+/// chiral tag perceived from 3D (`setHybridization`: square planar → SP2D,
+/// trigonal bipyramidal → SP3D, octahedral → SP3D2, when the total degree
+/// is in range). RDKit's molfile parser assigns these tags before
+/// sanitization, so they determine the hybridization.
+pub fn apply_nontetrahedral_hybridization_from_3d(mol: &mut Molecule) {
+    use crate::core::Hybridization;
+    for i in 0..mol.num_atoms() {
+        let Some(g) = nontetrahedral_geometry_from_3d(mol, i) else { continue };
+        let td = mol.total_degree(i);
+        let h = match g {
+            NonTetrahedralGeometry::SquarePlanar if (2..=4).contains(&td) => Hybridization::SP2D,
+            NonTetrahedralGeometry::TrigonalBipyramidal if (2..=5).contains(&td) => Hybridization::SP3D,
+            NonTetrahedralGeometry::Octahedral if (2..=6).contains(&td) => Hybridization::SP3D2,
+            _ => continue,
+        };
+        mol.atom_mut(i).chiral_tag = ChiralTag::Unspecified;
+        mol.atom_mut(i).hybridization = h;
+    }
+}

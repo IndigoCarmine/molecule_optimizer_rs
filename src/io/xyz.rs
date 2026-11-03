@@ -17,7 +17,7 @@ pub fn read_xyz_str(text: &str) -> Result<Vec<Molecule>> {
             continue;
         }
         let n: usize = lines[i].trim().parse().map_err(|_| Error::parse(i + 1, "expected atom count"))?;
-        if i + 1 + n >= lines.len() + 1 {
+        if i + 1 + n > lines.len() {
             return Err(Error::parse(i + 1, "truncated XYZ frame"));
         }
         let mut mol = Molecule::new();

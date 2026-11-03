@@ -51,6 +51,8 @@ pub fn sanitize_with(mol: &mut Molecule, opts: &SanitizeOptions) -> Result<()> {
         stereo::assign_double_bond_stereo_from_3d(mol);
         // chirality may change hybridization of 4-coordinate atoms
         hybridization::set_hybridization(mol);
+        // RDKit: non-tetrahedral chiral tags from 3D set SP2D/SP3D/SP3D2
+        stereo::apply_nontetrahedral_hybridization_from_3d(mol);
     }
     Ok(())
 }

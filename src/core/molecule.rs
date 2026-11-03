@@ -269,15 +269,47 @@ impl Molecule {
         self.adj[a].iter().find(|&&(n, _)| n == b).map(|&(_, bi)| bi)
     }
 
-    /// Explicit valence (RDKit `getValence(EXPLICIT)`): sum of bond valence
-    /// contributions plus explicit hidden Hs, aromatic sums rounded.
+    /// Explicit valence (RDKit `getValence(EXPLICIT)`, port of
+    /// `calculateExplicitValence` in `GraphMol/Atom.cpp`): sum of bond
+    /// valence contributions plus explicit hidden Hs. For aromatic atoms whose
+    /// sum exceeds the default valence, the value is snapped down to the
+    /// largest allowed valence of the (charge-adjusted) element when the
+    /// kekulized minimum allows it (so aromatic `s` has valence 2, a fused
+    /// aromatic carbon 4); x.5 sums round up.
     pub fn explicit_valence(&self, i: usize) -> i32 {
-        let mut acc = 0.0;
+        let atom = &self.atoms[i];
+        let mut accum = atom.num_explicit_hs as f64;
+        let mut min_accum = accum;
+        let mut aromatic = atom.is_aromatic;
         for &(_, bi) in &self.adj[i] {
-            acc += self.bonds[bi].valence_contrib(i);
+            let b = &self.bonds[bi];
+            let c = b.valence_contrib(i);
+            accum += c;
+            min_accum += if b.is_aromatic { 1.0 } else { c };
+            aromatic |= b.is_aromatic || b.order == BondOrder::Aromatic;
         }
-        acc += self.atoms[i].num_explicit_hs as f64;
-        (acc + 0.1).floor() as i32
+        let ovalens = &element(atom.atomic_num).valences;
+        let eff = if ovalens.len() > 1 || ovalens.first().is_some_and(|&v| v != -1) {
+            (atom.atomic_num as i32 - atom.formal_charge as i32).clamp(0, super::element::num_elements() as i32 - 1)
+                as u8
+        } else {
+            atom.atomic_num
+        };
+        let eff_el = element(eff);
+        let dv = eff_el.default_valence();
+        if dv >= 0 && accum > dv as f64 && aromatic {
+            let mut pval = dv;
+            for &val in &eff_el.valences {
+                if val == -1 || val as f64 > accum {
+                    break;
+                }
+                pval = val;
+            }
+            if min_accum - pval as f64 <= 0.1 && accum - pval as f64 <= 1.5 {
+                accum = pval as f64;
+            }
+        }
+        (accum + 0.1).round() as i32
     }
     /// Total valence = explicit valence + implicit Hs.
     pub fn total_valence(&self, i: usize) -> i32 {
@@ -298,7 +330,7 @@ impl Molecule {
     /// dimensions are dropped).
     pub fn set_flat_coords(&mut self, flat: &[f64]) {
         let n = self.atoms.len();
-        let dim = if n == 0 { 3 } else { flat.len() / n };
+        let dim = flat.len().checked_div(n).unwrap_or(3);
         assert!(dim >= 3, "flat coordinate vector too short");
         for i in 0..n {
             self.coords[i] = [flat[dim * i], flat[dim * i + 1], flat[dim * i + 2]];

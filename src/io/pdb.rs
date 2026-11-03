@@ -1,6 +1,6 @@
 //! PDB format reading/writing.
 
-use crate::core::{Atom, BondOrder, Molecule, ResidueInfo, atomic_number};
+use crate::core::{Atom, BondOrder, Molecule, ResidueInfo, UnitCell, atomic_number};
 use crate::error::{Error, Result};
 use crate::perception;
 use std::collections::HashMap;
@@ -49,7 +49,8 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
     let mut serial_map: HashMap<i32, usize> = HashMap::new();
     let mut conects: Vec<(i32, i32)> = Vec::new();
     let mut name = String::new();
-    let finish = |mol: &mut Molecule, smap: &HashMap<i32, usize>, conects: &[(i32, i32)]| -> Result<Molecule> {
+    let mut cell: Option<UnitCell> = None;
+    let finish =|mol: &mut Molecule, smap: &HashMap<i32, usize>, conects: &[(i32, i32)]| -> Result<Molecule> {
         let mut m = std::mem::take(mol);
         for &(a, b) in conects {
             if let (Some(&i), Some(&j)) = (smap.get(&a), smap.get(&b)) {
@@ -68,6 +69,9 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
                 if name.is_empty() {
                     name = col(line, 10, 80).trim().to_string();
                 }
+            }
+            "CRYST1" => {
+                cell = parse_cryst1(line).map_err(|e| Error::parse(ln + 1, e))?;
             }
             "ATOM" | "HETATM" => {
                 let het = rec.starts_with("HETATM");
@@ -122,6 +126,7 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
                 if cur.num_atoms() > 0 {
                     let mut m = finish(&mut cur, &serial_map, &conects)?;
                     m.name = name.clone();
+                    m.cell = cell;
                     models.push(m);
                     serial_map.clear();
                 }
@@ -132,6 +137,7 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
     if cur.num_atoms() > 0 {
         let mut m = finish(&mut cur, &serial_map, &conects)?;
         m.name = name;
+        m.cell = cell;
         models.push(m);
     }
     if models.is_empty() {
@@ -154,6 +160,9 @@ pub fn write_pdb_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
     let mut s = String::new();
     if !mol.name.is_empty() {
         let _ = writeln!(s, "COMPND    {}", mol.name);
+    }
+    if let Some(c) = &mol.cell {
+        s.push_str(&cryst1_record(c));
     }
     for (i, (a, p)) in mol.atoms().iter().zip(coords).enumerate() {
         let serial = i + 1;
@@ -203,4 +212,59 @@ pub fn write_pdb_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
     }
     let _ = writeln!(s, "END");
     s
+}
+
+/// Parses a `CRYST1` record (lengths in Å, angles in degrees). Returns
+/// `None` for the conventional placeholder `1 1 1 90 90 90` used by
+/// non-periodic structures.
+fn parse_cryst1(line: &str) -> std::result::Result<Option<UnitCell>, String> {
+    let f = |a: usize, b: usize, what: &str| -> std::result::Result<f64, String> {
+        col(line, a, b).trim().parse::<f64>().map_err(|_| format!("bad CRYST1 {what}"))
+    };
+    let (a, b, c) = (f(6, 15, "a")?, f(15, 24, "b")?, f(24, 33, "c")?);
+    let angle = |a: usize, b: usize, what: &str| -> std::result::Result<f64, String> {
+        // angles default to 90 degrees when the columns are blank
+        if col(line, a, b).trim().is_empty() { Ok(90.0) } else { f(a, b, what) }
+    };
+    let (al, be, ga) = (angle(33, 40, "alpha")?, angle(40, 47, "beta")?, angle(47, 54, "gamma")?);
+    if a == 1.0 && b == 1.0 && c == 1.0 {
+        return Ok(None);
+    }
+    UnitCell::from_parameters(a, b, c, al, be, ga).map(Some).map_err(|e| e.to_string())
+}
+
+/// `CRYST1` record (space group `P 1`) for a cell. The cell is written by
+/// its lengths and angles; readers reconstruct it in the standard
+/// orientation (`a` along x, `b` in the xy plane), so the coordinates are
+/// only consistent if the cell already had that orientation.
+pub fn cryst1_record(cell: &UnitCell) -> String {
+    let [a, b, c] = cell.lengths();
+    let [al, be, ga] = cell.angles();
+    format!("CRYST1{a:9.3}{b:9.3}{c:9.3}{al:7.2}{be:7.2}{ga:7.2} P 1           1\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cryst1_round_trip() {
+        let cell = UnitCell::from_parameters(18.65, 20.0, 22.5, 90.0, 95.5, 90.0).unwrap();
+        let rec = cryst1_record(&cell);
+        assert!(rec.starts_with("CRYST1   18.650   20.000   22.500  90.00  95.50  90.00 P 1"), "{rec}");
+        let mut m = Molecule::new();
+        m.add_atom(Atom::new(8), [1.0, 2.0, 3.0]);
+        m.cell = Some(cell);
+        let text = write_pdb(&m);
+        let back = read_pdb(&text).unwrap();
+        let c2 = back.cell.expect("cell read back");
+        for (x, y) in c2.lengths().iter().zip(cell.lengths()) {
+            assert!((x - y).abs() < 1e-9);
+        }
+        for (x, y) in c2.angles().iter().zip(cell.angles()) {
+            assert!((x - y).abs() < 1e-9);
+        }
+        let placeholder = "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1\nHETATM    1  O   UNL     1       1.000   2.000   3.000  1.00  0.00           O\nEND\n";
+        assert!(read_pdb(placeholder).unwrap().cell.is_none());
+    }
 }

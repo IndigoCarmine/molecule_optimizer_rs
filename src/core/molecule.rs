@@ -1,5 +1,6 @@
 //! Molecular graph with 3D coordinates.
 
+use super::cell::UnitCell;
 use super::element::element;
 use crate::perception::rings::RingInfo;
 use std::collections::BTreeMap;
@@ -171,6 +172,10 @@ pub struct Molecule {
     pub ring_info: Option<RingInfo>,
     /// Free-form properties (e.g. SDF data fields).
     pub props: BTreeMap<String, String>,
+    /// Periodic cell, if the structure is periodic (default `None`). Positions
+    /// in [`Molecule::coords`] should keep molecules whole (see
+    /// [`UnitCell::make_molecules_whole`]).
+    pub cell: Option<UnitCell>,
 }
 
 impl Molecule {

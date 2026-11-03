@@ -259,7 +259,7 @@ fn mol2_bond_order(t: &str) -> BondOrder {
         "2" => BondOrder::Double,
         "3" => BondOrder::Triple,
         "ar" => BondOrder::Aromatic,
-        "du" | "un" | "nc" => BondOrder::Single,
+        "du" | "un" | "nc" => BondOrder::Zero,
         _ => BondOrder::Single,
     }
 }
@@ -301,8 +301,13 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
         let (Some(&a), Some(&b)) = (id_to_index.get(&rec.origin_atom_id), id_to_index.get(&rec.target_atom_id)) else {
             continue; // bonds to lone pairs / unknown atoms
         };
-        if a != b {
-            mol.add_bond(a, b, mol2_bond_order(&rec.bond_type));
+        if a != b && !rec.bond_type.eq_ignore_ascii_case("nc") {
+            let order = mol2_bond_order(&rec.bond_type);
+            mol.add_bond(a, b, order);
+            if order == BondOrder::Aromatic {
+                mol.atom_mut(a).is_aromatic = true;
+                mol.atom_mut(b).is_aromatic = true;
+            }
         }
     }
     // CRYSIN: a b c alpha beta gamma [space group] [setting]
@@ -312,8 +317,9 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
             mol.cell = UnitCell::from_parameters(v[0], v[1], v[2], v[3], v[4], v[5]).ok();
         }
     }
-    if opts.infer_formal_charges {
-        infer_charges(&mut mol, &types);
+    if opts.infer_formal_charges && !read_unity_charges(file, &mut mol, &id_to_index) {
+        cleanup_substructures(&mut mol, &types)?;
+        guess_formal_charges(&mut mol, &types);
     }
     if opts.sanitize {
         perception::sanitize(&mut mol)?;
@@ -321,94 +327,236 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
     Ok(mol)
 }
 
-/// Resolves delocalized groups (`O.co2` pairs, `C.cat` / `N.pl3` cations)
-/// into one Kekulé form with formal charges, then fixes simple valence
-/// charges (`N.4`, terminal anionic O/S).
-fn infer_charges(mol: &mut Molecule, types: &[String]) {
-    let n = mol.num_atoms();
-    let ty = |i: usize| types[i].to_ascii_lowercase();
-    // 1) groups of O.co2 around a central atom
-    for c in 0..n {
-        let oxy: Vec<(usize, usize)> = mol
-            .atom_bonds(c)
-            .iter()
-            .copied()
-            .filter(|&(o, _)| ty(o) == "o.co2" && mol.degree(o) == 1)
-            .collect();
-        if oxy.is_empty() {
+/// Formal charges from a `@<TRIPOS>UNITY_ATOM_ATTR` section (`AtomExpr <q>`
+/// entries, as read by RDKit). Returns `true` if any charge was found.
+fn read_unity_charges(file: &Mol2File, mol: &mut Molecule, id_to_index: &HashMap<usize, usize>) -> bool {
+    let lines = file.section_lines("UNITY_ATOM_ATTR");
+    let mut found = false;
+    let mut k = 0;
+    while k < lines.len() {
+        let f: Vec<&str> = lines[k].split_whitespace().collect();
+        k += 1;
+        let (Some(id), Some(n)) = (f.first().and_then(|s| s.parse::<usize>().ok()), f.get(1).and_then(|s| s.parse::<usize>().ok())) else {
             continue;
-        }
-        let central = mol.atom(c).atomic_num;
-        // number of double bonds the centre takes to its O.co2 neighbours
-        let n_double = match central {
-            6 => 1,                                   // carboxylate
-            7 => 1,                                   // nitro (N+ handled by valence)
-            15 => 1,                                  // phosphate
-            16 => (oxy.len().min(3)).saturating_sub(1).max(1).min(2), // sulfonate/sulfate
-            _ => 1,
         };
-        let already_double = oxy.iter().filter(|&&(_, b)| mol.bond(b).order == BondOrder::Double).count();
-        let mut to_double = n_double.saturating_sub(already_double);
-        for &(o, b) in &oxy {
-            let ord = mol.bond(b).order;
-            if ord == BondOrder::Double {
-                continue;
+        for _ in 0..n {
+            if k >= lines.len() {
+                break;
             }
-            if to_double > 0 {
-                mol.bond_mut(b).order = BondOrder::Double;
-                mol.bond_mut(b).is_aromatic = false;
-                to_double -= 1;
-            } else {
-                mol.bond_mut(b).order = BondOrder::Single;
-                mol.bond_mut(b).is_aromatic = false;
-                mol.atom_mut(o).formal_charge = -1;
+            let g: Vec<&str> = lines[k].split_whitespace().collect();
+            k += 1;
+            if g.first() == Some(&"AtomExpr") {
+                if let Some(q) = g.get(1).filter(|s| !s.contains('=')).and_then(|s| s.parse::<i8>().ok()) {
+                    if let Some(&i) = id_to_index.get(&id) {
+                        mol.atom_mut(i).formal_charge = q;
+                        found = true;
+                    }
+                }
             }
         }
     }
-    // 2) C.cat (guanidinium / amidinium): one C=N, the rest single
-    for c in 0..n {
-        if ty(c) != "c.cat" {
+    found
+}
+
+fn set_bond(mol: &mut Molecule, a: usize, b: usize, order: BondOrder) {
+    if let Some(bi) = mol.bond_between(a, b) {
+        let bd = mol.bond_mut(bi);
+        bd.order = order;
+        bd.is_aromatic = false;
+    }
+}
+
+fn no_h_neighbors_n_oxide(mol: &Molecule, n: usize, to_mod: &mut Option<usize>) -> usize {
+    let mut nh = 0;
+    for x in mol.neighbors(n) {
+        if mol.atom(x).atomic_num == 1 {
+            nh += 1;
+        } else if mol.atom(x).atomic_num == 8 && mol.degree(x) == 1 {
+            *to_mod = Some(n);
+        }
+    }
+    nh
+}
+
+/// Port of RDKit `cleanUpMol2Substructures` (`Mol2FileParser.cpp`,
+/// BSD-3-Clause, Copyright (C) 2008 Novartis and other RDKit contributors):
+/// resolves `N.4`, `O.co2` (carboxylate / phosphate / sulfonate) and `C.cat`
+/// (guanidinium / amidinium) groups into one Kekulé form with charges,
+/// choosing the same resonance form RDKit does.
+fn cleanup_substructures(mol: &mut Molecule, types: &[String]) -> Result<()> {
+    let n = mol.num_atoms();
+    let mut fixed = vec![false; n];
+    for idx in 0..n {
+        if fixed[idx] {
             continue;
         }
-        let nbs: Vec<(usize, usize)> =
-            mol.atom_bonds(c).iter().copied().filter(|&(x, _)| mol.atom(x).atomic_num == 7).collect();
-        if nbs.is_empty() {
-            continue;
-        }
-        let has_double = nbs.iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Double);
-        let mut placed = has_double;
-        for &(_, b) in &nbs {
-            if mol.bond(b).order == BondOrder::Double {
-                continue;
+        let t = types[idx].as_str();
+        if t == "N.4" {
+            mol.atom_mut(idx).formal_charge = 1;
+        } else if t == "O.co2" {
+            if mol.degree(idx) != 1 {
+                return Err(Error::Perception(format!("{}: O.co2 with degree > 1", mol.name)));
             }
-            mol.bond_mut(b).is_aromatic = false;
-            if !placed {
-                mol.bond_mut(b).order = BondOrder::Double;
-                placed = true;
+            let nbr = mol.neighbors(idx).next().unwrap();
+            let tn = types[nbr].as_str();
+            if tn == "P.3" {
+                set_bond(mol, idx, nbr, BondOrder::Double);
+                mol.atom_mut(idx).is_aromatic = false;
+                fixed[idx] = true;
+                let others: Vec<usize> = mol.neighbors(nbr).collect();
+                for o in others {
+                    if mol.atom(o).atomic_num == 8 && !fixed[o] && types[o] == "O.co2" {
+                        set_bond(mol, nbr, o, BondOrder::Single);
+                        mol.atom_mut(o).formal_charge = -1;
+                        mol.atom_mut(o).is_aromatic = false;
+                        fixed[o] = true;
+                    }
+                }
+                mol.atom_mut(nbr).is_aromatic = false;
+                fixed[nbr] = true;
+            } else if tn == "C.2" || tn == "S.o2" {
+                if !fixed[nbr] {
+                    set_bond(mol, idx, nbr, BondOrder::Single);
+                    mol.atom_mut(idx).formal_charge = -1;
+                    mol.atom_mut(idx).is_aromatic = false;
+                    mol.atom_mut(nbr).is_aromatic = false;
+                    fixed[idx] = true;
+                    fixed[nbr] = true;
+                } else {
+                    set_bond(mol, idx, nbr, BondOrder::Double);
+                    mol.atom_mut(idx).is_aromatic = false;
+                    fixed[idx] = true;
+                }
             } else {
-                mol.bond_mut(b).order = BondOrder::Single;
+                return Err(Error::Perception(format!("{}: O.co2 with non C.2 or S.o2 neighbor", mol.name)));
+            }
+        } else if t == "C.cat" {
+            fixed[idx] = true;
+            let nbrs: Vec<usize> = mol.neighbors(idx).collect();
+            let n_n = nbrs.iter().filter(|&&x| mol.atom(x).atomic_num == 7).count();
+            if !(2..=3).contains(&n_n) {
+                return Err(Error::Perception(format!("{}: C.cat with bad number of N neighbors", mol.name)));
+            }
+            let mut to_mod: Option<usize> = None;
+            if n_n == 2 {
+                let mut first: Option<usize> = None;
+                let mut second: Option<usize> = None;
+                for &x in &nbrs {
+                    if mol.atom(x).atomic_num == 7 {
+                        set_bond(mol, idx, x, BondOrder::Single);
+                        mol.atom_mut(x).is_aromatic = false;
+                        fixed[x] = true;
+                        if first.is_some() {
+                            second = Some(x);
+                        } else {
+                            first = Some(x);
+                        }
+                    }
+                }
+                let i1 = first.unwrap();
+                let i2 = second.unwrap_or(i1);
+                let nh1 = no_h_neighbors_n_oxide(mol, i1, &mut to_mod);
+                let nh2 = no_h_neighbors_n_oxide(mol, i2, &mut to_mod);
+                if to_mod.is_none() {
+                    to_mod = Some(if nh1 != nh2 {
+                        if nh1 > nh2 { i1 } else { i2 }
+                    } else {
+                        let ri = mol.rings().clone();
+                        if ri.num_atom_rings(i1) > ri.num_atom_rings(i2) { i1 } else { i2 }
+                    });
+                }
+            } else {
+                let mut lowest = 100usize;
+                for &x in &nbrs {
+                    if !fixed[x] {
+                        let mut deg = 0;
+                        for y in mol.neighbors(x) {
+                            if mol.atom(y).atomic_num > 1 {
+                                deg += if types[y] == "C.cat" { 2 } else { 1 };
+                            }
+                        }
+                        if deg < lowest {
+                            to_mod = Some(x);
+                            lowest = deg;
+                        }
+                        set_bond(mol, idx, x, BondOrder::Single);
+                        mol.atom_mut(x).is_aromatic = false;
+                        fixed[x] = true;
+                    } else {
+                        set_bond(mol, idx, x, BondOrder::Single);
+                    }
+                }
+            }
+            if let Some(m) = to_mod {
+                set_bond(mol, idx, m, BondOrder::Double);
+                mol.atom_mut(m).formal_charge = 1;
+            }
+            mol.atom_mut(idx).is_aromatic = false;
+        }
+    }
+    Ok(())
+}
+
+/// Port of RDKit `guessFormalCharges` (`Mol2FileParser.cpp`): assigns
+/// formal charges to uncharged non-carbon atoms from their bond valence.
+fn guess_formal_charges(mol: &mut Molecule, types: &[String]) {
+    mol.ring_info = None;
+    let ri = mol.rings().clone();
+    for i in 0..mol.num_atoms() {
+        let a = mol.atom(i).clone();
+        if a.formal_charge != 0 || a.atomic_num == 6 || a.atomic_num == 0 {
+            continue;
+        }
+        let mut n_arom = 0;
+        let mut accum = 0.0;
+        for &(_, b) in mol.atom_bonds(i) {
+            accum += mol.bond(b).valence_contrib(i);
+            if mol.bond(b).order == BondOrder::Aromatic {
+                n_arom += 1;
+            }
+        }
+        let t = types[i].as_str();
+        if a.is_aromatic && !t.contains("ar") && ri.is_atom_in_ring_of_size(i, 5) {
+            continue;
+        }
+        if n_arom == 3 && t == "N.ar" {
+            continue;
+        }
+        let exp_val = (accum + 0.1).round() as i32;
+        let el = crate::core::element(a.atomic_num);
+        let Some(&v0) = el.valences.first() else { continue };
+        let n_el = el.n_outer as i32;
+        let mut chg = if n_el >= 4 { exp_val - v0 } else { v0 - exp_val };
+        if chg > 0 && n_el >= 4 {
+            for &vi in &el.valences {
+                chg = exp_val - vi;
+                if vi <= exp_val && chg < 2 {
+                    break;
+                }
+            }
+        }
+        if chg != 0 {
+            let q = if a.is_aromatic && chg.abs() > 1 { chg.signum() } else { chg };
+            mol.atom_mut(i).formal_charge = q as i8;
+            if chg == 2 && exp_val == 5 && a.atomic_num == 7 {
+                fix_nitro(mol, i);
             }
         }
     }
-    // 3) simple valence-derived charges (all hydrogens explicit)
-    for i in 0..n {
-        if mol.atom(i).formal_charge != 0 || !mol.atom(i).no_implicit {
-            continue;
-        }
-        let has_arom = mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Aromatic);
-        if has_arom {
-            continue; // aromatic systems are resolved by kekulization
-        }
-        let v = mol.explicit_valence(i);
-        let z = mol.atom(i).atomic_num;
-        let t = ty(i);
-        match z {
-            7 | 15 if v == 4 => mol.atom_mut(i).formal_charge = 1,
-            8 | 16 if v == 3 && (t == "o.3" || t == "o.2" || t == "s.3") => mol.atom_mut(i).formal_charge = 1,
-            8 | 16 if v == 1 && mol.degree(i) == 1 => mol.atom_mut(i).formal_charge = -1,
-            6 if v == 3 && t == "c.cat" => mol.atom_mut(i).formal_charge = 1,
-            _ => {}
-        }
+}
+
+/// N(=O)(=O) written as a pentavalent nitrogen → N+(=O)O-.
+fn fix_nitro(mol: &mut Molecule, n: usize) {
+    let os: Vec<(usize, usize)> = mol
+        .atom_bonds(n)
+        .iter()
+        .copied()
+        .filter(|&(o, b)| mol.atom(o).atomic_num == 8 && mol.bond(b).order == BondOrder::Double)
+        .collect();
+    if let Some(&(o, b)) = os.get(1) {
+        mol.bond_mut(b).order = BondOrder::Single;
+        mol.atom_mut(o).formal_charge = -1;
+        mol.atom_mut(n).formal_charge = 1;
     }
 }
 
@@ -489,7 +637,7 @@ pub fn sybyl_type(mol: &Molecule, i: usize) -> String {
             let co2 = mol.degree(i) == 1
                 && c.is_some_and(|c| {
                     let z = mol.atom(c).atomic_num;
-                    (z == 6 || z == 7) && terminal_o_count(mol, c) >= 2 && (a.formal_charge < 0 || mol.neighbors(c).any(|o| mol.atom(o).formal_charge < 0))
+                    (z == 6 || z == 15) && terminal_o_count(mol, c) >= 2 && (a.formal_charge < 0 || mol.neighbors(c).any(|o| mol.atom(o).formal_charge < 0))
                 });
             if co2 {
                 "O.co2".into()
@@ -516,30 +664,56 @@ pub fn sybyl_type(mol: &Molecule, i: usize) -> String {
     }
 }
 
-fn mol2_bond_type(mol: &Molecule, b: usize) -> &'static str {
+fn mol2_bond_type(mol: &Molecule, kek: &Molecule, b: usize, aromatic_bonds: bool) -> &'static str {
     let bond = mol.bond(b);
-    if bond.is_aromatic || bond.order == BondOrder::Aromatic {
+    let aromatic = bond.is_aromatic || bond.order == BondOrder::Aromatic;
+    if aromatic && aromatic_bonds {
         return "ar";
     }
-    match bond.order {
+    // Kekulé order (aromatic bonds resolved), which every MOL2 reader accepts
+    match kek.bond(b).order {
         BondOrder::Double => "2",
         BondOrder::Triple => "3",
         BondOrder::Zero => "nc",
+        BondOrder::Aromatic => "ar",
         _ => {
+            if aromatic {
+                return "1";
+            }
             // amide C(=O)-N
             let (x, y) = (bond.begin, bond.end);
             let is_amide = |c: usize, nn: usize| {
-                mol.atom(c).atomic_num == 6 && mol.atom(nn).atomic_num == 7 && has_double_to(mol, c, &[8])
+                kek.atom(c).atomic_num == 6 && kek.atom(nn).atomic_num == 7 && has_double_to(kek, c, &[8])
             };
             if is_amide(x, y) || is_amide(y, x) { "am" } else { "1" }
         }
     }
 }
 
+/// Options for writing MOL2.
+#[derive(Debug, Clone, Default)]
+pub struct Mol2WriteOptions {
+    /// Write aromatic bonds as `ar` instead of Kekulé orders. Kekulé orders
+    /// (the default) are read correctly by all common readers, including
+    /// RDKit, also for rings with exocyclic double bonds (pyridones, ...).
+    pub aromatic_bonds: bool,
+}
+
 /// Builds a [`Mol2File`] for a molecule (optional replacement coordinates
 /// and partial charges).
 pub fn molecule_to_mol2(mol: &Molecule, coords: Option<&[[f64; 3]]>, charges: Option<&[f64]>) -> Mol2File {
+    molecule_to_mol2_with(mol, coords, charges, &Mol2WriteOptions::default())
+}
+
+/// [`molecule_to_mol2`] with options.
+pub fn molecule_to_mol2_with(
+    mol: &Molecule,
+    coords: Option<&[[f64; 3]]>,
+    charges: Option<&[f64]>,
+    opts: &Mol2WriteOptions,
+) -> Mol2File {
     let c = coords.unwrap_or(&mol.coords);
+    let kek = perception::kekulized_copy(mol).unwrap_or_else(|_| mol.clone());
     let mut lines = vec![
         Mol2Line::SectionHeader("@<TRIPOS>MOLECULE".into()),
         Mol2Line::MoleculeLine(if mol.name.is_empty() { "molecule".into() } else { mol.name.clone() }),
@@ -583,7 +757,7 @@ pub fn molecule_to_mol2(mol: &Molecule, coords: Option<&[[f64; 3]]>, charges: Op
             bond_id: b + 1,
             origin_atom_id: mol.bond(b).begin + 1,
             target_atom_id: mol.bond(b).end + 1,
-            bond_type: mol2_bond_type(mol, b).to_string(),
+            bond_type: mol2_bond_type(mol, &kek, b, opts.aromatic_bonds).to_string(),
             status_bit: String::new(),
         }));
     }

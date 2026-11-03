@@ -94,31 +94,109 @@ pub fn kekulize(mol: &mut Molecule) -> Result<()> {
 /// leftovers). This is a heuristic.
 pub fn assign_bond_orders(mol: &mut Molecule) {
     let n = mol.num_atoms();
-    let nb = mol.num_bonds();
     for a in mol.atoms_mut() {
         a.no_implicit = true;
         a.implicit_hs = 0;
     }
-    // ammonium
+    let terminal_o = |mol: &Molecule, i: usize| -> Vec<(usize, usize)> {
+        mol.atom_bonds(i).iter().copied().filter(|&(o, _)| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1).collect()
+    };
     for i in 0..n {
-        let a = mol.atom(i);
-        if a.atomic_num == 7 && mol.degree(i) == 4 {
+        let z = mol.atom(i).atomic_num;
+        let deg = mol.degree(i);
+        let to = terminal_o(mol, i);
+        if z == 7 && deg == 4 {
+            // ammonium / amine oxide (the oxide O becomes O- below)
             mol.atom_mut(i).formal_charge = 1;
+        } else if z == 7 && deg == 3 && to.len() >= 2 {
+            // nitro: N+(=O)O-
+            mol.atom_mut(i).formal_charge = 1;
+            mol.atom_mut(to[0].0).formal_charge = -1;
+        } else if z == 7 && deg == 3 && to.len() == 1 {
+            // N-oxide (e.g. pyridine N-oxide): N+ O-
+            mol.atom_mut(i).formal_charge = 1;
+            mol.atom_mut(to[0].0).formal_charge = -1;
+        } else if matches!(z, 16 | 34 | 15 | 33) && deg >= 3 && !to.is_empty() {
+            // hypervalent oxo groups: S(=O), S(=O)2, P(=O), Se(=O)...
+            let max_val = if matches!(z, 16 | 34) { 6 } else { 5 };
+            let n_double = (max_val - deg as i32).max(0) as usize;
+            for &(_, b) in to.iter().take(n_double) {
+                mol.bond_mut(b).order = BondOrder::Double;
+            }
         }
     }
-    // nitro-like: N(deg 3) bonded to two terminal O
+    let base: Vec<BondOrder> = mol.bonds().iter().map(|b| b.order).collect();
+    let mut leftover = match_unsaturations(mol, &base);
+    // Cations without charge information (pyridinium, guanidinium, iminium):
+    // an unpaired unsaturated atom next to a neutral trivalent N → N+.
+    for _ in 0..n {
+        if leftover.is_empty() {
+            break;
+        }
+        let mut cands: Vec<usize> = Vec::new();
+        for &u in &leftover {
+            for v in mol.neighbors(u) {
+                let a = mol.atom(v);
+                if a.atomic_num == 7 && a.formal_charge == 0 && mol.degree(v) == 3 && !cands.contains(&v) {
+                    cands.push(v);
+                }
+            }
+        }
+        // also search one bond further (ring positions)
+        if cands.is_empty() {
+            for &u in &leftover {
+                for w in mol.neighbors(u) {
+                    for v in mol.neighbors(w) {
+                        let a = mol.atom(v);
+                        if a.atomic_num == 7 && a.formal_charge == 0 && mol.degree(v) == 3 && !cands.contains(&v) {
+                            cands.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        let mut best: Option<(usize, Vec<BondOrder>, Vec<usize>)> = None;
+        for &c in &cands {
+            let saved: Vec<BondOrder> = mol.bonds().iter().map(|b| b.order).collect();
+            mol.atom_mut(c).formal_charge = 1;
+            let lo = match_unsaturations(mol, &base);
+            if lo.len() < leftover.len() && best.as_ref().is_none_or(|b| lo.len() < b.2.len()) {
+                best = Some((c, mol.bonds().iter().map(|b| b.order).collect(), lo));
+            }
+            mol.atom_mut(c).formal_charge = 0;
+            for (b, o) in saved.into_iter().enumerate() {
+                mol.bond_mut(b).order = o;
+            }
+        }
+        match best {
+            Some((c, orders, lo)) => {
+                mol.atom_mut(c).formal_charge = 1;
+                for (b, o) in orders.into_iter().enumerate() {
+                    mol.bond_mut(b).order = o;
+                }
+                leftover = lo;
+            }
+            None => break,
+        }
+    }
+    // leftover terminal O/S with one missing bond -> anion
+    let flags = vec![false; mol.num_bonds()];
     for i in 0..n {
-        if mol.atom(i).atomic_num != 7 || mol.degree(i) != 3 {
-            continue;
+        let a = mol.atom(i);
+        if (a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1 && a.formal_charge == 0 && unsaturation(mol, i, &flags) == 1 {
+            mol.atom_mut(i).formal_charge = -1;
         }
-        let term_o: Vec<usize> = mol
-            .neighbors(i)
-            .filter(|&o| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1)
-            .collect();
-        if term_o.len() >= 2 {
-            mol.atom_mut(i).formal_charge = 1;
-            mol.atom_mut(term_o[0]).formal_charge = -1;
-        }
+    }
+}
+
+/// Resets bond orders to `base` and raises orders by repeated maximum
+/// matchings of unsaturated atoms. Returns the atoms left unsaturated
+/// (excluding terminal O/S, which become anions).
+fn match_unsaturations(mol: &mut Molecule, base: &[BondOrder]) -> Vec<usize> {
+    let n = mol.num_atoms();
+    let nb = mol.num_bonds();
+    for (b, &o) in base.iter().enumerate() {
+        mol.bond_mut(b).order = o;
     }
     let flags = vec![false; nb];
     for _round in 0..3 {
@@ -160,11 +238,10 @@ pub fn assign_bond_orders(mol: &mut Molecule) {
             break;
         }
     }
-    // leftover terminal O/S with one missing bond -> anion
-    for i in 0..n {
-        let a = mol.atom(i);
-        if (a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1 && a.formal_charge == 0 && unsaturation(mol, i, &flags) == 1 {
-            mol.atom_mut(i).formal_charge = -1;
-        }
-    }
+    (0..n)
+        .filter(|&i| {
+            let a = mol.atom(i);
+            unsaturation(mol, i, &flags) > 0 && !((a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1)
+        })
+        .collect()
 }

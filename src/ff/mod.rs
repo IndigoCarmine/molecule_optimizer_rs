@@ -8,6 +8,7 @@
 //! Port of RDKit `Code/ForceField/ForceField.{h,cpp}` and the constraint
 //! contribs (BSD-3-Clause, Copyright (C) 2004-2019 Greg Landrum and others).
 
+pub mod assign;
 pub mod constraints;
 pub mod custom;
 pub mod mmff;
@@ -20,6 +21,7 @@ use crate::error::Result;
 use rayon::prelude::*;
 use std::sync::Arc;
 
+pub use assign::{Assignment, ForceFieldKind, assign};
 pub use constraints::Constraint;
 
 /// One energy term.

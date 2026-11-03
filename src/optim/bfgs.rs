@@ -5,7 +5,6 @@
 //! Copyright (C) 2004-2008 Greg Landrum and Rational Discovery LLC).
 
 use super::{IterationInfo, MinimizeOptions, MinimizeResult, MinimizeStatus, Observer};
-use crate::fast::bonded::{Lane, V4};
 use crate::ff::ForceField;
 use std::ops::ControlFlow;
 
@@ -161,224 +160,273 @@ impl PackedSym {
     }
 }
 
-/// Vectors of the BFGS update (see [`packed_pass`]).
-struct UpdateVecs<'a> {
+/// Pending rank-2 BFGS update, applied lazily by the next [`fused_pass`]:
+/// `H[i][j] += xi[i]·w[j] − fac·hd[i]·xi[j]` with `w = (fac + fae·fac²)·xi
+/// − fac·hd`. This is RDKit's `H += fac·xi·xiᵀ − fad·hd·hdᵀ + fae·u·uᵀ`
+/// (`hd = H·dgrad`, `u = fac·xi − fad·hd`, `fad = 1/fae`) with the
+/// `hd·hdᵀ` terms, which cancel exactly, removed.
+struct Update<'a> {
     xi: &'a [f64],
-    hdgrad: &'a [f64],
-    dgrad: &'a [f64],
-    pxi: &'a [f64],
-    hdg: &'a [f64],
-    dgs: &'a [f64],
+    hd: &'a [f64],
+    w: &'a [f64],
+    fac: f64,
 }
 
-/// RDKit update of one stored element `H[i][j]` (`j >= i`).
-#[inline(always)]
-fn update_elem(h: &mut f64, u: &UpdateVecs<'_>, i: usize, j: usize) {
-    *h += u.pxi[i] * u.xi[j] - u.hdg[i] * u.hdgrad[j] + u.dgs[i] * u.dgrad[j];
+/// Four f64 lanes with multiply-add (fused where the CPU has FMA), for
+/// [`fused_pass`].
+trait Fma4: Copy {
+    fn ld(s: &[f64; 4]) -> Self;
+    fn st(self, s: &mut [f64; 4]);
+    fn splat(x: f64) -> Self;
+    /// `self·b + c`.
+    fn fma(self, b: Self, c: Self) -> Self;
+    fn hsum(self) -> f64;
 }
 
-/// `a + b` (`SUB = false`) or `a - b` (`SUB = true`).
-#[inline(always)]
-fn acc<const SUB: bool>(a: f64, b: f64) -> f64 {
-    if SUB { a - b } else { a + b }
+/// Portable lanes (`a·b + c` without contraction).
+impl Fma4 for [f64; 4] {
+    #[inline(always)]
+    fn ld(s: &[f64; 4]) -> Self {
+        *s
+    }
+    #[inline(always)]
+    fn st(self, s: &mut [f64; 4]) {
+        *s = self;
+    }
+    #[inline(always)]
+    fn splat(x: f64) -> Self {
+        [x; 4]
+    }
+    #[inline(always)]
+    fn fma(self, b: Self, c: Self) -> Self {
+        std::array::from_fn(|l| self[l] * b[l] + c[l])
+    }
+    #[inline(always)]
+    fn hsum(self) -> f64 {
+        (self[0] + self[1]) + (self[2] + self[3])
+    }
 }
 
-/// Row `i` of [`packed_pass`]: updates the stored row, finishes `out[i]`
-/// with the row terms `j >= i` (all column terms `j < i` are already in it)
-/// and adds this row's column term to every `out[t]`, `t > i`.
-#[inline(always)]
-fn packed_row<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64], i: usize) {
-    let dim = h.dim;
-    let o = h.row_start(i);
-    let row = &mut h.a[o..o + dim - i];
-    if let Some(u) = upd {
-        for (k, e) in row.iter_mut().enumerate() {
-            update_elem(e, u, i, i + k);
+#[cfg(target_arch = "x86_64")]
+mod avx {
+    use std::arch::x86_64::*;
+
+    /// `true` if the CPU has AVX (cached by `std`).
+    #[inline]
+    pub fn has_avx() -> bool {
+        std::arch::is_x86_feature_detected!("avx")
+    }
+
+    /// `true` if the CPU has AVX and FMA (cached by `std`).
+    #[inline]
+    pub fn has_fma() -> bool {
+        has_avx() && std::arch::is_x86_feature_detected!("fma")
+    }
+
+    /// AVX register; `FMA` selects fused multiply-add. Only constructed
+    /// inside `#[target_feature]` entry points guarded by [`has_avx`] /
+    /// [`has_fma`] (SAFETY of all `unsafe` blocks below).
+    #[derive(Clone, Copy)]
+    pub struct F4<const FMA: bool>(__m256d);
+
+    impl<const FMA: bool> super::Fma4 for F4<FMA> {
+        #[inline(always)]
+        fn ld(s: &[f64; 4]) -> Self {
+            F4(unsafe { _mm256_loadu_pd(s.as_ptr()) })
+        }
+        #[inline(always)]
+        fn st(self, s: &mut [f64; 4]) {
+            unsafe { _mm256_storeu_pd(s.as_mut_ptr(), self.0) }
+        }
+        #[inline(always)]
+        fn splat(x: f64) -> Self {
+            F4(unsafe { _mm256_set1_pd(x) })
+        }
+        #[inline(always)]
+        fn fma(self, b: Self, c: Self) -> Self {
+            F4(unsafe { if FMA { _mm256_fmadd_pd(self.0, b.0, c.0) } else { _mm256_add_pd(_mm256_mul_pd(self.0, b.0), c.0) } })
+        }
+        #[inline(always)]
+        fn hsum(self) -> f64 {
+            unsafe {
+                let s = _mm_add_pd(_mm256_castpd256_pd128(self.0), _mm256_extractf128_pd::<1>(self.0));
+                _mm_cvtsd_f64(_mm_add_sd(s, _mm_unpackhi_pd(s, s)))
+            }
         }
     }
-    let mut s = out[i];
-    for (e, &vj) in row.iter().zip(&v[i..]) {
-        s = acc::<SUB>(s, e * vj);
-    }
-    out[i] = s;
-    let vi = v[i];
-    for (o, e) in out[i + 1..].iter_mut().zip(&row[1..]) {
-        *o = acc::<SUB>(*o, e * vi);
-    }
 }
 
-/// One sweep over the packed matrix: applies the BFGS update `upd` (if any)
-/// to every stored element, and computes `out = H·v` (`SUB = false`) or
-/// `out = -H·v` (`SUB = true`) for the updated `H`.
+/// One sweep over the packed inverse Hessian: applies the pending update
+/// `upd` (if any) to every stored element and computes `oa = H·a` and
+/// `ob = H·b` for the updated `H`. The matrix is read and written once per
+/// BFGS iteration (RDKit traverses it twice: `H·dgrad`, then update and
+/// `H·grad`).
 ///
-/// Arithmetic is identical to RDKit `BFGSOpt.h` operation by operation:
-/// every `out[t]` starts from 0 and takes the products `H[t][j]·v[j]` for
-/// `j = 0, 1, …` in order. The terms `j < t` come from the rows above (the
-/// stored `H[j][t]`, added when row `j` is visited), the terms `j >= t`
-/// from row `t` itself. The update writes RDKit's upper-triangle value.
-fn packed_pass<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
+/// Mathematically identical to RDKit `BFGSOpt.h`; the summation order
+/// differs (lane-parallel partial sums, FMA where the CPU has it), so
+/// results agree to rounding, not bit for bit.
+fn fused_pass(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
     let dim = h.dim;
-    assert!(v.len() == dim && out.len() == dim && h.a.len() == dim * (dim + 1) / 2);
+    assert!(a.len() == dim && b.len() == dim && oa.len() == dim && ob.len() == dim && h.a.len() == dim * (dim + 1) / 2);
     if let Some(u) = upd {
-        assert!([u.xi, u.hdgrad, u.dgrad, u.pxi, u.hdg, u.dgs].iter().all(|x| x.len() == dim));
+        assert!(u.xi.len() == dim && u.hd.len() == dim && u.w.len() == dim);
     }
-    out.fill(0.0);
+    oa.fill(0.0);
+    ob.fill(0.0);
     #[cfg(target_arch = "x86_64")]
-    if crate::fast::avx::available() {
-        #[target_feature(enable = "avx")]
-        unsafe fn avx<const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
-            packed_pass_lanes::<crate::fast::avx::A4, SUB>(h, upd, v, out)
+    {
+        #[target_feature(enable = "avx,fma")]
+        unsafe fn fma(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+            fused_pass_lanes::<avx::F4<true>>(h, upd, a, b, oa, ob)
         }
-        // SAFETY: the CPU supports AVX (checked above).
-        return unsafe { avx::<SUB>(h, upd, v, out) };
+        #[target_feature(enable = "avx")]
+        unsafe fn no_fma(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+            fused_pass_lanes::<avx::F4<false>>(h, upd, a, b, oa, ob)
+        }
+        // SAFETY: the CPU supports the enabled features (checked here).
+        if avx::has_fma() {
+            return unsafe { fma(h, upd, a, b, oa, ob) };
+        }
+        if avx::has_avx() {
+            return unsafe { no_fma(h, upd, a, b, oa, ob) };
+        }
     }
-    packed_pass_lanes::<V4, SUB>(h, upd, v, out)
+    fused_pass_lanes::<[f64; 4]>(h, upd, a, b, oa, ob)
 }
 
-/// [`packed_pass`] four rows `r..r+4` at a time, with 4-wide lanes. Each
-/// output still receives its terms one by one in the order of
-/// [`packed_row`]: the in-block triangle is done row by row, then for every
-/// group of four columns `c ≥ r+4` the column terms of the four rows are
-/// added to `out[c..c+4]` in row order, and the row terms of the four rows
-/// (one running sum per lane, after a 4×4 transpose of the products) in
-/// column order.
+/// [`fused_pass`] two rows `i, i+1` at a time: each row adds its row terms
+/// `H[i][j]·a[j]` to `oa[i]` (lane-parallel partial sums) and its column
+/// terms `H[i][j]·a[i]` to `oa[j]`, `j > i` (likewise for `b`); pairing
+/// the rows halves the loads and stores of `oa` / `ob`.
 #[inline(always)]
-fn packed_pass_lanes<V: Lane, const SUB: bool>(h: &mut PackedSym, upd: Option<&UpdateVecs<'_>>, v: &[f64], out: &mut [f64]) {
-    // macros, not closures: closures would not inherit the caller's target features
-    macro_rules! ld {
-        ($s:expr) => {{
-            let s: &[f64] = $s;
-            V::from_fn(|l| s[l])
-        }};
-    }
-    macro_rules! vacc {
-        ($a:expr, $b:expr) => {
-            if SUB { $a - $b } else { $a + $b }
-        };
-    }
+fn fused_pass_lanes<V: Fma4>(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
     let dim = h.dim;
-    let mut r = 0;
-    while r + 4 <= dim {
-        let (o0, o4) = (h.row_start(r), h.row_start(r + 4));
-        let (r0, rest) = h.a[o0..o4].split_at_mut(dim - r);
-        let (r1, rest) = rest.split_at_mut(dim - r - 1);
-        let (r2, r3) = rest.split_at_mut(dim - r - 2);
-        let mut rows = [r0, r1, r2, r3];
-        // in-block triangle (columns r..r+4); row k holds column j at j - r - k
-        let mut s = [0.0; 4];
-        for (k, row) in rows.iter_mut().enumerate() {
-            let i = r + k;
-            if let Some(u) = upd {
-                for j in i..r + 4 {
-                    update_elem(&mut row[j - i], u, i, j);
-                }
-            }
-            let mut sk = out[i];
-            for j in i..r + 4 {
-                sk = acc::<SUB>(sk, row[j - i] * v[j]);
-            }
-            s[k] = sk;
-            for t in i + 1..r + 4 {
-                out[t] = acc::<SUB>(out[t], row[t - i] * v[i]);
-            }
+    let none = Update { xi: a, hd: a, w: a, fac: 0.0 };
+    let mut rest = &mut h.a[..];
+    let mut i = 0;
+    while i + 1 < dim {
+        let (r0, tail) = std::mem::take(&mut rest).split_at_mut(dim - i);
+        let (r1, tail) = tail.split_at_mut(dim - i - 1);
+        rest = tail;
+        match upd {
+            Some(u) => fused_rows::<V, true>(r0, r1, u, a, b, oa, ob, i),
+            None => fused_rows::<V, false>(r0, r1, &none, a, b, oa, ob, i),
         }
-        // columns r+4.. (index c - r - 4 in every tail)
-        let [t0, t1, t2, t3] = rows;
-        let tails = [&mut t0[4..], &mut t1[3..], &mut t2[2..], &mut t3[1..]];
-        let vr: [f64; 4] = std::array::from_fn(|k| v[r + k]);
-        let c4 = r + 4;
-        let mut sacc = ld!(&s);
-        {
-            macro_rules! body {
-                ($hc:expr, $oc:expr, $vc:expr, $upd:expr) => {{
-                    let ([h0, h1, h2, h3], oc, vc): ([&mut [f64; 4]; 4], &mut [f64; 4], &[f64; 4]) = ($hc, $oc, $vc);
-                    let mut a = [ld!(h0), ld!(h1), ld!(h2), ld!(h3)];
-                    if let Some((xc, hdc, dgc, p, q, rr)) = $upd {
-                        let (x, hd, dg): (V, V, V) = (ld!(xc), ld!(hdc), ld!(dgc));
-                        let (p, q, rr): ([f64; 4], [f64; 4], [f64; 4]) = (p, q, rr);
-                        for k in 0..4 {
-                            a[k] = a[k] + ((x * p[k] - hd * q[k]) + dg * rr[k]);
-                        }
-                        a[0].write(h0);
-                        a[1].write(h1);
-                        a[2].write(h2);
-                        a[3].write(h3);
-                    }
-                    let mut o = ld!(oc);
-                    for k in 0..4 {
-                        o = vacc!(o, a[k] * vr[k]);
-                    }
-                    o.write(oc);
-                    let vv = ld!(vc);
-                    let [b0, b1, b2, b3] = a;
-                    for q in V::transpose4([b0 * vv, b1 * vv, b2 * vv, b3 * vv]) {
-                        sacc = vacc!(sacc, q);
-                    }
-                }};
-            }
-            let [h0, h1, h2, h3] = tails;
-            let cols = h0.as_chunks_mut::<4>().0.iter_mut().zip(h1.as_chunks_mut::<4>().0.iter_mut()).zip(h2.as_chunks_mut::<4>().0.iter_mut()).zip(h3.as_chunks_mut::<4>().0.iter_mut()).zip(out[c4..].as_chunks_mut::<4>().0.iter_mut()).zip(v[c4..].as_chunks::<4>().0);
-            match upd {
-                Some(u) => {
-                    let f = |w: &[f64]| -> [f64; 4] { [w[r], w[r + 1], w[r + 2], w[r + 3]] };
-                    let (p, q, rr) = (f(u.pxi), f(u.hdg), f(u.dgs));
-                    let ucols = u.xi[c4..].as_chunks::<4>().0.iter().zip(u.hdgrad[c4..].as_chunks::<4>().0).zip(u.dgrad[c4..].as_chunks::<4>().0);
-                    for ((((((h0, h1), h2), h3), oc), vc), ((xc, hdc), dgc)) in cols.zip(ucols) {
-                        body!([h0, h1, h2, h3], oc, vc, Some((xc, hdc, dgc, p, q, rr)));
-                    }
-                }
-                None => {
-                    for (((((h0, h1), h2), h3), oc), vc) in cols {
-                        body!([h0, h1, h2, h3], oc, vc, None::<(&[f64; 4], &[f64; 4], &[f64; 4], [f64; 4], [f64; 4], [f64; 4])>);
-                    }
-                }
-            }
-        }
-        sacc.write(&mut s);
-        let n4 = c4 + (dim - c4) / 4 * 4;
-        let base: [usize; 4] = std::array::from_fn(|k| h.row_start(r + k) - (r + k));
-        for c in n4..dim {
-            for (k, sk) in s.iter_mut().enumerate() {
-                let e = &mut h.a[base[k] + c];
-                if let Some(u) = upd {
-                    update_elem(e, u, r + k, c);
-                }
-                out[c] = acc::<SUB>(out[c], *e * v[r + k]);
-                *sk = acc::<SUB>(*sk, *e * v[c]);
-            }
-        }
-        out[r..r + 4].copy_from_slice(&s);
-        r += 4;
+        i += 2;
     }
-    for i in r..dim {
-        packed_row::<SUB>(h, upd, v, out, i);
+    if i < dim {
+        // last row of an odd dimension: only the diagonal element
+        let e = &mut rest[0];
+        if let Some(u) = upd {
+            *e += u.xi[i] * u.w[i] - (u.fac * u.hd[i]) * u.xi[i];
+        }
+        oa[i] += *e * a[i];
+        ob[i] += *e * b[i];
     }
+}
+
+/// Rows `i, i+1` of [`fused_pass_lanes`] (`r0` = stored `H[i][i..dim]`,
+/// `r1` = `H[i+1][i+1..dim]`); the update is applied only if `UPD`.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn fused_rows<V: Fma4, const UPD: bool>(r0: &mut [f64], r1: &mut [f64], u: &Update<'_>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64], i: usize) {
+    let k = i + 1;
+    // row factors of the update
+    let (p0, q0) = (u.xi[i], u.fac * u.hd[i]);
+    let (p1, q1) = (u.xi[k], u.fac * u.hd[k]);
+    let elem = |e: &mut f64, (p, q): (f64, f64), j: usize| {
+        if UPD {
+            *e += p * u.w[j] - q * u.xi[j];
+        }
+    };
+    let (ai, bi, ak, bk) = (a[i], b[i], a[k], b[k]);
+    // the 2×2 diagonal block
+    let ([h00, h01, r0 @ ..], [h11, r1 @ ..]) = (r0, r1) else { unreachable!("rows i, i+1 of a packed matrix") };
+    elem(h00, (p0, q0), i);
+    elem(h01, (p0, q0), k);
+    elem(h11, (p1, q1), k);
+    let (mut sa0, mut sb0) = (*h00 * ai + *h01 * ak, *h00 * bi + *h01 * bk);
+    let (mut sa1, mut sb1) = (*h01 * ai + *h11 * ak, *h01 * bi + *h11 * bk);
+    // columns j >= i+2, shared by both rows
+    let j0 = i + 2;
+    let (h0c, h0t) = r0.as_chunks_mut::<4>();
+    let (h1c, h1t) = r1.as_chunks_mut::<4>();
+    let n4 = h0c.len() * 4;
+    {
+        let (av0, bv0, av1, bv1) = (V::splat(ai), V::splat(bi), V::splat(ak), V::splat(bk));
+        let (pv0, nq0) = (V::splat(p0), V::splat(-q0));
+        let (pv1, nq1) = (V::splat(p1), V::splat(-q1));
+        let zero = V::splat(0.0);
+        let (mut va0, mut vb0, mut va1, mut vb1) = (zero, zero, zero, zero);
+        let rows = h0c.iter_mut().zip(h1c.iter_mut());
+        let outs = oa[j0..].as_chunks_mut::<4>().0.iter_mut().zip(ob[j0..].as_chunks_mut::<4>().0);
+        let ins = a[j0..].as_chunks::<4>().0.iter().zip(b[j0..].as_chunks::<4>().0);
+        let ucols = u.w[j0..].as_chunks::<4>().0.iter().zip(u.xi[j0..].as_chunks::<4>().0);
+        for ((((h0, h1), (oac, obc)), (ac, bc)), (wc, xc)) in rows.zip(outs).zip(ins).zip(ucols) {
+            let (mut e0, mut e1) = (V::ld(h0), V::ld(h1));
+            if UPD {
+                let (w, x) = (V::ld(wc), V::ld(xc));
+                e0 = nq0.fma(x, pv0.fma(w, e0));
+                e1 = nq1.fma(x, pv1.fma(w, e1));
+                e0.st(h0);
+                e1.st(h1);
+            }
+            let (av, bv) = (V::ld(ac), V::ld(bc));
+            va0 = e0.fma(av, va0);
+            vb0 = e0.fma(bv, vb0);
+            va1 = e1.fma(av, va1);
+            vb1 = e1.fma(bv, vb1);
+            e1.fma(av1, e0.fma(av0, V::ld(oac))).st(oac);
+            e1.fma(bv1, e0.fma(bv0, V::ld(obc))).st(obc);
+        }
+        sa0 += va0.hsum();
+        sb0 += vb0.hsum();
+        sa1 += va1.hsum();
+        sb1 += vb1.hsum();
+    }
+    for (t, (e0, e1)) in h0t.iter_mut().zip(h1t.iter_mut()).enumerate() {
+        let j = j0 + n4 + t;
+        elem(e0, (p0, q0), j);
+        elem(e1, (p1, q1), j);
+        sa0 += *e0 * a[j];
+        sb0 += *e0 * b[j];
+        sa1 += *e1 * a[j];
+        sb1 += *e1 * b[j];
+        oa[j] += *e0 * ai + *e1 * ak;
+        ob[j] += *e0 * bi + *e1 * bk;
+    }
+    oa[i] += sa0;
+    ob[i] += sb0;
+    oa[k] += sa1;
+    ob[k] += sb1;
 }
 
 /// Scratch vectors of [`minimize_bfgs`] (one allocation).
 struct BfgsWork {
+    dim: usize,
     buf: Vec<f64>,
 }
 
 impl BfgsWork {
-    const N: usize = 8;
-    fn new(dim: usize) -> Self {
-        BfgsWork { buf: vec![0.0; Self::N * dim] }
+    fn new(dim: usize, n: usize) -> Self {
+        BfgsWork { dim, buf: vec![0.0; n * dim] }
     }
-    fn split(&mut self) -> [&mut [f64]; Self::N] {
-        let dim = self.buf.len() / Self::N;
-        let mut it = self.buf.chunks_exact_mut(dim.max(1));
+    fn split<const N: usize>(&mut self) -> [&mut [f64]; N] {
+        assert_eq!(self.buf.len(), N * self.dim);
+        let mut it = self.buf.chunks_exact_mut(self.dim.max(1));
         std::array::from_fn(|_| it.next().unwrap_or(&mut []))
     }
 }
 
 /// RDKit BFGS minimization.
 ///
-/// Arithmetic is identical to RDKit `BFGSOpt.h` operation by operation
-/// (same products, same summation order), only the storage and loops
-/// differ: the symmetric inverse Hessian is kept as a packed upper triangle
-/// (half the memory, see [`PackedSym`]), and its update is fused with the
-/// product for the next direction ([`packed_pass`]).
+/// Same algorithm as RDKit `BFGSOpt.h` (line search, inverse Hessian
+/// update, convergence tests), with the symmetric inverse Hessian kept as a
+/// packed upper triangle (half the memory, see [`PackedSym`]) and traversed
+/// once per iteration: the update of iteration `k` is applied by the sweep
+/// of iteration `k + 1` that also computes `H·dgrad` and `H·grad`
+/// ([`fused_pass`]); the new direction `-H'·grad` is formed from `H·grad`
+/// and the rank-2 update terms. Results agree with RDKit to rounding.
 pub fn minimize_bfgs(
     ff: &dyn ForceField,
     pos: &mut [f64],
@@ -387,9 +435,11 @@ pub fn minimize_bfgs(
 ) -> MinimizeResult {
     let dim = pos.len();
     let scaling = opts.rdkit_grad_scaling;
-    let mut work = BfgsWork::new(dim);
-    let [grad, dgrad, hess_dgrad, xi, new_pos, pxi, hdg, dgs] = work.split();
+    let mut work = BfgsWork::new(dim, 9);
+    let [grad, mut dgrad, mut hess_dgrad, mut xi, new_pos, hess_grad, mut up_xi, mut up_hd, mut up_w] = work.split::<9>();
     let mut inv_hessian = PackedSym::identity(dim);
+    // `fac` of the update pending in `up_*`
+    let mut pending: Option<f64> = None;
 
     let mut fp = ff.energy(pos);
     calc_grad(ff, pos, grad, scaling);
@@ -434,8 +484,9 @@ pub fn minimize_bfgs(
         if converged {
             return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
         }
-        // BFGS inverse Hessian update
-        packed_pass::<false>(&mut inv_hessian, None, dgrad, hess_dgrad);
+        // apply the previous update; `H·dgrad` and `H·grad` in the same sweep
+        let upd = pending.map(|fac| Update { xi: up_xi, hd: up_hd, w: up_w, fac });
+        fused_pass(&mut inv_hessian, upd.as_ref(), dgrad, grad, hess_dgrad, hess_grad);
         let (mut fac, mut fae, mut sum_dgrad, mut sum_xi) = (0.0, 0.0, 0.0, 0.0);
         for i in 0..dim {
             fac += dgrad[i] * xi[i];
@@ -443,26 +494,33 @@ pub fn minimize_bfgs(
             sum_dgrad += dgrad[i] * dgrad[i];
             sum_xi += xi[i] * xi[i];
         }
-        // New direction `-H·grad` (into `new_pos`, free until the next line
-        // search).
-        let upd = if fac > (EPS * sum_dgrad * sum_xi).sqrt() {
+        // New direction `-H'·grad` into `new_pos` (free until the next line
+        // search) for the updated `H' = H + xi·wᵀ − fac·hd·xiᵀ` (see
+        // [`Update`]): `H'·grad = H·grad + (w·grad)·xi − fac·(xi·grad)·hd`.
+        if fac > (EPS * sum_dgrad * sum_xi).sqrt() {
             fac = 1.0 / fac;
-            let fad = 1.0 / fae;
+            let fw = fac + fae * fac * fac;
+            let (mut wg, mut xg) = (0.0, 0.0);
             for i in 0..dim {
-                dgrad[i] = fac * xi[i] - fad * hess_dgrad[i];
+                dgrad[i] = fw * xi[i] - fac * hess_dgrad[i];
+                wg += dgrad[i] * grad[i];
+                xg += xi[i] * grad[i];
             }
+            let fx = fac * xg;
             for i in 0..dim {
-                pxi[i] = fac * xi[i];
-                hdg[i] = fad * hess_dgrad[i];
-                dgs[i] = fae * dgrad[i];
+                new_pos[i] = -(hess_grad[i] + wg * xi[i] - fx * hess_dgrad[i]);
             }
-            Some(UpdateVecs { xi, hdgrad: hess_dgrad, dgrad, pxi, hdg, dgs })
+            std::mem::swap(&mut xi, &mut up_xi);
+            std::mem::swap(&mut hess_dgrad, &mut up_hd);
+            std::mem::swap(&mut dgrad, &mut up_w);
+            pending = Some(fac);
         } else {
-            None
-        };
-        packed_pass::<true>(&mut inv_hessian, upd.as_ref(), grad, new_pos);
-        let dir = &*new_pos;
-        xi.copy_from_slice(dir);
+            for (d, hg) in new_pos.iter_mut().zip(hess_grad.iter()) {
+                *d = -hg;
+            }
+            pending = None;
+        }
+        xi.copy_from_slice(new_pos);
     }
     MinimizeResult { status: MinimizeStatus::MaxIterations, energy: func_val, iterations: opts.max_iters, grad_rms: 0.0 }
 }
@@ -526,8 +584,8 @@ pub fn minimize_lbfgs(
     let dim = pos.len();
     let m = m.max(1);
     let scaling = opts.rdkit_grad_scaling;
-    let mut work = BfgsWork::new(dim);
-    let [grad, new_pos, xi, s, y, q, _, _] = work.split();
+    let mut work = BfgsWork::new(dim, 6);
+    let [grad, new_pos, xi, s, y, q] = work.split::<6>();
     let mut hist = LbfgsHistory::new(dim, m);
 
     let mut fp = ff.energy(pos);
@@ -642,3 +700,4 @@ mod tests {
         }
     }
 }
+

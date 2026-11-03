@@ -42,6 +42,8 @@ fn molecules() -> Vec<(&'static str, Molecule)> {
     out
 }
 
+type Builder = Box<dyn ForceFieldBuilder>;
+
 fn bench_eg(c: &mut Criterion) {
     let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
     let mut g = c.benchmark_group("eg");
@@ -53,7 +55,7 @@ fn bench_eg(c: &mut Criterion) {
             g.sample_size(50);
         }
         let pos = mol.flat_coords();
-        let builders: [(&str, Box<dyn ForceFieldBuilder>, Box<dyn ForceFieldBuilder>, Box<dyn ForceFieldBuilder>); 2] = [
+        let builders: [(&str, Builder, Builder, Builder); 2] = [
             (
                 "MMFF",
                 Box::new(MmffBuilder::default()),

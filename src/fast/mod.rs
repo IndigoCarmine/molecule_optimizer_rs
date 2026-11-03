@@ -38,6 +38,8 @@ pub mod backend;
 pub mod bonded;
 pub mod compile;
 pub mod exact;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod workspace;
 
 pub use backend::{NonbondedBackend, NonbondedEnergy};
@@ -116,14 +118,38 @@ pub struct FastOptions {
     /// Cache atom typing / parameter lookup per molecular graph (UFF and
     /// MMFF builders only).
     pub cache: bool,
+    /// Evaluate the nonbonded part of the approximate mode on this GPU
+    /// ([`gpu::WgpuNonbonded`]); `None` = CPU. Ignored in exact mode.
+    #[cfg(feature = "gpu")]
+    pub gpu: Option<gpu::GpuContext>,
 }
 
 impl FastOptions {
     pub fn exact() -> Self {
-        FastOptions { mode: FastMode::Exact, simd: true, parallel_grain: 2048, cache: true }
+        FastOptions {
+            mode: FastMode::Exact,
+            simd: true,
+            parallel_grain: 2048,
+            cache: true,
+            #[cfg(feature = "gpu")]
+            gpu: None,
+        }
     }
     pub fn approximate() -> Self {
-        FastOptions { mode: FastMode::Approximate(ApproxOptions::default()), simd: true, parallel_grain: 2048, cache: true }
+        FastOptions {
+            mode: FastMode::Approximate(ApproxOptions::default()),
+            simd: true,
+            parallel_grain: 2048,
+            cache: true,
+            #[cfg(feature = "gpu")]
+            gpu: None,
+        }
+    }
+    /// Approximate-mode nonbonded terms on the GPU of `ctx`.
+    #[cfg(feature = "gpu")]
+    pub fn gpu(mut self, ctx: gpu::GpuContext) -> Self {
+        self.gpu = Some(ctx);
+        self
     }
     /// SIMD (`true`) or scalar reference kernels.
     pub fn simd(mut self, on: bool) -> Self {
@@ -518,6 +544,11 @@ impl<B: ForceFieldBuilder + 'static> FastBuilder<B> {
         match &self.opts.mode {
             FastMode::Exact => Ok(None),
             FastMode::Approximate(a) => {
+                #[cfg(feature = "gpu")]
+                if let Some(ctx) = &self.opts.gpu {
+                    let nb = gpu::build_gpu_nonbonded(mol, self.inner_any(), a, ctx)?;
+                    return Ok(Some(Nb::Other(Box::new(nb))));
+                }
                 let nb = approx::build_approx_nonbonded(mol, self.inner_any(), a, self.opts.simd)?;
                 Ok(Some(Nb::Other(Box::new(nb))))
             }

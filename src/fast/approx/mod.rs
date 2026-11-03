@@ -72,10 +72,10 @@
 //! of threads.
 
 pub mod erfc;
-mod kernel;
-mod pairlist;
-mod params;
-mod pme;
+pub(crate) mod kernel;
+pub(crate) mod pairlist;
+pub(crate) mod params;
+pub(crate) mod pme;
 
 pub use pme::{bspline, fft_friendly_size};
 
@@ -112,31 +112,31 @@ pub struct PairListStats {
 /// Per-atom explicit pair list (MMFF 1-4 pairs and, with PME, the
 /// excluded 1-2/1-3 pairs), stored in both directions.
 #[derive(Debug, Clone, Default)]
-struct Explicit {
-    start: Vec<u32>,
-    partner: Vec<u32>,
+pub(crate) struct Explicit {
+    pub(crate) start: Vec<u32>,
+    pub(crate) partner: Vec<u32>,
     /// `true` = 1-4 pair, `false` = excluded pair (Ewald correction only).
-    is14: Vec<bool>,
+    pub(crate) is14: Vec<bool>,
 }
 
 /// Approximate nonbonded backend.
 pub struct ApproxNonbonded {
-    p: NbParams,
-    kp: KernelParams,
+    pub(crate) p: NbParams,
+    pub(crate) kp: KernelParams,
     opts: ApproxOptions,
     simd: bool,
-    cell: Option<UnitCell>,
-    rlist: f64,
-    all_pairs: bool,
+    pub(crate) cell: Option<UnitCell>,
+    pub(crate) rlist: f64,
+    pub(crate) all_pairs: bool,
     list: ArcSwap<PairList>,
     rebuild_lock: Mutex<()>,
     builds: AtomicUsize,
-    pme: Option<pme::Pme>,
+    pub(crate) pme: Option<pme::Pme>,
     /// Constant Ewald terms (self energy + net-charge correction).
-    ewald_const: f64,
-    explicit: Explicit,
+    pub(crate) ewald_const: f64,
+    pub(crate) explicit: Explicit,
     /// Charges times `sqrt(C)`.
-    qs: Vec<f64>,
+    pub(crate) qs: Vec<f64>,
     name: &'static str,
 }
 
@@ -385,7 +385,7 @@ impl ApproxNonbonded {
         l
     }
 
-    fn current_list(&self, pos: &[f64]) -> Arc<PairList> {
+    pub(crate) fn current_list(&self, pos: &[f64]) -> Arc<PairList> {
         let half2 = 0.25 * self.opts.buffer * self.opts.buffer;
         let l = self.list.load_full();
         if l.all_pairs || l.max_displacement2(pos) <= half2 {

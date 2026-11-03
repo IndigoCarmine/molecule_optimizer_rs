@@ -17,6 +17,14 @@ thiserror = "2"
 arc-swap = "1"
 wide = "0.7"
 rustfft = "6"
+wgpu = { version = "30", optional = true, default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
+
+[features]
+default = []
+# wgpu (Vulkan / Metal / DX12) backend for the approximate nonbonded mode.
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -34,3 +42,8 @@ opt-level = 2
 [[bench]]
 name = "approx"
 harness = false
+
+[[bench]]
+name = "gpu"
+harness = false
+required-features = ["gpu"]

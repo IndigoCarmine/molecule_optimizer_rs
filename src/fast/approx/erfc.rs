@@ -76,7 +76,7 @@ const K: f64 = ERFC_K;
 /// (`t0 = -1`, `t1 = 0.6`, so `u = 1.25 t + 0.25 ∈ [-1, 1]`), obtained from
 /// the Chebyshev fit by conversion to the monomial basis; the sum of their
 /// magnitudes is 2.02, so Horner evaluation is well conditioned.
-const A: [f64; 21] = [
+pub(crate) const A: [f64; 21] = [
     1.17044898009635,
     -0.6420709245167305,
     0.189270496393079,

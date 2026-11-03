@@ -18,7 +18,6 @@ pub mod utils;
 
 use crate::core::Molecule;
 use crate::error::Result;
-use rayon::prelude::*;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -258,6 +257,26 @@ impl<T: ForceFieldBuilder + ?Sized> ForceFieldBuilder for Arc<T> {
 /// are evaluated in parallel.
 pub const DEFAULT_PARALLEL_THRESHOLD: usize = 4096;
 
+/// Maximum number of chunks the terms are split into for parallel evaluation.
+const PAR_CHUNKS: usize = 64;
+
+/// Evaluates `leaf` on fixed chunks of `0..total` in parallel and combines
+/// the results pairwise in a fixed binary tree. Neither the chunks nor the
+/// tree depend on the thread count or on scheduling, so the floating-point
+/// sums are the same on every run.
+fn par_tree<T: Send>(total: usize, leaf: &(dyn Fn(Range<usize>) -> T + Sync), combine: &(dyn Fn(T, T) -> T + Sync)) -> T {
+    fn rec<T: Send>(lo: usize, hi: usize, chunk: usize, total: usize, leaf: &(dyn Fn(Range<usize>) -> T + Sync), combine: &(dyn Fn(T, T) -> T + Sync)) -> T {
+        if hi - lo == 1 {
+            return leaf(lo * chunk..total.min(hi * chunk));
+        }
+        let mid = lo + (hi - lo) / 2;
+        let (a, b) = rayon::join(|| rec(lo, mid, chunk, total, leaf, combine), || rec(mid, hi, chunk, total, leaf, combine));
+        combine(a, b)
+    }
+    let chunk = total.div_ceil(PAR_CHUNKS).max(256);
+    rec(0, total.div_ceil(chunk).max(1), chunk, total, leaf, combine)
+}
+
 /// Force field made of a list of contributions (RDKit `ForceField`).
 pub struct ContribForceField {
     dim: usize,
@@ -353,14 +372,15 @@ impl ForceField for ContribForceField {
     fn energy(&self, pos: &[f64]) -> f64 {
         // terms summed one by one, starting from -0.0 like `Iterator::sum`
         if self.parallel() {
-            (0..self.num_terms())
-                .into_par_iter()
-                .map(|t| {
+            par_tree(
+                self.num_terms(),
+                &|r| {
                     let mut e = -0.0;
-                    self.for_terms(t, t + 1, |c, r| c.energy_acc(pos, r, &mut e));
+                    self.for_terms(r.start, r.end, |c, r| c.energy_acc(pos, r, &mut e));
                     e
-                })
-                .sum()
+                },
+                &|a, b| a + b,
+            )
         } else {
             let mut e = -0.0;
             for c in &self.contribs {
@@ -373,23 +393,19 @@ impl ForceField for ContribForceField {
         let n = self.n_points * self.dim;
         grad[..n].iter_mut().for_each(|g| *g = 0.0);
         if self.parallel() {
-            let total = self.num_terms();
-            let chunk = (total / (rayon::current_num_threads() * 4)).max(256);
-            let (g, e) = (0..total.div_ceil(chunk))
-                .into_par_iter()
-                .map(|k| {
+            let (g, e) = par_tree(
+                self.num_terms(),
+                &|r| {
                     let mut g = vec![0.0; n];
                     let mut e = 0.0;
-                    self.for_terms(k * chunk, total.min((k + 1) * chunk), |c, r| c.energy_grad_acc(pos, &mut g, r, &mut e));
+                    self.for_terms(r.start, r.end, |c, r| c.energy_grad_acc(pos, &mut g, r, &mut e));
                     (g, e)
-                })
-                .reduce(
-                    || (vec![0.0; n], 0.0),
-                    |(mut a, ea), (b, eb)| {
-                        a.iter_mut().zip(&b).for_each(|(x, y)| *x += *y);
-                        (a, ea + eb)
-                    },
-                );
+                },
+                &|(mut a, ea), (b, eb)| {
+                    a.iter_mut().zip(&b).for_each(|(x, y)| *x += *y);
+                    (a, ea + eb)
+                },
+            );
             grad[..n].copy_from_slice(&g);
             for &f in &self.fixed {
                 for d in 0..self.dim {

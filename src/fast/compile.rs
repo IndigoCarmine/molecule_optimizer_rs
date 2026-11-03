@@ -163,8 +163,8 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
             } else if let Some(t) = is!(mmff::terms::BondStretchContrib) {
                 let m = &mut b.mmff_bonds;
                 for k in 0..t.len() {
-                    m.a.push(idx(t.at1[k]));
-                    m.b.push(idx(t.at2[k]));
+                    m.a.push(t.at1[k]);
+                    m.b.push(t.at2[k]);
                     m.r0.push(t.r0[k]);
                     m.kb.push(t.kb[k]);
                 }
@@ -172,9 +172,9 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
             } else if let Some(t) = is!(mmff::terms::AngleBendContrib) {
                 let m = &mut b.mmff_angles;
                 for k in 0..t.len() {
-                    m.a.push(idx(t.at[k][0]));
-                    m.b.push(idx(t.at[k][1]));
-                    m.c.push(idx(t.at[k][2]));
+                    m.a.push(t.at[k][0]);
+                    m.b.push(t.at[k][1]);
+                    m.c.push(t.at[k][2]);
                     m.theta0.push(t.theta0[k]);
                     m.ka.push(t.ka[k]);
                     m.lin.push(if t.is_linear[k] { 1.0 } else { 0.0 });
@@ -183,9 +183,9 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
             } else if let Some(t) = is!(mmff::terms::StretchBendContrib) {
                 let m = &mut b.mmff_stbn;
                 for k in 0..t.len() {
-                    m.a.push(idx(t.at[k][0]));
-                    m.b.push(idx(t.at[k][1]));
-                    m.c.push(idx(t.at[k][2]));
+                    m.a.push(t.at[k][0]);
+                    m.b.push(t.at[k][1]);
+                    m.c.push(t.at[k][2]);
                     m.r1.push(t.rest_len1[k]);
                     m.r2.push(t.rest_len2[k]);
                     m.theta0.push(t.theta0[k]);
@@ -196,20 +196,20 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
             } else if let Some(t) = is!(mmff::terms::OopBendContrib) {
                 let m = &mut b.mmff_oops;
                 for k in 0..t.len() {
-                    m.a.push(idx(t.at[k][0]));
-                    m.b.push(idx(t.at[k][1]));
-                    m.c.push(idx(t.at[k][2]));
-                    m.d.push(idx(t.at[k][3]));
+                    m.a.push(t.at[k][0]);
+                    m.b.push(t.at[k][1]);
+                    m.c.push(t.at[k][2]);
+                    m.d.push(t.at[k][3]);
                     m.koop.push(t.koop[k]);
                 }
                 table(TableKind::MmffOop, &mut out.segments);
             } else if let Some(t) = is!(mmff::terms::TorsionAngleContrib) {
                 let m = &mut b.mmff_torsions;
                 for k in 0..t.len() {
-                    m.a.push(idx(t.at[k][0]));
-                    m.b.push(idx(t.at[k][1]));
-                    m.c.push(idx(t.at[k][2]));
-                    m.d.push(idx(t.at[k][3]));
+                    m.a.push(t.at[k][0]);
+                    m.b.push(t.at[k][1]);
+                    m.c.push(t.at[k][2]);
+                    m.d.push(t.at[k][3]);
                     m.v1.push(t.v1[k]);
                     m.v2.push(t.v2[k]);
                     m.v3.push(t.v3[k]);

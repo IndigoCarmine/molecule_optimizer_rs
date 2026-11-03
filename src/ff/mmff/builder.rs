@@ -14,31 +14,12 @@ use super::terms::*;
 use super::typer::{MmffMolProperties, is_double_zero};
 use crate::core::{BondOrder, Hybridization, Molecule};
 use crate::ff::ContribForceField;
+use crate::ff::utils::BondDistances;
 
 const RELATION_1_2: u8 = 0;
 const RELATION_1_3: u8 = 1;
 const RELATION_1_4: u8 = 2;
 const RELATION_1_X: u8 = 3;
-
-/// RDKit `buildNeighborMatrix` (full matrix instead of a packed triangle).
-fn neighbor_matrix(mol: &Molecule) -> Vec<Vec<u8>> {
-    let d = mol.topological_distances();
-    let n = mol.num_atoms();
-    let mut m = vec![vec![RELATION_1_X; n]; n];
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let r = match d[i][j] {
-                1 => RELATION_1_2,
-                2 => RELATION_1_3,
-                3 => RELATION_1_4,
-                _ => RELATION_1_X,
-            };
-            m[i][j] = r;
-            m[j][i] = r;
-        }
-    }
-    m
-}
 
 /// Bonds matched by RDKit's default torsion SMARTS
 /// `[!$(*#*)&!D1]~[!$(*#*)&!D1]`, in the order RDKit's substructure matcher
@@ -176,7 +157,8 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
 
     // non-bonded
     {
-        let nm = neighbor_matrix(mol);
+        // RDKit `buildNeighborMatrix`, one row at a time
+        let mut rel = BondDistances::new(n, 3);
         let mut frag = vec![0usize; n];
         if opts.ignore_interfrag_interactions {
             for (k, f) in mol.fragments().iter().enumerate() {
@@ -188,11 +170,17 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         let q = props.partial_charges();
         let mut nb = NonbondedContrib::default();
         for i in 0..n {
+            rel.compute(mol, i);
             for j in (i + 1)..n {
                 if opts.ignore_interfrag_interactions && frag[i] != frag[j] {
                     continue;
                 }
-                let cell = nm[i][j];
+                let cell = match rel.get(j) {
+                    1 => RELATION_1_2,
+                    2 => RELATION_1_3,
+                    3 => RELATION_1_4,
+                    _ => RELATION_1_X,
+                };
                 if cell < RELATION_1_4 {
                     continue;
                 }

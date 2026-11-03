@@ -19,6 +19,7 @@ use super::torsion_angle::TorsionAngleContrib;
 use crate::core::geometry::{dot, norm, sub};
 use crate::core::{BondOrder, Hybridization, Molecule};
 use crate::error::{Error, Result};
+use crate::ff::utils::BondDistances;
 use crate::ff::{Contrib, ContribForceField, TermList};
 use crate::perception::rings::RingInfo;
 
@@ -182,27 +183,6 @@ fn add_angle_special_cases(mol: &Molecule, params: &Params, out: &mut Vec<AngleB
     Ok(())
 }
 
-/// `true` for pairs that are 1-2 or 1-3 related (RDKit `buildNeighborMatrix`
-/// relation < `RELATION_1_4`).
-fn build_close_matrix(mol: &Molecule) -> Vec<bool> {
-    let n = mol.num_atoms();
-    let mut m = vec![false; n * n];
-    for b in mol.bonds() {
-        m[b.begin * n + b.end] = true;
-        m[b.end * n + b.begin] = true;
-    }
-    for j in 0..n {
-        let nb: Vec<usize> = mol.neighbors(j).collect();
-        for (x, &a) in nb.iter().enumerate() {
-            for &c in &nb[x + 1..] {
-                m[a * n + c] = true;
-                m[c * n + a] = true;
-            }
-        }
-    }
-    m
-}
-
 fn add_nonbonded(
     mol: &Molecule,
     params: &Params,
@@ -219,15 +199,18 @@ fn add_nonbonded(
             }
         }
     }
-    let close = build_close_matrix(mol);
+    // 1-2 and 1-3 related pairs are excluded (RDKit `buildNeighborMatrix`
+    // relation < `RELATION_1_4`), one row at a time
+    let mut close = BondDistances::new(n, 2);
     for i in 0..n {
         let Some(pi) = params[i] else { continue };
+        close.compute(mol, i);
         for j in i + 1..n {
             let Some(pj) = params[j] else { continue };
             if ignore_interfrag && frag[i] != frag[j] {
                 continue;
             }
-            if close[i * n + j] {
+            if close.get(j) <= 2 {
                 continue;
             }
             let dist = norm(sub(mol.coords[i], mol.coords[j]));

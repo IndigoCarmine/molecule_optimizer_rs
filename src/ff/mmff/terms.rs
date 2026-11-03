@@ -17,7 +17,7 @@ use super::{DEG2RAD, DielectricModel, MDYNE_A_TO_KCAL_MOL, RAD2DEG};
 use crate::ff::Contrib;
 use crate::ff::mmff::typer::is_double_zero;
 use crate::ff::utils::rd_distance as distance;
-use crate::ff::utils::{OutOfPlane, Torsion};
+use crate::ff::utils::{OutOfPlane, Torsion, shrink_vec};
 use std::ops::Range;
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,15 @@ fn clip_to_one(x: f64) -> f64 {
 fn add_to(grad: &mut [f64], i: usize, d: usize, v: f64) {
     grad[3 * i + d] += v;
 }
+/// Atom indices are stored as `u32` (half the memory of `usize`).
+#[inline]
+fn idx32(i: usize) -> u32 {
+    u32::try_from(i).expect("atom index exceeds u32")
+}
+#[inline(always)]
+fn ix<const N: usize>(a: [u32; N]) -> [usize; N] {
+    a.map(|i| i as usize)
+}
 
 // ---------------------------------------------------------------------------
 // bond stretch
@@ -77,16 +86,16 @@ pub fn calc_bond_stretch_energy(r0: f64, kb: f64, distance: f64) -> f64 {
 /// All MMFF bond stretching terms (RDKit `BondStretchContrib`).
 #[derive(Debug, Clone, Default)]
 pub struct BondStretchContrib {
-    pub(crate) at1: Vec<usize>,
-    pub(crate) at2: Vec<usize>,
+    pub(crate) at1: Vec<u32>,
+    pub(crate) at2: Vec<u32>,
     pub(crate) r0: Vec<f64>,
     pub(crate) kb: Vec<f64>,
 }
 
 impl BondStretchContrib {
     pub fn add_term(&mut self, i: usize, j: usize, r0: f64, kb: f64) {
-        self.at1.push(i);
-        self.at2.push(j);
+        self.at1.push(idx32(i));
+        self.at2.push(idx32(j));
         self.r0.push(r0);
         self.kb.push(kb);
     }
@@ -105,7 +114,7 @@ impl BondStretchContrib {
         const CS: f64 = -2.0;
         const C1: f64 = MDYNE_A_TO_KCAL_MOL;
         const C3: f64 = 7.0 / 12.0;
-        let (i1, i2) = (self.at1[t], self.at2[t]);
+        let (i1, i2) = (self.at1[t] as usize, self.at2[t] as usize);
         let dist_term = dist - self.r0[t];
         let de_dr = C1 * self.kb[t] * dist_term * (1.0 + 1.5 * CS * dist_term + 2.0 * C3 * CS * CS * dist_term * dist_term);
         for d in 0..3 {
@@ -120,12 +129,18 @@ impl Contrib for BondStretchContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at1);
+        shrink_vec(&mut self.at2);
+        shrink_vec(&mut self.r0);
+        shrink_vec(&mut self.kb);
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at1.len() {
-            self.grad_term(t, pos, distance(pos, self.at1[t], self.at2[t]), grad);
+            self.grad_term(t, pos, distance(pos, self.at1[t] as usize, self.at2[t] as usize), grad);
         }
     }
     fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
@@ -137,14 +152,14 @@ impl Contrib for BondStretchContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut e = 0.0;
         for t in range {
-            e += calc_bond_stretch_energy(self.r0[t], self.kb[t], distance(pos, self.at1[t], self.at2[t]));
+            e += calc_bond_stretch_energy(self.r0[t], self.kb[t], distance(pos, self.at1[t] as usize, self.at2[t] as usize));
         }
         e
     }
     fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut e = 0.0;
         for t in range {
-            let dist = distance(pos, self.at1[t], self.at2[t]);
+            let dist = distance(pos, self.at1[t] as usize, self.at2[t] as usize);
             e += calc_bond_stretch_energy(self.r0[t], self.kb[t], dist);
             self.grad_term(t, pos, dist, grad);
         }
@@ -182,7 +197,7 @@ pub fn calc_angle_bend_energy(theta0: f64, ka: f64, is_linear: bool, cos_theta: 
 /// All MMFF angle bending terms (RDKit `AngleBendContrib`).
 #[derive(Debug, Clone, Default)]
 pub struct AngleBendContrib {
-    pub(crate) at: Vec<[usize; 3]>,
+    pub(crate) at: Vec<[u32; 3]>,
     pub(crate) is_linear: Vec<bool>,
     pub(crate) theta0: Vec<f64>,
     pub(crate) ka: Vec<f64>,
@@ -190,7 +205,7 @@ pub struct AngleBendContrib {
 
 impl AngleBendContrib {
     pub fn add_term(&mut self, i: usize, j: usize, k: usize, theta0: f64, ka: f64, is_linear: bool) {
-        self.at.push([i, j, k]);
+        self.at.push([i, j, k].map(idx32));
         self.is_linear.push(is_linear);
         self.theta0.push(theta0);
         self.ka.push(ka);
@@ -214,7 +229,7 @@ impl AngleBendContrib {
         } else {
             RAD2DEG * ANGLE_C2 * self.ka[t] * angle_term * (1.0 + 1.5 * ANGLE_CB * angle_term)
         };
-        calc_angle_bend_grad(&r, &dist, grad, self.at[t], de_dtheta, cos_theta, sin_theta);
+        calc_angle_bend_grad(&r, &dist, grad, ix(self.at[t]), de_dtheta, cos_theta, sin_theta);
     }
 }
 
@@ -243,6 +258,12 @@ impl Contrib for AngleBendContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at);
+        shrink_vec(&mut self.is_linear);
+        shrink_vec(&mut self.theta0);
+        shrink_vec(&mut self.ka);
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
     }
@@ -255,7 +276,7 @@ impl Contrib for AngleBendContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut res = 0.0;
         for t in range {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             let dist1 = distance(pos, i, j);
             let dist2 = distance(pos, j, k);
             let cos = calc_cos_theta(pt(pos, i), pt(pos, j), pt(pos, k), dist1, dist2);
@@ -265,14 +286,14 @@ impl Contrib for AngleBendContrib {
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             self.grad_term(t, [pt(pos, i), pt(pos, j), pt(pos, k)], [distance(pos, i, j), distance(pos, j, k)], grad);
         }
     }
     fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut res = 0.0;
         for t in range {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             let dist = [distance(pos, i, j), distance(pos, j, k)];
             let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
             let cos = calc_cos_theta(p[0], p[1], p[2], dist[0], dist[1]);
@@ -299,7 +320,7 @@ pub fn calc_stretch_bend_energy(delta_dist1: f64, delta_dist2: f64, delta_theta:
 /// All MMFF stretch-bend terms (RDKit `StretchBendContrib`).
 #[derive(Debug, Clone, Default)]
 pub struct StretchBendContrib {
-    pub(crate) at: Vec<[usize; 3]>,
+    pub(crate) at: Vec<[u32; 3]>,
     pub(crate) rest_len1: Vec<f64>,
     pub(crate) rest_len2: Vec<f64>,
     pub(crate) theta0: Vec<f64>,
@@ -310,7 +331,7 @@ pub struct StretchBendContrib {
 impl StretchBendContrib {
     #[allow(clippy::too_many_arguments)]
     pub fn add_term(&mut self, i: usize, j: usize, k: usize, r1: f64, r2: f64, theta0: f64, kba_ijk: f64, kba_kji: f64) {
-        self.at.push([i, j, k]);
+        self.at.push([i, j, k].map(idx32));
         self.rest_len1.push(r1);
         self.rest_len2.push(r2);
         self.theta0.push(theta0);
@@ -342,7 +363,7 @@ impl StretchBendContrib {
     #[inline(always)]
     fn grad_term(&self, t: usize, p: &[P3; 3], dist1: f64, dist2: f64, grad: &mut [f64]) {
         const C5: f64 = MDYNE_A_TO_KCAL_MOL * DEG2RAD;
-        let [i1, i2, i3] = self.at[t];
+        let [i1, i2, i3] = ix(self.at[t]);
         let theta0 = self.theta0[t];
         let fc1 = self.k1[t];
         let fc2 = self.k2[t];
@@ -385,6 +406,14 @@ impl Contrib for StretchBendContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at);
+        shrink_vec(&mut self.rest_len1);
+        shrink_vec(&mut self.rest_len2);
+        shrink_vec(&mut self.theta0);
+        shrink_vec(&mut self.k1);
+        shrink_vec(&mut self.k2);
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
     }
@@ -397,21 +426,21 @@ impl Contrib for StretchBendContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             total += self.energy_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k));
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             self.grad_term(t, &[pt(pos, i), pt(pos, j), pt(pos, k)], distance(pos, i, j), distance(pos, j, k), grad);
         }
     }
     fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            let [i, j, k] = self.at[t];
+            let [i, j, k] = ix(self.at[t]);
             let p = [pt(pos, i), pt(pos, j), pt(pos, k)];
             let (dist1, dist2) = (distance(pos, i, j), distance(pos, j, k));
             total += self.energy_term(t, &p, dist1, dist2);
@@ -452,13 +481,13 @@ pub fn calc_oop_bend_energy(chi: f64, koop: f64) -> f64 {
 /// All MMFF out-of-plane terms (RDKit `OopBendContrib`).
 #[derive(Debug, Clone, Default)]
 pub struct OopBendContrib {
-    pub(crate) at: Vec<[usize; 4]>,
+    pub(crate) at: Vec<[u32; 4]>,
     pub(crate) koop: Vec<f64>,
 }
 
 impl OopBendContrib {
     pub fn add_term(&mut self, i: usize, j: usize, k: usize, l: usize, koop: f64) {
-        self.at.push([i, j, k, l]);
+        self.at.push([i, j, k, l].map(idx32));
         self.koop.push(koop);
     }
     pub fn len(&self) -> usize {
@@ -484,13 +513,17 @@ impl OopBendContrib {
         let sin_theta_sq = (1.0 - cos_theta * cos_theta).max(1.0e-8);
         let sin_theta = (if sin_theta_sq > 0.0 { sin_theta_sq.sqrt() } else { 0.0 }).max(1.0e-8);
         let de_dchi = RAD2DEG * C2 * self.koop[t] * chi;
-        g.add_grad(grad, self.at[t], u, de_dchi, sin_chi, cos_chi, cos_theta, sin_theta, sin_theta_sq);
+        g.add_grad(grad, ix(self.at[t]), u, de_dchi, sin_chi, cos_chi, cos_theta, sin_theta, sin_theta_sq);
     }
 }
 
 impl Contrib for OopBendContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
+    }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at);
+        shrink_vec(&mut self.koop);
     }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
@@ -504,21 +537,21 @@ impl Contrib for OopBendContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            let u = OutOfPlane::at(pos, self.at[t]).unit();
+            let u = OutOfPlane::at(pos, ix(self.at[t])).unit();
             total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
-            let g = OutOfPlane::at(pos, self.at[t]);
+            let g = OutOfPlane::at(pos, ix(self.at[t]));
             self.grad_term(t, &g, &g.unit(), grad);
         }
     }
     fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            let g = OutOfPlane::at(pos, self.at[t]);
+            let g = OutOfPlane::at(pos, ix(self.at[t]));
             let u = g.unit();
             total += calc_oop_bend_energy(oop_chi(&u), self.koop[t]);
             self.grad_term(t, &g, &u, grad);
@@ -549,7 +582,7 @@ pub fn calc_torsion_energy(v1: f64, v2: f64, v3: f64, cos_phi: f64) -> f64 {
 /// All MMFF torsion terms (RDKit `TorsionAngleContrib`).
 #[derive(Debug, Clone, Default)]
 pub struct TorsionAngleContrib {
-    pub(crate) at: Vec<[usize; 4]>,
+    pub(crate) at: Vec<[u32; 4]>,
     pub(crate) v1: Vec<f64>,
     pub(crate) v2: Vec<f64>,
     pub(crate) v3: Vec<f64>,
@@ -558,7 +591,7 @@ pub struct TorsionAngleContrib {
 impl TorsionAngleContrib {
     #[allow(clippy::too_many_arguments)]
     pub fn add_term(&mut self, i: usize, j: usize, k: usize, l: usize, v1: f64, v2: f64, v3: f64) {
-        self.at.push([i, j, k, l]);
+        self.at.push([i, j, k, l].map(idx32));
         self.v1.push(v1);
         self.v2.push(v2);
         self.v3.push(v3);
@@ -582,13 +615,19 @@ impl TorsionAngleContrib {
         let sin3phi = 3.0 * sin_phi - 4.0 * sin_phi * sin_phi_sq;
         let de_dphi = 0.5 * (-(self.v1[t]) * sin_phi + 2.0 * self.v2[t] * sin2phi - 3.0 * self.v3[t] * sin3phi);
         let sin_term = -de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
-        g.add_grad(grad, self.at[t], sin_term);
+        g.add_grad(grad, ix(self.at[t]), sin_term);
     }
 }
 
 impl Contrib for TorsionAngleContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
+    }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at);
+        shrink_vec(&mut self.v1);
+        shrink_vec(&mut self.v2);
+        shrink_vec(&mut self.v3);
     }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
@@ -602,19 +641,19 @@ impl Contrib for TorsionAngleContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], Torsion::at(pos, self.at[t]).cos_torsion());
+            total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], Torsion::at(pos, ix(self.at[t])).cos_torsion());
         }
         total
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at.len() {
-            self.grad_term(t, &Torsion::at(pos, self.at[t]), grad);
+            self.grad_term(t, &Torsion::at(pos, ix(self.at[t])), grad);
         }
     }
     fn energy_grad_range(&self, pos: &[f64], grad: &mut [f64], range: Range<usize>) -> f64 {
         let mut total = 0.0;
         for t in range {
-            let g = Torsion::at(pos, self.at[t]);
+            let g = Torsion::at(pos, ix(self.at[t]));
             total += calc_torsion_energy(self.v1[t], self.v2[t], self.v3[t], g.cos_torsion());
             self.grad_term(t, &g, grad);
         }
@@ -690,8 +729,8 @@ const ELE_BIT: u8 = 2;
 /// and `"Electrostatic"`.
 #[derive(Debug, Clone, Default)]
 pub struct NonbondedContrib {
-    pub(crate) at1: Vec<usize>,
-    pub(crate) at2: Vec<usize>,
+    pub(crate) at1: Vec<u32>,
+    pub(crate) at2: Vec<u32>,
     pub(crate) kind: Vec<u8>,
     pub(crate) r_ij_star: Vec<f64>,
     pub(crate) well_depth: Vec<f64>,
@@ -707,8 +746,8 @@ impl NonbondedContrib {
         if vdw.is_none() && ele.is_none() {
             return;
         }
-        self.at1.push(i);
-        self.at2.push(j);
+        self.at1.push(idx32(i));
+        self.at2.push(idx32(j));
         let mut k = 0;
         match vdw {
             Some((r, e)) => {
@@ -752,7 +791,7 @@ impl NonbondedContrib {
     /// pair has zero distance (RDKit then skips the remaining pairs).
     #[inline(always)]
     fn grad_term(&self, t: usize, pos: &[f64], dist: f64, grad: &mut [f64]) -> bool {
-        let (i1, i2) = (self.at1[t], self.at2[t]);
+        let (i1, i2) = (self.at1[t] as usize, self.at2[t] as usize);
         let mut vdw_grad = 0.0;
         let mut ele_grad = 0.0;
         if dist <= 0.0 {
@@ -806,12 +845,22 @@ impl Contrib for NonbondedContrib {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+    fn shrink_to_fit(&mut self) {
+        shrink_vec(&mut self.at1);
+        shrink_vec(&mut self.at2);
+        shrink_vec(&mut self.kind);
+        shrink_vec(&mut self.r_ij_star);
+        shrink_vec(&mut self.well_depth);
+        shrink_vec(&mut self.charge_term);
+        shrink_vec(&mut self.diel_model);
+        shrink_vec(&mut self.is_1_4);
+    }
     fn energy(&self, pos: &[f64]) -> f64 {
         self.energy_range(pos, 0..self.len())
     }
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         for t in 0..self.at1.len() {
-            if !self.grad_term(t, pos, distance(pos, self.at1[t], self.at2[t]), grad) {
+            if !self.grad_term(t, pos, distance(pos, self.at1[t] as usize, self.at2[t] as usize), grad) {
                 // RDKit returns here (skipping the remaining pairs).
                 return;
             }
@@ -826,7 +875,7 @@ impl Contrib for NonbondedContrib {
     fn energy_range(&self, pos: &[f64], range: Range<usize>) -> f64 {
         let mut e = 0.0;
         for t in range {
-            let dist = distance(pos, self.at1[t], self.at2[t]);
+            let dist = distance(pos, self.at1[t] as usize, self.at2[t] as usize);
             if self.kind[t] & VDW_BIT != 0 {
                 e += self.vdw_energy(t, dist);
             }
@@ -846,7 +895,7 @@ impl Contrib for NonbondedContrib {
         let mut e = 0.0;
         let mut with_grad = true;
         for t in range {
-            let dist = distance(pos, self.at1[t], self.at2[t]);
+            let dist = distance(pos, self.at1[t] as usize, self.at2[t] as usize);
             if self.kind[t] & VDW_BIT != 0 {
                 e += self.vdw_energy(t, dist);
             }
@@ -866,7 +915,7 @@ impl Contrib for NonbondedContrib {
         let (mut ev, mut ee) = (0.0, 0.0);
         let (mut has_v, mut has_e) = (false, false);
         for t in 0..self.at1.len() {
-            let dist = distance(pos, self.at1[t], self.at2[t]);
+            let dist = distance(pos, self.at1[t] as usize, self.at2[t] as usize);
             if self.kind[t] & VDW_BIT != 0 {
                 ev += self.vdw_energy(t, dist);
                 has_v = true;

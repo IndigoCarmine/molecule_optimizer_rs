@@ -626,7 +626,7 @@ impl PairCollector {
                     flags |= F_DIST;
                 }
             }
-            self.pairs.push(Pair { i: c.at1[t] as u32, j: c.at2[t] as u32, p, flags, ct: c.charge_term[t] });
+            self.pairs.push(Pair { i: c.at1[t], j: c.at2[t], p, flags, ct: c.charge_term[t] });
         }
         true
     }
@@ -684,41 +684,22 @@ pub(crate) fn topo_relations(mol: &crate::core::Molecule, depth: u8) -> (Vec<u32
     let mut start = Vec::with_capacity(n + 1);
     let mut js = Vec::new();
     let mut vs = Vec::new();
-    let mut dist = vec![u8::MAX; n];
-    let mut frontier = Vec::new();
-    let mut next = Vec::new();
-    let mut touched = Vec::new();
+    let mut bd = crate::ff::utils::BondDistances::new(n, depth);
+    let mut row: Vec<(u32, u8)> = Vec::new();
     start.push(0u32);
     for s in 0..n {
-        dist[s] = 0;
-        touched.push(s);
-        frontier.clear();
-        frontier.push(s);
-        for d in 1..=depth {
-            next.clear();
-            for &u in &frontier {
-                for v in mol.neighbors(u) {
-                    if dist[v] == u8::MAX {
-                        dist[v] = d;
-                        touched.push(v);
-                        next.push(v);
-                    }
-                }
-            }
-            std::mem::swap(&mut frontier, &mut next);
-        }
-        let mut row: Vec<(u32, u8)> = touched.iter().filter(|&&v| v != s).map(|&v| (v as u32, dist[v])).collect();
+        bd.compute(mol, s);
+        row.clear();
+        row.extend(bd.within().iter().filter(|&&v| v != s).map(|&v| (v as u32, bd.get(v))));
         row.sort_unstable();
-        for (v, d) in row {
+        for &(v, d) in &row {
             js.push(v);
             vs.push(d);
         }
         start.push(js.len() as u32);
-        for &v in &touched {
-            dist[v] = u8::MAX;
-        }
-        touched.clear();
     }
+    js.shrink_to_fit();
+    vs.shrink_to_fit();
     (start, js, vs)
 }
 

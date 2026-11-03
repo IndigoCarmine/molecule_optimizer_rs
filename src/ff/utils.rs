@@ -34,6 +34,69 @@ pub fn distance(pos: &[f64], i: usize, j: usize) -> f64 {
     norm(sub(p3(pos, i), p3(pos, j)))
 }
 
+/// Releases the unused capacity of `v` if it is at least 4 KiB (smaller
+/// waste is not worth the reallocation): term storage is built by pushing,
+/// which leaves up to half of a large vector unused.
+pub fn shrink_vec<T>(v: &mut Vec<T>) {
+    if (v.capacity() - v.len()) * std::mem::size_of::<T>() >= 4096 {
+        v.shrink_to_fit();
+    }
+}
+
+/// Bond-path (topological) distances from one atom to the atoms within
+/// `depth` bonds (breadth-first search), recomputed row by row: the
+/// builders classify atom pairs as 1-2 / 1-3 / 1-4 with O(n) memory
+/// instead of an n×n matrix.
+pub(crate) struct BondDistances {
+    depth: u8,
+    dist: Vec<u8>,
+    touched: Vec<usize>,
+    frontier: Vec<usize>,
+    next: Vec<usize>,
+}
+
+impl BondDistances {
+    pub(crate) fn new(n: usize, depth: u8) -> Self {
+        assert!(depth < u8::MAX);
+        BondDistances { depth, dist: vec![u8::MAX; n], touched: Vec::new(), frontier: Vec::new(), next: Vec::new() }
+    }
+    /// Computes the distances from atom `s` (replacing the previous row).
+    pub(crate) fn compute(&mut self, mol: &crate::core::Molecule, s: usize) {
+        for &v in &self.touched {
+            self.dist[v] = u8::MAX;
+        }
+        self.touched.clear();
+        self.dist[s] = 0;
+        self.touched.push(s);
+        self.frontier.clear();
+        self.frontier.push(s);
+        for d in 1..=self.depth {
+            self.next.clear();
+            for &u in &self.frontier {
+                for v in mol.neighbors(u) {
+                    if self.dist[v] == u8::MAX {
+                        self.dist[v] = d;
+                        self.touched.push(v);
+                        self.next.push(v);
+                    }
+                }
+            }
+            std::mem::swap(&mut self.frontier, &mut self.next);
+        }
+    }
+    /// Distance of atom `j` from the current atom (`u8::MAX` = more than
+    /// `depth` bonds or not connected).
+    #[inline]
+    pub(crate) fn get(&self, j: usize) -> u8 {
+        self.dist[j]
+    }
+    /// The atoms within `depth` bonds, the current atom first, in
+    /// breadth-first order.
+    pub(crate) fn within(&self) -> &[usize] {
+        &self.touched
+    }
+}
+
 /// RDKit `normalizeAngleDeg`: maps into [-180, 180].
 pub fn normalize_angle_deg(mut a: f64) -> f64 {
     a %= 360.0;

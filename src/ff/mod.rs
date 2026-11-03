@@ -100,6 +100,10 @@ pub trait Contrib: Send + Sync {
     fn visit_terms<'a>(&'a self, f: &mut dyn FnMut(Option<&'a dyn std::any::Any>)) {
         f(self.as_any());
     }
+    /// Releases unused capacity of the term storage (built by pushing; see
+    /// [`utils::shrink_vec`]). [`ContribForceField::add_contrib`] calls it.
+    /// Default: nothing.
+    fn shrink_to_fit(&mut self) {}
 }
 
 /// Terms of one type evaluated as one contrib, without dynamic dispatch or
@@ -174,6 +178,9 @@ impl<T: Contrib + 'static> Contrib for TermList<T> {
         for t in &self.terms {
             t.visit_terms(f);
         }
+    }
+    fn shrink_to_fit(&mut self) {
+        utils::shrink_vec(&mut self.terms);
     }
 }
 
@@ -372,7 +379,8 @@ impl ContribForceField {
             grad_bufs: GradBufs::default(),
         }
     }
-    pub fn add_contrib(&mut self, c: Box<dyn Contrib>) {
+    pub fn add_contrib(&mut self, mut c: Box<dyn Contrib>) {
+        c.shrink_to_fit();
         self.term_start.push(self.num_terms() + c.num_terms());
         self.contribs.push(c);
     }

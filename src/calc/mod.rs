@@ -3,6 +3,7 @@
 //! asynchronous method on [`crate::tasks::Engine`] that returns a
 //! [`crate::tasks::JobHandle`] whose snapshot holds the current coordinates.
 
+pub mod assembly;
 pub mod conformer;
 pub mod energy;
 pub mod optimize;
@@ -33,6 +34,7 @@ pub(crate) fn to_flat(pts: &[[f64; 3]]) -> Vec<f64> {
     pts.iter().flat_map(|p| p.iter().copied()).collect()
 }
 
+pub use assembly::{AssemblyInput, AssemblyMode, AssemblySearchOptions, AssemblySearchResult, AssemblySearchSnapshot, AssemblyStructure, MonomerConformers};
 pub use conformer::{Conformer, ConformerSearchOptions, ConformerSearchResult, ConformerSearchSnapshot};
 pub use energy::EnergyResult;
 pub use optimize::{OptimizeOptions, OptimizeResult, OptimizeSnapshot};

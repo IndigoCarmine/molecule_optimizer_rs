@@ -15,7 +15,6 @@ use crate::core::{BondOrder, Molecule};
 use crate::error::{Error, Result};
 use crate::perception;
 use crate::perception::rings::RingInfo;
-use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) use crate::ff::utils::is_double_zero;
 
@@ -54,8 +53,8 @@ pub(crate) fn periodic_table_row_hl(anum: u8) -> u8 {
 /// sanitization).
 #[derive(Debug, Clone)]
 pub(crate) struct TypingMol {
+    /// the typing molecule; its ring info is always set (see [`TypingMol::ri`])
     pub mol: Molecule,
-    pub ri: RingInfo,
     /// explicit valence (RDKit `getValence(EXPLICIT)`)
     pub ev: Vec<i32>,
 }
@@ -71,13 +70,18 @@ impl TypingMol {
             Some(r) => r.clone(),
             None => RingInfo::compute(&mol),
         };
-        mol.ring_info = Some(ri.clone());
+        mol.ring_info = Some(ri);
         let ev = (0..mol.num_atoms()).map(|i| mol.explicit_valence(i)).collect();
-        let mut tm = TypingMol { mol, ri, ev };
+        let mut tm = TypingMol { mol, ev };
         tm.set_mmff_aromaticity();
         Ok(tm)
     }
 
+    /// Ring info of the typing molecule.
+    #[inline]
+    pub(crate) fn ri(&self) -> &RingInfo {
+        self.mol.ring_info().expect("typing molecule ring info")
+    }
     #[inline]
     fn anum(&self, i: usize) -> u8 {
         self.mol.atom(i).atomic_num
@@ -104,8 +108,8 @@ impl TypingMol {
         self.ev[i] + self.mol.atom(i).implicit_hs as i32
     }
     #[inline]
-    fn nbrs(&self, i: usize) -> Vec<usize> {
-        self.mol.neighbors(i).collect()
+    fn nbrs(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
+        self.mol.neighbors(i)
     }
     /// Bond type between two bonded atoms.
     #[inline]
@@ -114,7 +118,7 @@ impl TypingMol {
     }
     #[inline]
     fn in_ring_of_size(&self, a: usize, size: usize) -> bool {
-        self.ri.is_atom_in_ring_of_size(a, size)
+        self.ri().is_atom_in_ring_of_size(a, size)
     }
 
     /// RDKit `isRingAromatic`: all bonds between consecutive ring atoms (the
@@ -125,7 +129,10 @@ impl TypingMol {
 
     /// RDKit `MolOps::setMMFFAromaticity`.
     fn set_mmff_aromaticity(&mut self) {
-        let rings = self.ri.atom_rings.clone();
+        // only atom / bond flags change below, so the ring info is moved out
+        // for the duration (no copy) and put back at the end
+        let rinfo = self.mol.ring_info.take().expect("typing molecule ring info");
+        let rings = &rinfo.atom_rings;
         let n = self.mol.num_atoms();
         let mut arom_bit = vec![false; n];
         let mut arom_ring_bit = vec![false; rings.len()];
@@ -160,7 +167,7 @@ impl TypingMol {
                             if self.bt(a, nb) == BondOrder::Single {
                                 continue;
                             }
-                            if self.ri.is_atom_in_ring(nb) && !arom_bit[nb] {
+                            if rinfo.is_atom_in_ring(nb) && !arom_bit[nb] {
                                 move_to_next_ring = true;
                                 break;
                             }
@@ -202,7 +209,7 @@ impl TypingMol {
             old_n_arom_set = n_arom_set;
             n_arom_set = 0;
             arom_rings_all_set = true;
-            for ring in &rings {
+            for ring in rings {
                 for &a in ring {
                     if arom_bit[a] {
                         n_arom_set += 1;
@@ -212,8 +219,8 @@ impl TypingMol {
                 }
             }
         }
-        for (ri, ring) in rings.iter().enumerate() {
-            if !arom_ring_bit[ri] {
+        for (r, ring) in rings.iter().enumerate() {
+            if !arom_ring_bit[r] {
                 continue;
             }
             for j in 0..ring.len() {
@@ -224,11 +231,12 @@ impl TypingMol {
                 bond.is_aromatic = true;
             }
         }
+        self.mol.ring_info = Some(rinfo);
     }
 
     /// RDKit `isAtomNOxide`.
     fn is_n_oxide(&self, a: usize) -> bool {
-        self.anum(a) == 7 && self.tdeg(a) >= 3 && self.nbrs(a).iter().any(|&n| self.anum(n) == 8 && self.tdeg(n) == 1)
+        self.anum(a) == 7 && self.tdeg(a) >= 3 && self.nbrs(a).any(|n| self.anum(n) == 8 && self.tdeg(n) == 1)
     }
 }
 
@@ -260,49 +268,42 @@ pub(crate) fn torsion_in_ring_of_size_4_or_5(mol: &Molecule, i1: usize, i2: usiz
     0
 }
 
-/// RDKit `RingMembershipSize`.
+/// RDKit `RingMembershipSize`: the rings of every atom with their size and
+/// aromaticity, stored flat (atom `a` owns `rings[start[a]..start[a + 1]]`).
 struct RingMembershipSize {
-    /// ring size -> atom -> (in aromatic ring of that size, ring ids)
-    map: BTreeMap<usize, BTreeMap<usize, (bool, BTreeSet<u32>)>>,
+    start: Vec<u32>,
+    /// (ring id, ring size, ring aromatic)
+    rings: Vec<(u32, u32, bool)>,
 }
-
-const IS_AROMATIC_BIT: u32 = 1 << 31;
 
 impl RingMembershipSize {
     fn new(tm: &TypingMol) -> Self {
-        let mut map: BTreeMap<usize, BTreeMap<usize, (bool, BTreeSet<u32>)>> = BTreeMap::new();
-        for (ri, ring) in tm.ri.atom_rings.iter().enumerate() {
-            let arom = tm.is_ring_aromatic(ring);
-            let id = ri as u32 | if arom { IS_AROMATIC_BIT } else { 0 };
-            let m = map.entry(ring.len()).or_default();
-            for &a in ring {
-                let e = m.entry(a).or_default();
-                e.1.insert(id);
-                if arom {
-                    e.0 = true;
-                }
+        let ri = tm.ri();
+        let arom: Vec<bool> = ri.atom_rings.iter().map(|r| tm.is_ring_aromatic(r)).collect();
+        let n = tm.mol.num_atoms();
+        let mut start = Vec::with_capacity(n + 1);
+        let mut rings = Vec::new();
+        start.push(0);
+        for a in 0..n {
+            for &r in ri.atom_ring_ids(a) {
+                rings.push((r as u32, ri.atom_rings[r].len() as u32, arom[r]));
             }
+            start.push(rings.len() as u32);
         }
-        RingMembershipSize { map }
+        RingMembershipSize { start, rings }
+    }
+    #[inline]
+    fn of(&self, a: usize) -> &[(u32, u32, bool)] {
+        &self.rings[self.start[a] as usize..self.start[a + 1] as usize]
     }
     fn is_atom_in_aromatic_ring_of_size(&self, a: usize, size: usize) -> bool {
-        self.map.get(&size).and_then(|m| m.get(&a)).map(|e| e.0).unwrap_or(false)
+        self.of(a).iter().any(|&(_, s, ar)| ar && s as usize == size)
     }
+    /// `true` if at least two atoms are given and some ring of `size`
+    /// contains all of them.
     fn are_atoms_in_same_ring_of_size(&self, size: usize, atoms: &[usize]) -> bool {
-        let Some(m) = self.map.get(&size) else { return false };
-        let Some(first) = m.get(&atoms[0]) else { return false };
-        let mut common = first.1.clone();
-        let mut res = false;
-        for &a in &atoms[1..] {
-            if common.is_empty() {
-                break;
-            }
-            res = false;
-            let Some(e) = m.get(&a) else { break };
-            common = common.intersection(&e.1).copied().collect();
-            res = !common.is_empty();
-        }
-        res
+        atoms.len() >= 2
+            && self.of(atoms[0]).iter().any(|&(r, s, _)| s as usize == size && atoms[1..].iter().all(|&a| self.of(a).iter().any(|e| e.0 == r)))
     }
 }
 
@@ -581,7 +582,7 @@ impl MmffMolProperties {
                             n_term_o_bonded_to_n += 1;
                         }
                         if tm.tval(a) >= 3 && (tm.anum(nb) == 15 || tm.anum(nb) == 16) {
-                            let n_o = tm.nbrs(nb).iter().filter(|&&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
+                            let n_o = tm.nbrs(nb).filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
                             if !is_nso2_or_nso3_or_ncn {
                                 is_nso2_or_nso3_or_ncn = n_o >= 2;
                             }
@@ -611,7 +612,7 @@ impl MmffMolProperties {
                 16 => self.sulfur_type(a),
                 17 => {
                     let mut t = 0;
-                    if tm.tdeg(a) == 4 && tm.nbrs(a).iter().filter(|&&x| tm.anum(x) == 8).count() == 4 {
+                    if tm.tdeg(a) == 4 && tm.nbrs(a).filter(|&x| tm.anum(x) == 8).count() == 4 {
                         t = 77;
                     }
                     if t == 0 && tm.tdeg(a) == 1 {
@@ -799,7 +800,7 @@ impl MmffMolProperties {
                                 is_nco_or_ncs = true;
                             }
                             if bt == BondOrder::Double
-                                || (bt == BondOrder::Aromatic && (nb2a == 6 || (nb2a == 7 && tm.ri.num_atom_rings(nb2) == 1)))
+                                || (bt == BondOrder::Aromatic && (nb2a == 6 || (nb2a == 7 && tm.ri().num_atom_rings(nb2) == 1)))
                             {
                                 element_double_bonded_to_c = nb2a;
                             }
@@ -813,7 +814,7 @@ impl MmffMolProperties {
                                 if rm.is_atom_in_aromatic_ring_of_size(nb, 6) {
                                     n_in_aromatic_6_ring += 1;
                                 }
-                                let n_o_bonded_to_n3 = tm.nbrs(nb2).iter().filter(|&&x| tm.anum(x) == 8).count();
+                                let n_o_bonded_to_n3 = tm.nbrs(nb2).filter(|&x| tm.anum(x) == 8).count();
                                 if n_o_bonded_to_n3 < 2 {
                                     n_n3_bonded_to_c += 1;
                                 }
@@ -902,7 +903,7 @@ impl MmffMolProperties {
         }
         if tm.tdeg(a) == 2 {
             if tm.tval(a) == 4 {
-                let is_isonitrile = tm.nbrs(a).iter().any(|&nb| tm.bt(a, nb) == BondOrder::Triple);
+                let is_isonitrile = tm.nbrs(a).any(|nb| tm.bt(a, nb) == BondOrder::Triple);
                 // NR% or =N=
                 return if is_isonitrile { 61 } else { 53 };
             }
@@ -931,7 +932,7 @@ impl MmffMolProperties {
                         break;
                     }
                     if tm.anum(nb) == 16 {
-                        let n_term_o = tm.nbrs(nb).iter().filter(|&&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
+                        let n_term_o = tm.nbrs(nb).filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
                         is_nso = n_term_o == 1;
                     }
                 }
@@ -990,7 +991,7 @@ impl MmffMolProperties {
                 // O=+
                 return 51;
             }
-            let n_h = tm.nbrs(a).iter().filter(|&&x| tm.anum(x) == 1).count();
+            let n_h = tm.nbrs(a).filter(|&x| tm.anum(x) == 1).count();
             if n_h + tm.mol.atom(a).implicit_hs as usize == 2 {
                 // OH2
                 return 70;
@@ -1115,7 +1116,7 @@ impl MmffMolProperties {
             return 17;
         }
         if td == 2 {
-            let is_o_double = tm.nbrs(a).iter().any(|&nb| tm.anum(nb) == 8 && tm.bt(a, nb) == BondOrder::Double);
+            let is_o_double = tm.nbrs(a).any(|nb| tm.anum(nb) == 8 && tm.bt(a, nb) == BondOrder::Double);
             // =S=O or S
             return if is_o_double { 74 } else { 15 };
         }
@@ -1282,7 +1283,7 @@ impl MmffMolProperties {
                     }
                 }
                 76 => {
-                    if let Some(ring) = tm.ri.atom_rings.iter().find(|r| r.contains(&idx)) {
+                    if let Some(ring) = tm.ri().atom_rings.iter().find(|r| r.contains(&idx)) {
                         let n76 = ring.iter().filter(|&&x| self.atom_types[x] == 76).count();
                         if n76 != 0 {
                             f = -(1.0 / n76 as f64);

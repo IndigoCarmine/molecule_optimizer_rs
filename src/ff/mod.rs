@@ -19,7 +19,7 @@ pub mod utils;
 use crate::core::Molecule;
 use crate::error::Result;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub use assign::{Assignment, ForceFieldKind, assign};
 pub use constraints::Constraint;
@@ -283,21 +283,56 @@ pub const DEFAULT_PARALLEL_THRESHOLD: usize = 4096;
 /// Maximum number of chunks the terms are split into for parallel evaluation.
 const PAR_CHUNKS: usize = 64;
 
+/// Leaf function of [`par_tree`]: evaluates a term range with its chunk buffer.
+type Leaf<'a, T> = dyn Fn(Range<usize>, &mut [f64]) -> T + Sync + 'a;
+/// Combines two adjacent results; the buffers are those of the first chunk
+/// of each half (the first one receives the combined values).
+type Combine<'a, T> = dyn Fn(T, T, &mut [f64], &[f64]) -> T + Sync + 'a;
+
 /// Evaluates `leaf` on fixed chunks of `0..total` in parallel and combines
 /// the results pairwise in a fixed binary tree. Neither the chunks nor the
 /// tree depend on the thread count or on scheduling, so the floating-point
-/// sums are the same on every run.
-fn par_tree<T: Send>(total: usize, leaf: &(dyn Fn(Range<usize>) -> T + Sync), combine: &(dyn Fn(T, T) -> T + Sync)) -> T {
-    fn rec<T: Send>(lo: usize, hi: usize, chunk: usize, total: usize, leaf: &(dyn Fn(Range<usize>) -> T + Sync), combine: &(dyn Fn(T, T) -> T + Sync)) -> T {
+/// sums are the same on every run. Chunk `c` gets `bufs[c·len..(c+1)·len]`
+/// (see [`par_tree_chunks`]); the root result is in the first buffer.
+fn par_tree<T: Send>(total: usize, len: usize, bufs: &mut [f64], leaf: &Leaf<'_, T>, combine: &Combine<'_, T>) -> T {
+    #[allow(clippy::too_many_arguments)]
+    fn rec<T: Send>(lo: usize, hi: usize, chunk: usize, total: usize, len: usize, bufs: &mut [f64], leaf: &Leaf<'_, T>, combine: &Combine<'_, T>) -> T {
         if hi - lo == 1 {
-            return leaf(lo * chunk..total.min(hi * chunk));
+            return leaf(lo * chunk..total.min(hi * chunk), &mut bufs[..len]);
         }
         let mid = lo + (hi - lo) / 2;
-        let (a, b) = rayon::join(|| rec(lo, mid, chunk, total, leaf, combine), || rec(mid, hi, chunk, total, leaf, combine));
-        combine(a, b)
+        let (l, r) = bufs.split_at_mut((mid - lo) * len);
+        let (a, b) = rayon::join(|| rec(lo, mid, chunk, total, len, &mut *l, leaf, combine), || rec(mid, hi, chunk, total, len, &mut *r, leaf, combine));
+        combine(a, b, &mut l[..len], &r[..len])
     }
+    let (chunk, n) = par_tree_chunks(total);
+    rec(0, n, chunk, total, len, &mut bufs[..n * len], leaf, combine)
+}
+
+/// Chunk size and number of chunks of [`par_tree`].
+fn par_tree_chunks(total: usize) -> (usize, usize) {
     let chunk = total.div_ceil(PAR_CHUNKS).max(256);
-    rec(0, total.div_ceil(chunk).max(1), chunk, total, leaf, combine)
+    (chunk, total.div_ceil(chunk).max(1))
+}
+
+/// Per-chunk gradient buffers of the parallel path, kept for reuse so that
+/// steady-state evaluations do not allocate: one set per concurrent caller
+/// (usually one), taken for a whole evaluation.
+#[derive(Default)]
+struct GradBufs(Mutex<Vec<Vec<f64>>>);
+
+impl GradBufs {
+    /// Runs `f` with a buffer set of at least `n` values (contents
+    /// unspecified).
+    fn with<R>(&self, n: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
+        let mut v = self.0.lock().unwrap_or_else(|e| e.into_inner()).pop().unwrap_or_default();
+        if v.len() < n {
+            v.resize(n, 0.0);
+        }
+        let r = f(&mut v);
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(v);
+        r
+    }
 }
 
 /// Force field made of a list of contributions (RDKit `ForceField`).
@@ -311,6 +346,7 @@ pub struct ContribForceField {
     fixed: Vec<usize>,
     /// Term count above which evaluation uses rayon (0 = never).
     pub parallel_threshold: usize,
+    grad_bufs: GradBufs,
 }
 
 impl std::fmt::Debug for ContribForceField {
@@ -333,6 +369,7 @@ impl ContribForceField {
             term_start: vec![0],
             fixed: Vec::new(),
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
+            grad_bufs: GradBufs::default(),
         }
     }
     pub fn add_contrib(&mut self, c: Box<dyn Contrib>) {
@@ -397,12 +434,14 @@ impl ForceField for ContribForceField {
         if self.parallel() {
             par_tree(
                 self.num_terms(),
-                &|r| {
+                0,
+                &mut [],
+                &|r, _| {
                     let mut e = -0.0;
                     self.for_terms(r.start, r.end, |c, r| c.energy_acc(pos, r, &mut e));
                     e
                 },
-                &|a, b| a + b,
+                &|a, b, _, _| a + b,
             )
         } else {
             let mut e = -0.0;
@@ -416,20 +455,26 @@ impl ForceField for ContribForceField {
         let n = self.n_points * self.dim;
         grad[..n].iter_mut().for_each(|g| *g = 0.0);
         if self.parallel() {
-            let (g, e) = par_tree(
-                self.num_terms(),
-                &|r| {
-                    let mut g = vec![0.0; n];
-                    let mut e = 0.0;
-                    self.for_terms(r.start, r.end, |c, r| c.energy_grad_acc(pos, &mut g, r, &mut e));
-                    (g, e)
-                },
-                &|(mut a, ea), (b, eb)| {
-                    a.iter_mut().zip(&b).for_each(|(x, y)| *x += *y);
-                    (a, ea + eb)
-                },
-            );
-            grad[..n].copy_from_slice(&g);
+            let total = self.num_terms();
+            let e = self.grad_bufs.with(par_tree_chunks(total).1 * n, |bufs| {
+                let e = par_tree(
+                    total,
+                    n,
+                    bufs,
+                    &|r, g| {
+                        g.fill(0.0);
+                        let mut e = 0.0;
+                        self.for_terms(r.start, r.end, |c, r| c.energy_grad_acc(pos, g, r, &mut e));
+                        e
+                    },
+                    &|ea, eb, a, b| {
+                        a.iter_mut().zip(b).for_each(|(x, y)| *x += *y);
+                        ea + eb
+                    },
+                );
+                grad[..n].copy_from_slice(&bufs[..n]);
+                e
+            });
             for &f in &self.fixed {
                 for d in 0..self.dim {
                     grad[self.dim * f + d] = 0.0;

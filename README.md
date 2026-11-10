@@ -6,7 +6,7 @@ The force fields (UFF, MMFF94/MMFF94s), the BFGS minimizer and the distance-geom
 
 ## Features
 
-- **Force fields**: UFF and MMFF94 / MMFF94s with analytic gradients, energy breakdown by term, distance / angle / dihedral / position constraints, and user-defined terms (`ff::custom`).
+- **Force fields**: UFF, MMFF94 / MMFF94s and GAFF (1.81, 2.11, 2.2.30) with analytic gradients, energy breakdown by term, distance / angle / dihedral / position constraints, and user-defined terms (`ff::custom`).
 - **Fast exact path**: `FastBuilder` compiles a force field into SIMD-friendly tables (AVX selected at runtime), giving the same energies as the reference path at lower cost; an optional approximate nonbonded mode (cutoffs, reaction field / PME) is available for large systems, with an optional GPU backend (`gpu` feature, wgpu).
 - **Minimization**: RDKit's BFGS (line search, gradient scaling and convergence criteria), L-BFGS for large systems.
 - **Conformers**: ETKDG (v1/v2/v3) embedding, conformer search with pruning, relaxed coordinate scans.
@@ -17,6 +17,24 @@ The force fields (UFF, MMFF94/MMFF94s), the BFGS minimizer and the distance-geom
 ## RDKit parity
 
 The test suite compares against data generated with RDKit (`tools/gen_*.py`): atom types, partial charges, energies and per-term energies, gradients, ETKDG embeddings, ring perception, SMARTS matching, minimized structures and 2D depictions. On the benchmark set (`benches/data/set`, 110 molecules), energies at the initial and at RDKit-optimized structures match RDKit to better than 1e-9 relative, and minimizations from the same start agree within 3e-7 kcal/mol and 1.2e-4 Å heavy-atom RMSD.
+
+## GAFF
+
+`ff::gaff` implements the general Amber force field from the original paper (J. Wang, R. M. Wolf, J. W. Caldwell, P. A. Kollman, D. A. Case, *J. Comput. Chem.* **25**, 1157 (2004)) and the public-domain parameter files in `src/data/gaff/`; it is not a port of another implementation and has no reference data from one.
+
+```rust
+use molecule_optimizer_rs::ff::{ForceField, ForceFieldBuilder, gaff::{GaffBuilder, GaffVariant}};
+
+let mol = molecule_optimizer_rs::io::read_file("ligand.mol2")?.remove(0); // all hydrogens present
+let builder = GaffBuilder::new(GaffVariant::Gaff2).with_charges(charges);  // partial charges in e
+let report = builder.assign(&mol)?;   // atom types, estimated / missing parameters, warnings
+let ff = builder.build(&mol, &[])?;
+```
+
+- Atom types follow Table 1 and Fig. 1 of the paper; the types added later (`cz`, `ns`, `n7`, `c5`, ...) follow the descriptions in the parameter files and are used when the selected file has them.
+- Partial charges are supplied by the caller (the paper uses RESP or AM1-BCC charges). Without charges there is no electrostatic term and `assign` reports a warning.
+- Bond and angle parameters missing from the table are estimated with the empirical rules of the paper (eqs. 3-6); torsions fall back to the entry of the equivalent paired types or of the basic types. `GaffAssignment` lists every such term.
+- 1-4 interactions are scaled by 1/2 (van der Waals) and 1/1.2 (electrostatics); there is no cutoff. `FastBuilder` works in exact mode; the approximate non-bonded mode and soft-core potentials do not support GAFF yet.
 
 ## Usage
 

@@ -8,6 +8,7 @@
 //! came from SDF (Kekulé or aromatic bonds), MOL2, PDB or XYZ, nor on
 //! aromatic flags set by a reader.
 
+use super::gaff::{GaffVariant, gaff_assign};
 use super::mmff::{MmffMolProperties, MmffVariant};
 use super::uff::{atom_typer::atom_types_and_params, uff_atom_types};
 use crate::core::Molecule;
@@ -20,19 +21,26 @@ pub enum ForceFieldKind {
     Mmff94,
     Mmff94s,
     Uff,
+    /// GAFF 1.81.
+    Gaff,
+    /// GAFF 2.11.
+    Gaff211,
+    /// GAFF 2.2.30.
+    Gaff2,
 }
 
 /// Atom types and charges for one molecule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     pub kind: ForceFieldKind,
-    /// Atom type per atom: MMFF numeric type as a string (`"37"`), or UFF
-    /// label (`"C_R"`). Empty string = untyped.
+    /// Atom type per atom: MMFF numeric type as a string (`"37"`), UFF
+    /// label (`"C_R"`) or GAFF type (`"ca"`). Empty string = untyped.
     pub types: Vec<String>,
     /// MMFF numeric types (`None` for UFF; 0 = untyped).
     pub mmff_types: Option<Vec<u8>>,
     /// Partial charges in e (MMFF bond-charge-increment charges; `None`
-    /// for UFF, which has no electrostatics).
+    /// for UFF, which has no electrostatics, and for GAFF, whose charges
+    /// are supplied by the caller).
     pub partial_charges: Option<Vec<f64>>,
     /// Formal charges used (integer formal charges from the graph; MMFF
     /// reports fractional formal charges for delocalized groups).
@@ -89,6 +97,22 @@ pub fn assign(mol: &Molecule, kind: ForceFieldKind) -> Result<Assignment> {
                 mmff_types: None,
                 partial_charges: None,
                 formal_charges: m.atoms().iter().map(|a| a.formal_charge as f64).collect(),
+            })
+        }
+        ForceFieldKind::Gaff | ForceFieldKind::Gaff211 | ForceFieldKind::Gaff2 => {
+            let variant = match kind {
+                ForceFieldKind::Gaff => GaffVariant::Gaff,
+                ForceFieldKind::Gaff211 => GaffVariant::Gaff211,
+                _ => GaffVariant::Gaff2,
+            };
+            let a = gaff_assign(&m, variant)?;
+            Ok(Assignment {
+                kind,
+                types: a.types,
+                mmff_types: None,
+                partial_charges: None,
+                formal_charges: m.atoms().iter().map(|a| a.formal_charge as f64).collect(),
+                missing: a.untyped,
             })
         }
     }

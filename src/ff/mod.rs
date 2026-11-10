@@ -11,6 +11,7 @@
 pub mod assign;
 pub mod constraints;
 pub mod custom;
+pub mod gaff;
 pub mod mmff;
 pub mod softcore;
 pub mod uff;

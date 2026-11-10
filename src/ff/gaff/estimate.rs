@@ -1,5 +1,6 @@
 //! Empirical rules of Wang et al., J. Comput. Chem. 25, 1157 (2004) for
-//! force constants that are not in the parameter table.
+//! force constants that are not in the parameter table. The angle rule is
+//! eq. (5) as corrected in the erratum, J. Comput. Chem. 26, 114 (2005).
 
 /// Elements of Tables 3 and 4, in table order.
 const ELEMENTS: [u8; 10] = [1, 6, 7, 8, 9, 17, 35, 53, 15, 16];
@@ -107,16 +108,17 @@ pub fn bond_force_constant(z1: u8, z2: u8, r: f64) -> Option<f64> {
     Some(kij / r.powf(BOND_POWER))
 }
 
-/// Angle force constant of eqs. (5) and (6),
-/// `scale · 143.9 Z_i C_j Z_k / ((r_ij + r_jk) θ² exp(2D))`, for the angle
-/// `i-j-k` with equilibrium bond lengths `r_ij`, `r_jk` (Å) and equilibrium
-/// angle `theta_deg`.
+/// Angle force constant of eq. (5) as corrected in the erratum, with `D`
+/// of eq. (6): `143.9 Z_i C_j Z_k / ((r_ij + r_jk) sqrt(θ) exp(2D))`, for
+/// the angle `i-j-k` with equilibrium bond lengths `r_ij`, `r_jk` (Å) and
+/// equilibrium angle `theta_deg` (θ enters the formula in radians).
 ///
-/// The paper does not state the unit of θ; radians are used. With `scale =
-/// 1` the formula gives roughly a third of the tabulated force constants,
-/// so the builder passes the scale fitted to the parameter table in use
-/// (the median of table value / formula value over all tabulated angles).
-pub fn angle_force_constant(zi: u8, zj: u8, zk: u8, r_ij: f64, r_jk: f64, theta_deg: f64, scale: f64) -> Option<f64> {
+/// The original paper prints `θ⁻²`; the erratum corrects the exponent to
+/// `-1/2`. With it the formula reproduces the angle force constants of
+/// GAFF 1.81 to within 0.1 % (median ratio 1.0000 over 5299 angles). The
+/// GAFF 2.x tables were refitted and are on average 13-25 % stiffer than
+/// this rule.
+pub fn angle_force_constant(zi: u8, zj: u8, zk: u8, r_ij: f64, r_jk: f64, theta_deg: f64) -> Option<f64> {
     let (zi, zk) = (TABLE4_Z[slot(zi)?], TABLE4_Z[slot(zk)?]);
     let cj = table4_c(zj)?;
     let theta = theta_deg.to_radians();
@@ -125,7 +127,7 @@ pub fn angle_force_constant(zi: u8, zj: u8, zk: u8, r_ij: f64, r_jk: f64, theta_
         return None;
     }
     let d = (r_ij - r_jk) * (r_ij - r_jk) / (sum * sum);
-    Some(scale * 143.9 * zi * cj * zk / (sum * theta * theta) * (-2.0 * d).exp())
+    Some(143.9 * zi * cj * zk / (sum * theta.sqrt()) * (-2.0 * d).exp())
 }
 
 #[cfg(test)]
@@ -149,11 +151,16 @@ mod tests {
 
     #[test]
     fn angle_rule() {
-        let k = angle_force_constant(6, 6, 6, 1.535, 1.535, 110.63, 1.0).unwrap();
-        let expect = 143.9 * 1.183 * 1.339 * 1.183 / (3.07 * 110.63_f64.to_radians().powi(2));
-        assert!((k - expect).abs() < 1e-9);
+        // tabulated GAFF 1.81 values: c3-c3-c3 62.9 (111.51°, 1.5375 Å),
+        // hc-c3-hc 39.4 (107.58°, 1.0969 Å), c3-c3-hc 46.3 (109.80°)
+        let k = angle_force_constant(6, 6, 6, 1.5375, 1.5375, 111.51).unwrap();
+        assert!((k - 62.9).abs() < 0.05, "{k}");
+        let k = angle_force_constant(1, 6, 1, 1.0969, 1.0969, 107.58).unwrap();
+        assert!((k - 39.4).abs() < 0.05, "{k}");
+        let k = angle_force_constant(6, 6, 1, 1.5375, 1.0969, 109.80).unwrap();
+        assert!((k - 46.3).abs() < 0.05, "{k}");
         // unequal bonds are softer (eq. 6)
-        assert!(angle_force_constant(1, 6, 17, 1.09, 1.80, 108.0, 1.0).unwrap() < angle_force_constant(1, 6, 17, 1.445, 1.445, 108.0, 1.0).unwrap());
-        assert!(angle_force_constant(6, 9, 6, 1.4, 1.4, 109.0, 1.0).is_none());
+        assert!(angle_force_constant(1, 6, 17, 1.09, 1.80, 108.0).unwrap() < angle_force_constant(1, 6, 17, 1.445, 1.445, 108.0).unwrap());
+        assert!(angle_force_constant(6, 9, 6, 1.4, 1.4, 109.0).is_none());
     }
 }

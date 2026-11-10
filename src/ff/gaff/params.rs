@@ -2,12 +2,16 @@
 //! (`src/data/gaff/`, public domain; see the `README.md` there).
 //!
 //! The meaning of the columns follows the format notes at the end of
-//! `gaff2.dat` and Fig. 3 of Wang et al. (2004):
+//! `gaff2.dat`, Fig. 3 of Wang et al. (2004) and the footnotes of Table 14
+//! of Cornell et al., J. Am. Chem. Soc. 117, 5179 (1995), whose parameter
+//! tables have the same columns:
 //!
 //! * bonds `E = K (r - r0)²`, angles `E = K (θ - θ0)²` (eq. 1 of the paper);
 //! * torsions `multiplicity  force_constant  phase  periodicity`, with
-//!   `E = (force_constant / multiplicity) (1 + cos(n φ - phase))`; a
-//!   negative periodicity means that more terms of the same torsion follow;
+//!   `E = (force_constant / multiplicity) (1 + cos(n φ - phase))`: the
+//!   force constant is `V_n / 2`, the multiplicity is the number of bond
+//!   paths the barrier is divided over, and a negative periodicity means
+//!   that more terms of the same torsion follow;
 //! * impropers `force_constant  phase  periodicity`, central atom third;
 //! * van der Waals `R*`, `ε` per atom type, combined as `R*_i + R*_j` and
 //!   `sqrt(ε_i ε_j)`.
@@ -100,9 +104,6 @@ pub struct GaffParams {
     torsions: HashMap<[u16; 4], Vec<TorsionTerm>>,
     impropers: Vec<([u16; 4], TorsionTerm)>,
     vdw: HashMap<u16, VdwParam>,
-    /// Scale of the empirical angle force constant (see
-    /// [`estimate::angle_force_constant`]), fitted to this table.
-    pub(crate) angle_scale: f64,
 }
 
 fn torsion_key(k: [u16; 4]) -> [u16; 4] {
@@ -163,7 +164,6 @@ impl GaffParams {
             torsions: HashMap::new(),
             impropers: Vec::new(),
             vdw: HashMap::new(),
-            angle_scale: 1.0,
         };
         // type names are two characters wide, separated by '-'
         fn name_at(line: &str, k: usize) -> &str {
@@ -261,13 +261,13 @@ impl GaffParams {
             let id = p.intern(name);
             p.vdw.entry(id).or_insert(VdwParam { r_star: r, eps: e });
         }
-        p.angle_scale = p.fit_angle_scale();
         p
     }
 
-    /// Median ratio of the tabulated angle force constants to eq. (5) of
-    /// the paper (see [`estimate::angle_force_constant`]).
-    fn fit_angle_scale(&self) -> f64 {
+    /// Median ratio of the tabulated angle force constants to the
+    /// empirical rule [`estimate::angle_force_constant`]: 1.000 for GAFF
+    /// 1.81, whose angle force constants come from that rule.
+    pub fn angle_rule_ratio(&self) -> f64 {
         let mut ratios: Vec<f64> = Vec::new();
         for (&(a, b, c), ap) in &self.angles {
             if ap.k <= 0.0 {
@@ -276,7 +276,7 @@ impl GaffParams {
             let (Some(b1), Some(b2)) = (self.bond(a, b), self.bond(b, c)) else { continue };
             let el = |t: u16| type_element(&self.names[t as usize]);
             let (Some(za), Some(zb), Some(zc)) = (el(a), el(b), el(c)) else { continue };
-            if let Some(k) = estimate::angle_force_constant(za, zb, zc, b1.r0, b2.r0, ap.theta0, 1.0) {
+            if let Some(k) = estimate::angle_force_constant(za, zb, zc, b1.r0, b2.r0, ap.theta0) {
                 ratios.push(ap.k / k);
             }
         }

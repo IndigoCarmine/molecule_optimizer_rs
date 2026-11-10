@@ -74,8 +74,11 @@ fn parameter_files_parse() {
         assert_eq!(p.atom_types().len(), n_types, "{v:?}");
         assert!(p.has_type("c3") && p.has_type("sy") && !p.has_type("X"));
         assert!(p.vdw_param("c3").is_some() && p.vdw_param("ho").is_some());
-        assert!(p.angle_scale > 2.0 && p.angle_scale < 4.0, "{}", p.angle_scale);
     }
+    // the angle force constants of GAFF 1.81 follow the corrected eq. (5);
+    // the GAFF 2.x tables were refitted
+    assert!((GaffParams::get(GaffVariant::Gaff).angle_rule_ratio() - 1.0).abs() < 1e-3);
+    assert!(GaffParams::get(GaffVariant::Gaff2).angle_rule_ratio() > 1.05);
     let p = GaffParams::get(GaffVariant::Gaff);
     assert_eq!(p.bond_param("c3", "c3"), Some(BondParam { k: 300.9, r0: 1.5375 }));
     assert_eq!(p.bond_param("hc", "c3"), p.bond_param("c3", "hc"));

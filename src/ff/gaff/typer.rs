@@ -11,8 +11,15 @@
 //! Points the sources leave open, and the choices made here:
 //!
 //! * "electron-withdrawal group" (h1-h5): a N, O, F, Cl or Br atom bonded
-//!   to the carbon ([`ELECTRON_WITHDRAWING`]). Hydrogens on a carbonyl
-//!   carbon are `ha` (Fig. 1a, molecule 4).
+//!   to the carbon ([`ELECTRON_WITHDRAWING`]). The GAFF paper does not
+//!   define it; Cornell et al. (1995), from which GAFF inherits these
+//!   types, count "electronegative (O, N, F, S)" substituents for sp3 C-H
+//!   (H1-H3) and electronegative neighbours for sp2 C-H (H4, H5), so
+//!   whether S, Cl and Br count in GAFF is open. As in Cornell et al., h4
+//!   and h5 are used for every non-sp3 carbon, not only aromatic ones.
+//!   Hydrogens on a carbonyl carbon are `ha` (Fig. 1a, molecule 4).
+//! * `hx` (hydrogen on a carbon next to a positively charged group; `HP`
+//!   in Cornell et al.) is used next to a four-coordinate N+.
 //! * "pure aromatic" (`ca`, `nb`, `pb`): a six-membered aromatic ring of C,
 //!   N and P atoms in which every atom has a double bond (in the Kekulé
 //!   structure) to another aromatic atom. Atoms of other aromatic rings

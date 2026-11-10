@@ -4,8 +4,12 @@
 //! Atom typing, the functional form and the rules for parameters that are
 //! not tabulated are implemented from J. Wang, R. M. Wolf, J. W. Caldwell,
 //! P. A. Kollman, D. A. Case, "Development and testing of a general Amber
-//! force field", J. Comput. Chem. 25, 1157-1174 (2004). The parameter
-//! tables are the public-domain files in `src/data/gaff/`; the atom types
+//! force field", J. Comput. Chem. 25, 1157-1174 (2004) and its erratum,
+//! J. Comput. Chem. 26, 114 (2005). The conventions GAFF inherits from the
+//! Amber protein force fields (combining rules, 1-4 scaling, the columns of
+//! the parameter tables) are those of Cornell et al., J. Am. Chem. Soc.
+//! 117, 5179 (1995) and Weiner et al., J. Am. Chem. Soc. 106, 765 (1984).
+//! The parameter tables are the public-domain files in `src/data/gaff/`; the atom types
 //! added after the paper are assigned from the descriptions in those files
 //! (see [`typer`]).
 //!
@@ -16,8 +20,9 @@
 //!   + Σ_{i<j} [ ε_ij ((R*_ij / r)¹² - 2 (R*_ij / r)⁶) + q_i q_j / (ε r) ]
 //! ```
 //!
-//! with 1-4 van der Waals interactions scaled by 1/2 and 1-4 electrostatics
-//! by 1/1.2, and no cutoff. The input must be a complete structure with
+//! with `R*_ij = R*_i + R*_j` and `ε_ij = sqrt(ε_i ε_j)`, 1-4 van der Waals
+//! interactions scaled by 1/2 and 1-4 electrostatics by 1/1.2, and no
+//! cutoff. The input must be a complete structure with
 //! all hydrogens.
 //!
 //! Partial charges are not computed here (the paper uses RESP or AM1-BCC
@@ -54,8 +59,9 @@ pub use builder::GaffAssignment;
 pub use params::{AngleParam, AtomTypeInfo, BondParam, GaffParams, GaffVariant, TorsionTerm, VdwParam};
 pub use terms::{CoulombContrib, FourierTorsionContrib, HarmonicAngleContrib};
 
-/// `e² / (4 π ε0)` in kcal·Å/mol (from the CODATA constants; the paper
-/// gives no value).
+/// `e² / (4 π ε0)` in kcal·Å/mol (from the CODATA constants; none of the
+/// papers gives a value). Amber programs use 18.2223² = 332.0522; set
+/// [`GaffBuilder::coulomb_constant`] to compare with them.
 pub const COULOMB_CONSTANT: f64 = 332.063_71;
 
 /// Builder for GAFF force fields.

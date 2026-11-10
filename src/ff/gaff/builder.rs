@@ -27,7 +27,8 @@ pub struct GaffAssignment {
     pub estimated_bonds: Vec<[usize; 2]>,
     /// Angles whose parameters come from the empirical rules of the paper
     /// (equilibrium angle from the `A-B-A` / `C-B-C` entries or from the
-    /// input structure, force constant from eq. 5).
+    /// input structure, force constant from eq. 5 as corrected in the
+    /// erratum).
     pub estimated_angles: Vec<[usize; 3]>,
     /// Torsions taken from the entry of the equivalent paired types or of
     /// the basic types of the central atoms.
@@ -169,7 +170,7 @@ pub(crate) fn parameterize(mol: &Molecule, variant: GaffVariant) -> Result<(Gaff
                         _ if has_coords => angle(mol.coords[i], mol.coords[j], mol.coords[k]).to_degrees(),
                         _ => return None,
                     };
-                    let k_theta = estimate::angle_force_constant(z(i), z(j), z(k), bond_r0[bi]?, bond_r0[bk]?, theta0, p.angle_scale)?;
+                    let k_theta = estimate::angle_force_constant(z(i), z(j), z(k), bond_r0[bi]?, bond_r0[bk]?, theta0)?;
                     a.estimated_angles.push([i, j, k]);
                     Some(AngleParam { k: k_theta, theta0 })
                 });

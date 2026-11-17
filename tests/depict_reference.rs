@@ -127,16 +127,28 @@ fn check(key: &str, sdf: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "windows"),
+    ignore = "RDKit depiction coordinates are not portable across math libraries"
+)]
 fn depict_matches_rdkit_explicit_h() {
     check("h", "tests/data/depict/molecules_h.sdf");
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "windows"),
+    ignore = "RDKit depiction coordinates are not portable across math libraries"
+)]
 fn depict_matches_rdkit_implicit_h() {
     check("noh", "tests/data/depict/molecules_noh.sdf");
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "windows"),
+    ignore = "RDKit depiction coordinates are not portable across math libraries"
+)]
 fn depict_matches_rdkit_bench_set() {
     check("set", "benches/data/set/initial.sdf");
 }

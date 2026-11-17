@@ -587,6 +587,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "futures",
+ "libm",
  "naga",
  "nalgebra",
  "pollster",

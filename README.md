@@ -24,7 +24,7 @@ Add the crate (not on crates.io yet):
 
 ```toml
 [dependencies]
-molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.0" }
+molecule_optimizer_rs = { git = "https://github.com/IndigoCarmine/molecule_optimizer_rs", tag = "v0.2.1" }
 ```
 
 ### Single-point energy

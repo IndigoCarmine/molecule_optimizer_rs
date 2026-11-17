@@ -18,6 +18,8 @@ The force fields (UFF, MMFF94/MMFF94s), the BFGS minimizer and the distance-geom
 
 The test suite compares against data generated with RDKit (`tools/gen_*.py`): atom types, partial charges, energies and per-term energies, gradients, ETKDG embeddings, ring perception, SMARTS matching, minimized structures and 2D depictions. On the benchmark set (`benches/data/set`, 110 molecules), energies at the initial and at RDKit-optimized structures match RDKit to better than 1e-9 relative, and minimizations from the same start agree within 3e-7 kcal/mol and 1.2e-4 Å heavy-atom RMSD.
 
+2D depictions are compared coordinate by coordinate (1e-6 Å). That exact agreement is verified on Windows, where the reference data was generated. Where a layout step has a geometric tie, such as equal gaps around an atom, the choice comes down to the last bit of the platform math library's `sin`/`cos`/`acos`/`atan2`, as it does in RDKit itself, so on Linux and macOS a few percent of molecules (about 5 % of the test depictions) get a different but equally valid layout.
+
 ## Usage
 
 Add the crate (not on crates.io yet):

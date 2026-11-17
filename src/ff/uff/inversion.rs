@@ -38,7 +38,10 @@ fn cos_y(g: &OutOfPlane) -> f64 {
 
 /// RDKit `Utils::calcInversionCoefficientsAndForceConstant`:
 /// returns `(force_constant, C0, C1, C2)`.
-pub fn calc_inversion_coefficients_and_force_constant(at2_atomic_num: u8, is_c_bound_to_o: bool) -> (f64, f64, f64, f64) {
+pub fn calc_inversion_coefficients_and_force_constant(
+    at2_atomic_num: u8,
+    is_c_bound_to_o: bool,
+) -> (f64, f64, f64, f64) {
     let (mut res, c0, c1, c2);
     if matches!(at2_atomic_num, 6..=8) {
         c0 = 1.0;
@@ -74,9 +77,21 @@ pub struct InversionContrib {
 }
 
 impl InversionContrib {
-    pub fn new(idx: [usize; 4], at2_atomic_num: u8, is_c_bound_to_o: bool, oob_force_scaling_factor: f64) -> Self {
-        let (k, c0, c1, c2) = calc_inversion_coefficients_and_force_constant(at2_atomic_num, is_c_bound_to_o);
-        InversionContrib { idx, force_constant: oob_force_scaling_factor * k, c0, c1, c2 }
+    pub fn new(
+        idx: [usize; 4],
+        at2_atomic_num: u8,
+        is_c_bound_to_o: bool,
+        oob_force_scaling_factor: f64,
+    ) -> Self {
+        let (k, c0, c1, c2) =
+            calc_inversion_coefficients_and_force_constant(at2_atomic_num, is_c_bound_to_o);
+        InversionContrib {
+            idx,
+            force_constant: oob_force_scaling_factor * k,
+            c0,
+            c1,
+            c2,
+        }
     }
 
     #[inline(always)]
@@ -100,7 +115,17 @@ impl InversionContrib {
         let sin_theta_sq = 1.0 - cos_theta * cos_theta;
         let sin_theta = sin_theta_sq.sqrt().max(1.0e-8);
         let de_dw = -self.force_constant * (self.c1 * cos_y + 4.0 * self.c2 * cos_y * sin_y);
-        g.add_grad(grad, self.idx, &u, de_dw, cos_y, sin_y, cos_theta, sin_theta, sin_theta_sq);
+        g.add_grad(
+            grad,
+            self.idx,
+            &u,
+            de_dw,
+            cos_y,
+            sin_y,
+            cos_theta,
+            sin_theta,
+            sin_theta_sq,
+        );
     }
 }
 

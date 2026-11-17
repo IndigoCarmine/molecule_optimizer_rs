@@ -22,7 +22,12 @@ use wide::f64x4;
 /// Minimal arithmetic needed by the kernels (implemented for `f64` and
 /// `f64x4`).
 pub(crate) trait Real:
-    Copy + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self> + Neg<Output = Self>
+    Copy
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Neg<Output = Self>
 {
     fn splat(x: f64) -> Self;
     /// `self * m + a`
@@ -121,7 +126,8 @@ pub(crate) fn erfc_exp_inv<T: Real>(x: T, inv: T) -> (T, T) {
     let u8 = u4 * u4;
     let u16 = u8 * u8;
     let b = |k: usize| c(2 * k + 1).mul_add(u, c(2 * k));
-    let (b0, b1, b2, b3, b4, b5, b6, b7, b8, b9) = (b(0), b(1), b(2), b(3), b(4), b(5), b(6), b(7), b(8), b(9));
+    let (b0, b1, b2, b3, b4, b5, b6, b7, b8, b9) =
+        (b(0), b(1), b(2), b(3), b(4), b(5), b(6), b(7), b(8), b(9));
     let c0 = b1.mul_add(u2, b0);
     let c1 = b3.mul_add(u2, b2);
     let c2 = b5.mul_add(u2, b4);
@@ -144,7 +150,10 @@ pub fn erfc(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/erfc_reference.rs"));
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/erfc_reference.rs"
+    ));
 
     #[test]
     fn scalar_and_simd_match_high_precision_reference() {

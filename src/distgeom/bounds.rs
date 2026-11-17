@@ -16,7 +16,10 @@ pub struct BoundsMatrix {
 impl BoundsMatrix {
     /// All entries zero.
     pub fn new(n: usize) -> Self {
-        BoundsMatrix { n, data: vec![0.0; n * n] }
+        BoundsMatrix {
+            n,
+            data: vec![0.0; n * n],
+        }
     }
 
     /// RDKit `initBoundsMat` defaults: lower 0, upper 1000.
@@ -52,21 +55,37 @@ impl BoundsMatrix {
 
     #[inline]
     pub fn upper(&self, i: usize, j: usize) -> f64 {
-        if i < j { self.val(i, j) } else { self.val(j, i) }
+        if i < j {
+            self.val(i, j)
+        } else {
+            self.val(j, i)
+        }
     }
     #[inline]
     pub fn lower(&self, i: usize, j: usize) -> f64 {
-        if i < j { self.val(j, i) } else { self.val(i, j) }
+        if i < j {
+            self.val(j, i)
+        } else {
+            self.val(i, j)
+        }
     }
     #[inline]
     pub fn set_upper(&mut self, i: usize, j: usize, v: f64) {
         debug_assert!(v >= 0.0, "negative upper bound");
-        if i < j { self.set_val(i, j, v) } else { self.set_val(j, i, v) }
+        if i < j {
+            self.set_val(i, j, v)
+        } else {
+            self.set_val(j, i, v)
+        }
     }
     #[inline]
     pub fn set_lower(&mut self, i: usize, j: usize, v: f64) {
         debug_assert!(v >= 0.0, "negative lower bound");
-        if i < j { self.set_val(j, i, v) } else { self.set_val(i, j, v) }
+        if i < j {
+            self.set_val(j, i, v)
+        } else {
+            self.set_val(i, j, v)
+        }
     }
 
     /// Sets the upper bound only if smaller than the current one and larger
@@ -96,11 +115,23 @@ impl BoundsMatrix {
 
     /// Upper-bound matrix as nested rows (diagonal 0).
     pub fn upper_matrix(&self) -> Vec<Vec<f64>> {
-        (0..self.n).map(|i| (0..self.n).map(|j| if i == j { 0.0 } else { self.upper(i, j) }).collect()).collect()
+        (0..self.n)
+            .map(|i| {
+                (0..self.n)
+                    .map(|j| if i == j { 0.0 } else { self.upper(i, j) })
+                    .collect()
+            })
+            .collect()
     }
     /// Lower-bound matrix as nested rows (diagonal 0).
     pub fn lower_matrix(&self) -> Vec<Vec<f64>> {
-        (0..self.n).map(|i| (0..self.n).map(|j| if i == j { 0.0 } else { self.lower(i, j) }).collect()).collect()
+        (0..self.n)
+            .map(|i| {
+                (0..self.n)
+                    .map(|j| if i == j { 0.0 } else { self.lower(i, j) })
+                    .collect()
+            })
+            .collect()
     }
 
     /// Raw row-major data (upper bounds above the diagonal, lower below),
@@ -149,7 +180,10 @@ pub fn triangle_smooth_bounds(bm: &mut BoundsMatrix, tol: f64) -> bool {
                 }
                 let l_bound = bm.val(j, i);
                 let u_bound = bm.val(i, j);
-                if tol > 0.0 && (l_bound - u_bound) / l_bound > 0.0 && (l_bound - u_bound) / l_bound < tol {
+                if tol > 0.0
+                    && (l_bound - u_bound) / l_bound > 0.0
+                    && (l_bound - u_bound) / l_bound < tol
+                {
                     bm.set_val(i, j, l_bound);
                 } else if l_bound - u_bound > 0.0 {
                     return false;

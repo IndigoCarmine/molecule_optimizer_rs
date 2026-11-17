@@ -51,7 +51,10 @@ impl TorsionAngleContrib {
         end_atom_is_sp2: bool,
     ) -> Self {
         use Hybridization::{SP2, SP3};
-        debug_assert!(matches!(hyb2, SP2 | SP3) && matches!(hyb3, SP2 | SP3), "bad hybridizations");
+        debug_assert!(
+            matches!(hyb2, SP2 | SP3) && matches!(hyb3, SP2 | SP3),
+            "bad hybridizations"
+        );
         let (force_constant, order, cos_term);
         if hyb2 == SP3 && hyb3 == SP3 {
             if bond_order23 == 1.0 && is_in_group6(at_num2) && is_in_group6(at_num3) {
@@ -90,7 +93,12 @@ impl TorsionAngleContrib {
             order = o;
             cos_term = ct;
         }
-        TorsionAngleContrib { idx, force_constant, order, cos_term }
+        TorsionAngleContrib {
+            idx,
+            force_constant,
+            order,
+            cos_term,
+        }
     }
 
     /// RDKit `scaleForceConstant`.
@@ -128,9 +136,18 @@ impl TorsionAngleContrib {
     fn grad_of(&self, g: &Torsion, grad: &mut [f64]) {
         let cos_phi = g.cos_phi;
         let sin_phi_sq = 1.0 - cos_phi * cos_phi;
-        let sin_phi = if sin_phi_sq > 0.0 { sin_phi_sq.sqrt() } else { 0.0 };
+        let sin_phi = if sin_phi_sq > 0.0 {
+            sin_phi_sq.sqrt()
+        } else {
+            0.0
+        };
         let de_dphi = self.theta_deriv(cos_phi, sin_phi);
-        let sin_term = de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
+        let sin_term = de_dphi
+            * (if is_double_zero(sin_phi) {
+                1.0 / cos_phi
+            } else {
+                1.0 / sin_phi
+            });
         g.add_grad(grad, self.idx, sin_term);
     }
 }

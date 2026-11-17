@@ -20,12 +20,22 @@ fn as_rings(v: &serde_json::Value) -> Vec<Vec<usize>> {
     v.as_array()
         .unwrap()
         .iter()
-        .map(|r| r.as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as usize).collect())
+        .map(|r| {
+            r.as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_u64().unwrap() as usize)
+                .collect()
+        })
         .collect()
 }
 
 fn as_list(v: &serde_json::Value) -> Vec<usize> {
-    v.as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as usize).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_u64().unwrap() as usize)
+        .collect()
 }
 
 /// (file, record, molecule) for every non-failed fixture record.
@@ -41,8 +51,15 @@ fn records() -> Vec<(String, serde_json::Value, Molecule)> {
                 continue;
             }
             let idx = rec["index"].as_u64().unwrap() as usize;
-            let mol = mols[idx].as_ref().unwrap_or_else(|e| panic!("{file}[{idx}]: read failed: {e}")).clone();
-            out.push((format!("{file}[{idx}] {}", rec["name"].as_str().unwrap_or("")), rec.clone(), mol));
+            let mol = mols[idx]
+                .as_ref()
+                .unwrap_or_else(|e| panic!("{file}[{idx}]: read failed: {e}"))
+                .clone();
+            out.push((
+                format!("{file}[{idx}] {}", rec["name"].as_str().unwrap_or("")),
+                rec.clone(),
+                mol,
+            ));
         }
     }
     out
@@ -59,14 +76,25 @@ fn rings_match_rdkit() {
         let bond_rings = as_rings(&rec["bond_rings"]);
         n_rings += atom_rings.len();
         if ri.atom_rings != atom_rings || ri.bond_rings != bond_rings {
-            failures.push(format!("{label}:\n    ours  {:?}\n    rdkit {:?}", ri.atom_rings, atom_rings));
+            failures.push(format!(
+                "{label}:\n    ours  {:?}\n    rdkit {:?}",
+                ri.atom_rings, atom_rings
+            ));
         }
     }
-    println!("{} molecules, {n_rings} rings compared; {} mismatches", recs.len(), failures.len());
+    println!(
+        "{} molecules, {n_rings} rings compared; {} mismatches",
+        recs.len(),
+        failures.len()
+    );
     for f in &failures {
         println!("  {f}");
     }
-    assert!(failures.is_empty(), "{} molecules differ from RDKit ring perception", failures.len());
+    assert!(
+        failures.is_empty(),
+        "{} molecules differ from RDKit ring perception",
+        failures.len()
+    );
 }
 
 #[test]
@@ -75,21 +103,29 @@ fn canonical_ranks_and_kekule_match_rdkit() {
     let mut rank_failures = Vec::new();
     let mut kek_failures = Vec::new();
     for (label, rec, mol) in records() {
-        let Some(ranks) = rec.get("ranks") else { continue };
+        let Some(ranks) = rec.get("ranks") else {
+            continue;
+        };
         n += 1;
         let theirs = as_list(ranks);
         let ours = canonical_atom_ranks(&mol);
         if ours != theirs {
-            rank_failures.push(format!("{label}:\n    ours  {ours:?}\n    rdkit {theirs:?}"));
+            rank_failures.push(format!(
+                "{label}:\n    ours  {ours:?}\n    rdkit {theirs:?}"
+            ));
         }
         if rec["kekule_double"].is_null() {
             continue;
         }
         let theirs = as_list(&rec["kekule_double"]);
         let k = kekulized_copy_canonical(&mol).unwrap();
-        let ours: Vec<usize> = (0..k.num_bonds()).filter(|&b| k.bond(b).order == BondOrder::Double).collect();
+        let ours: Vec<usize> = (0..k.num_bonds())
+            .filter(|&b| k.bond(b).order == BondOrder::Double)
+            .collect();
         if ours != theirs {
-            kek_failures.push(format!("{label}:\n    ours  {ours:?}\n    rdkit {theirs:?}"));
+            kek_failures.push(format!(
+                "{label}:\n    ours  {ours:?}\n    rdkit {theirs:?}"
+            ));
         }
     }
     println!(
@@ -100,6 +136,14 @@ fn canonical_ranks_and_kekule_match_rdkit() {
     for f in rank_failures.iter().chain(&kek_failures) {
         println!("  {f}");
     }
-    assert!(kek_failures.is_empty(), "{} Kekule structures differ from RDKit", kek_failures.len());
-    assert!(rank_failures.is_empty(), "{} canonical rankings differ from RDKit", rank_failures.len());
+    assert!(
+        kek_failures.is_empty(),
+        "{} Kekule structures differ from RDKit",
+        kek_failures.len()
+    );
+    assert!(
+        rank_failures.is_empty(),
+        "{} canonical rankings differ from RDKit",
+        rank_failures.len()
+    );
 }

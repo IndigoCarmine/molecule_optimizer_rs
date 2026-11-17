@@ -301,15 +301,33 @@ type Combine<'a, T> = dyn Fn(T, T, &mut [f64], &[f64]) -> T + Sync + 'a;
 /// tree depend on the thread count or on scheduling, so the floating-point
 /// sums are the same on every run. Chunk `c` gets `bufs[c·len..(c+1)·len]`
 /// (see [`par_tree_chunks`]); the root result is in the first buffer.
-fn par_tree<T: Send>(total: usize, len: usize, bufs: &mut [f64], leaf: &Leaf<'_, T>, combine: &Combine<'_, T>) -> T {
+fn par_tree<T: Send>(
+    total: usize,
+    len: usize,
+    bufs: &mut [f64],
+    leaf: &Leaf<'_, T>,
+    combine: &Combine<'_, T>,
+) -> T {
     #[allow(clippy::too_many_arguments)]
-    fn rec<T: Send>(lo: usize, hi: usize, chunk: usize, total: usize, len: usize, bufs: &mut [f64], leaf: &Leaf<'_, T>, combine: &Combine<'_, T>) -> T {
+    fn rec<T: Send>(
+        lo: usize,
+        hi: usize,
+        chunk: usize,
+        total: usize,
+        len: usize,
+        bufs: &mut [f64],
+        leaf: &Leaf<'_, T>,
+        combine: &Combine<'_, T>,
+    ) -> T {
         if hi - lo == 1 {
             return leaf(lo * chunk..total.min(hi * chunk), &mut bufs[..len]);
         }
         let mid = lo + (hi - lo) / 2;
         let (l, r) = bufs.split_at_mut((mid - lo) * len);
-        let (a, b) = rayon::join(|| rec(lo, mid, chunk, total, len, &mut *l, leaf, combine), || rec(mid, hi, chunk, total, len, &mut *r, leaf, combine));
+        let (a, b) = rayon::join(
+            || rec(lo, mid, chunk, total, len, &mut *l, leaf, combine),
+            || rec(mid, hi, chunk, total, len, &mut *r, leaf, combine),
+        );
         combine(a, b, &mut l[..len], &r[..len])
     }
     let (chunk, n) = par_tree_chunks(total);
@@ -332,7 +350,12 @@ impl GradBufs {
     /// Runs `f` with a buffer set of at least `n` values (contents
     /// unspecified).
     fn with<R>(&self, n: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
-        let mut v = self.0.lock().unwrap_or_else(|e| e.into_inner()).pop().unwrap_or_default();
+        let mut v = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .unwrap_or_default();
         if v.len() < n {
             v.resize(n, 0.0);
         }
@@ -505,10 +528,13 @@ impl ForceField for ContribForceField {
     fn energy_breakdown(&self, pos: &[f64]) -> Vec<(String, f64)> {
         let mut out: Vec<(String, f64)> = Vec::new();
         for c in &self.contribs {
-            c.energy_terms(pos, &mut |label, e| match out.iter_mut().find(|(k, _)| k == label) {
-                Some((_, v)) => *v += e,
-                None => out.push((label.to_string(), e)),
-            });
+            c.energy_terms(
+                pos,
+                &mut |label, e| match out.iter_mut().find(|(k, _)| k == label) {
+                    Some((_, v)) => *v += e,
+                    None => out.push((label.to_string(), e)),
+                },
+            );
         }
         out
     }

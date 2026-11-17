@@ -28,11 +28,12 @@ use crate::perception::rings::RingInfo;
 /// Most common isotope per atomic number (RDKit periodic table,
 /// `getMostCommonIsotope`), indices 0..=118.
 const MOST_COMMON_ISOTOPE: [u16; 119] = [
-    0, 1, 4, 7, 9, 11, 12, 14, 16, 19, 20, 23, 24, 27, 28, 31, 32, 35, 40, 39, 40, 45, 48, 51, 52, 55, 56, 59, 58,
-    63, 64, 69, 74, 75, 80, 79, 84, 85, 88, 89, 90, 93, 98, 97, 102, 103, 106, 107, 114, 115, 120, 121, 130, 127,
-    132, 133, 138, 139, 140, 141, 142, 145, 152, 153, 158, 159, 164, 165, 166, 169, 174, 175, 180, 181, 184, 187,
-    192, 193, 195, 197, 202, 205, 208, 209, 209, 210, 222, 223, 226, 227, 232, 231, 238, 236, 238, 241, 243, 247,
-    249, 252, 257, 258, 259, 262, 267, 268, 271, 270, 269, 278, 281, 281, 285, 284, 289, 288, 293, 292, 294,
+    0, 1, 4, 7, 9, 11, 12, 14, 16, 19, 20, 23, 24, 27, 28, 31, 32, 35, 40, 39, 40, 45, 48, 51, 52,
+    55, 56, 59, 58, 63, 64, 69, 74, 75, 80, 79, 84, 85, 88, 89, 90, 93, 98, 97, 102, 103, 106, 107,
+    114, 115, 120, 121, 130, 127, 132, 133, 138, 139, 140, 141, 142, 145, 152, 153, 158, 159, 164,
+    165, 166, 169, 174, 175, 180, 181, 184, 187, 192, 193, 195, 197, 202, 205, 208, 209, 209, 210,
+    222, 223, 226, 227, 232, 231, 238, 236, 238, 241, 243, 247, 249, 252, 257, 258, 259, 262, 267,
+    268, 271, 270, 269, 278, 281, 281, 285, 284, 289, 288, 293, 292, 294,
 ];
 
 /// `Chirality::minRingSizeForDoubleBondStereo`.
@@ -47,7 +48,11 @@ enum Dir {
 }
 
 fn flip(d: Dir) -> Dir {
-    if d == Dir::EndUpRight { Dir::EndDownRight } else { Dir::EndUpRight }
+    if d == Dir::EndUpRight {
+        Dir::EndDownRight
+    } else {
+        Dir::EndUpRight
+    }
 }
 
 fn is_directional(d: Dir) -> bool {
@@ -81,7 +86,10 @@ fn bond_affects_atom_chirality(mol: &Molecule, b: usize, atom: usize) -> bool {
 
 /// `Chirality::detail::getAtomNonzeroDegree`.
 fn nonzero_degree(mol: &Molecule, atom: usize) -> usize {
-    mol.atom_bonds(atom).iter().filter(|&&(_, b)| bond_affects_atom_chirality(mol, b, atom)).count()
+    mol.atom_bonds(atom)
+        .iter()
+        .filter(|&&(_, b)| bond_affects_atom_chirality(mol, b, atom))
+        .count()
 }
 
 /// `Atom::getTotalNumHs()` (without neighbors): hidden hydrogens.
@@ -162,7 +170,10 @@ fn build_cip_invariants(mol: &Molecule) -> Vec<i64> {
             let num = (a.atomic_num as i64) % 128;
             let mut mass: i64 = 0;
             if a.isotope != 0 {
-                let common = MOST_COMMON_ISOTOPE.get(a.atomic_num as usize).copied().unwrap_or(0) as i64;
+                let common = MOST_COMMON_ISOTOPE
+                    .get(a.atomic_num as usize)
+                    .copied()
+                    .unwrap_or(0) as i64;
                 mass = a.isotope as i64 - common;
                 if mass >= 0 {
                     mass += 1;
@@ -185,7 +196,11 @@ fn build_cip_invariants(mol: &Molecule) -> Vec<i64> {
 
 /// `findSegmentsToResort` + `recomputeRanks`: walks the sorted entries,
 /// assigns ranks and returns the tied regions and the number of ranks.
-fn find_segments(order: &[usize], cip: &[Vec<i64>], ranks: &mut [u32]) -> (Vec<(usize, usize)>, usize) {
+fn find_segments(
+    order: &[usize],
+    cip: &[Vec<i64>],
+    ranks: &mut [u32],
+) -> (Vec<(usize, usize)>, usize) {
     let mut res: Vec<(usize, usize)> = Vec::new();
     let mut num_independent = order.len();
     let mut current = 0usize;
@@ -248,7 +263,14 @@ fn iterate_cip_ranks(mol: &Molecule, invars: &[i64], seed_with_invars: bool) -> 
                     let p_special = bond.order == BondOrder::Double
                         && mol.atom(nbr).atomic_num == 15
                         && matches!(mol.degree(nbr), 3 | 4);
-                    (if p_special { 1 } else { twice_bond_type(bond.order) }, nbr)
+                    (
+                        if p_special {
+                            1
+                        } else {
+                            twice_bond_type(bond.order)
+                        },
+                        nbr,
+                    )
                 })
                 .collect()
         })
@@ -258,7 +280,10 @@ fn iterate_cip_ranks(mol: &Molecule, invars: &[i64], seed_with_invars: bool) -> 
     let mut num_its = 0;
     let mut last_num_ranks: i64 = -1;
     let mut nb: Vec<(u32, usize)> = Vec::new();
-    while !needs_sorting.is_empty() && num_its < max_its && (last_num_ranks < 0 || (last_num_ranks as usize) < num_ranks) {
+    while !needs_sorting.is_empty()
+        && num_its < max_its
+        && (last_num_ranks < 0 || (last_num_ranks as usize) < num_ranks)
+    {
         for index in 0..n {
             nb.clear();
             nb.extend_from_slice(&features[index]);
@@ -336,7 +361,11 @@ fn perturbation_order(mol: &Molecule, atom: usize, probe: &[usize]) -> usize {
 
 impl<'a> State<'a> {
     /// `isAtomPotentialChiralCenter`. Returns (legalCenter, hasDupes, nbrs).
-    fn is_potential_chiral_center(&self, atom: usize, ranks: Option<&[u32]>) -> (bool, bool, Vec<(u32, usize)>) {
+    fn is_potential_chiral_center(
+        &self,
+        atom: usize,
+        ranks: Option<&[u32]>,
+    ) -> (bool, bool, Vec<(u32, usize)>) {
         let mol = self.mol;
         let mut legal = true;
         let mut dupes = false;
@@ -354,17 +383,23 @@ impl<'a> State<'a> {
                 legal = false;
             } else if nz == 3 {
                 if nh == 1 {
-                    let protium = mol.neighbors(atom).any(|x| mol.atom(x).atomic_num == 1 && mol.atom(x).isotope == 0);
+                    let protium = mol
+                        .neighbors(atom)
+                        .any(|x| mol.atom(x).atomic_num == 1 && mol.atom(x).isotope == 0);
                     if protium {
                         legal = false;
                     }
                 } else {
                     legal = false;
                     if anum == 7 {
-                        let conj = mol.atom_bonds(atom).iter().any(|&(_, b)| mol.bond(b).is_conjugated);
+                        let conj = mol
+                            .atom_bonds(atom)
+                            .iter()
+                            .any(|&(_, b)| mol.bond(b).is_conjugated);
                         if mol.atom(atom).hybridization == crate::core::Hybridization::SP3
                             && !conj
-                            && (self.ri.is_atom_in_ring_of_size(atom, 3) || is_atom_bridgehead(mol, self.ri, atom))
+                            && (self.ri.is_atom_in_ring_of_size(atom, 3)
+                                || is_atom_bridgehead(mol, self.ri, atom))
                         {
                             legal = true;
                         }
@@ -428,7 +463,11 @@ impl<'a> State<'a> {
                     swaps += 1;
                 }
                 if swaps % 2 == 1 {
-                    tag = if tag == ChiralTag::Ccw { ChiralTag::Cw } else { ChiralTag::Ccw };
+                    tag = if tag == ChiralTag::Ccw {
+                        ChiralTag::Cw
+                    } else {
+                        ChiralTag::Ccw
+                    };
                 }
                 self.cip_code[atom] = Some(if tag == ChiralTag::Ccw { 'S' } else { 'R' });
             }
@@ -504,7 +543,13 @@ impl<'a> State<'a> {
             if bn.is_empty() || en.is_empty() {
                 continue;
             }
-            let pick = |v: &[(usize, Dir)]| if v.len() == 1 || rk[v[0].0] > rk[v[1].0] { v[0] } else { v[1] };
+            let pick = |v: &[(usize, Dir)]| {
+                if v.len() == 1 || rk[v[0].0] > rk[v[1].0] {
+                    v[0]
+                } else {
+                    v[1]
+                }
+            };
             let (beg_nbr, beg_dir) = pick(&bn);
             let (end_nbr, end_dir) = pick(&en);
             let conf_beg = bn.len() == 2 && bn[0].1 == bn[1].1;
@@ -593,7 +638,10 @@ impl<'a> State<'a> {
         match non_ring.len() {
             2 => ranks[non_ring[0]] != ranks[non_ring[1]] && ring_nbrs != ring_ranks.len(),
             1 => ring_nbrs > ring_ranks.len(),
-            0 => (ring_nbrs == 4 && ring_ranks.len() == 3) || (ring_nbrs == 3 && ring_ranks.len() == 2),
+            0 => {
+                (ring_nbrs == 4 && ring_ranks.len() == 3)
+                    || (ring_nbrs == 3 && ring_ranks.len() == 2)
+            }
             _ => false,
         }
     }
@@ -609,7 +657,9 @@ impl<'a> State<'a> {
         let mut seen = vec![false; n];
         let mut used = vec![false; n];
         let mut bonds_seen = vec![false; mol.num_bonds()];
-        let cand: Vec<bool> = (0..n).map(|a| self.is_ring_stereo_candidate(a, ranks)).collect();
+        let cand: Vec<bool> = (0..n)
+            .map(|a| self.is_ring_stereo_candidate(a, ranks))
+            .collect();
 
         for atom in 0..n {
             if seen[atom] {
@@ -640,10 +690,19 @@ impl<'a> State<'a> {
             }
             while let Some(ratom) = next.pop_front() {
                 seen[ratom] = true;
-                if self.tags[ratom] != ChiralTag::Unspecified && self.cip_code[ratom].is_none() && cand[ratom] {
-                    let same: i64 = if self.tags[ratom] == self.tags[atom] { 1 } else { -1 };
+                if self.tags[ratom] != ChiralTag::Unspecified
+                    && self.cip_code[ratom].is_none()
+                    && cand[ratom]
+                {
+                    let same: i64 = if self.tags[ratom] == self.tags[atom] {
+                        1
+                    } else {
+                        -1
+                    };
                     ring_stereo_atoms.push(same * (ratom as i64 + 1));
-                    rsa[ratom].get_or_insert_with(Vec::new).push(same * (atom as i64 + 1));
+                    rsa[ratom]
+                        .get_or_insert_with(Vec::new)
+                        .push(same * (atom as i64 + 1));
                     possible[ratom] = true;
                     possible[atom] = true;
                 }
@@ -659,16 +718,30 @@ impl<'a> State<'a> {
             }
             if !ring_stereo_atoms.is_empty() {
                 rsa[atom] = Some(ring_stereo_atoms.clone());
-                let idx_of = |e: i64| if e < 0 { (-e - 1) as usize } else { (e - 1) as usize };
+                let idx_of = |e: i64| {
+                    if e < 0 {
+                        (-e - 1) as usize
+                    } else {
+                        (e - 1) as usize
+                    }
+                };
                 for (k, &e) in ring_stereo_atoms.iter().enumerate() {
                     let ai = idx_of(e);
                     let mut l = rsa[ai].clone().unwrap_or_default();
                     for &oe in &ring_stereo_atoms[k + 1..] {
                         let oi = idx_of(oe);
                         let diff = (e < 0) ^ (oe < 0);
-                        l.push(if diff { -(oi as i64 + 1) } else { oi as i64 + 1 });
+                        l.push(if diff {
+                            -(oi as i64 + 1)
+                        } else {
+                            oi as i64 + 1
+                        });
                         let mut ol = rsa[oi].clone().unwrap_or_default();
-                        ol.push(if diff { -(ai as i64 + 1) } else { ai as i64 + 1 });
+                        ol.push(if diff {
+                            -(ai as i64 + 1)
+                        } else {
+                            ai as i64 + 1
+                        });
                         rsa[oi] = Some(ol);
                     }
                     rsa[ai] = Some(l);
@@ -724,7 +797,13 @@ impl<'a> State<'a> {
         }
     }
 
-    fn set_bond_dir_relative_to_atom(&mut self, b: usize, atom: usize, mut dir: Dir, mut reverse: bool) {
+    fn set_bond_dir_relative_to_atom(
+        &mut self,
+        b: usize,
+        atom: usize,
+        mut dir: Dir,
+        mut reverse: bool,
+    ) {
         if self.mol.bond(b).begin != atom {
             reverse = !reverse;
         }
@@ -907,7 +986,10 @@ impl<'a> State<'a> {
             }
             for atom in [mol.bond(b).begin, mol.bond(b).end] {
                 for &(_, nbond) in mol.atom_bonds(atom) {
-                    if matches!(mol.bond(nbond).order, BondOrder::Single | BondOrder::Aromatic) {
+                    if matches!(
+                        mol.bond(nbond).order,
+                        BondOrder::Single | BondOrder::Aromatic
+                    ) {
                         single_bond_counts[nbond] += 1;
                         needs_dir[b] = true;
                         // all directions are NONE / ENDUPRIGHT / ENDDOWNRIGHT here
@@ -937,7 +1019,12 @@ impl<'a> State<'a> {
             .collect();
         ordered.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         for (_, b) in ordered {
-            self.update_double_bond_neighbors(b, &mut needs_dir, &single_bond_counts, &single_bond_nbrs);
+            self.update_double_bond_neighbors(
+                b,
+                &mut needs_dir,
+                &single_bond_counts,
+                &single_bond_nbrs,
+            );
         }
     }
 }
@@ -949,7 +1036,11 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 /// `isLinearArrangement`.
@@ -1079,7 +1170,9 @@ pub fn assign_stereo_legacy_from_3d_with_ranks(mol: &mut Molecule) -> Option<Vec
         }
     } else {
         // no ranking was needed: nothing could be a stereocenter
-        new_tags.iter_mut().for_each(|t| *t = ChiralTag::Unspecified);
+        new_tags
+            .iter_mut()
+            .for_each(|t| *t = ChiralTag::Unspecified);
     }
     // cleanIt: STEREOANY on double bonds to degree-one atoms is cleared (any
     // STEREOANY is reported as no stereo anyway)
@@ -1093,7 +1186,11 @@ pub fn assign_stereo_legacy_from_3d_with_ranks(mol: &mut Molecule) -> Option<Vec
         let bm = mol.bond_mut(b);
         match stereo[b] {
             St::E | St::Z => {
-                bm.stereo = if stereo[b] == St::Z { BondStereo::Cis } else { BondStereo::Trans };
+                bm.stereo = if stereo[b] == St::Z {
+                    BondStereo::Cis
+                } else {
+                    BondStereo::Trans
+                };
                 bm.stereo_atoms = stereo_atoms[b];
             }
             St::None | St::Any => {
@@ -1140,7 +1237,13 @@ pub fn legacy_cip_ranks_for_assigned_stereo(mol: &Molecule, ri: &RingInfo) -> Op
 fn either_double_stereo(mol: &Molecule) -> Vec<St> {
     mol.bonds()
         .iter()
-        .map(|b| if b.order == BondOrder::Double && b.dir == BondDir::Either { St::Any } else { St::None })
+        .map(|b| {
+            if b.order == BondOrder::Double && b.dir == BondDir::Either {
+                St::Any
+            } else {
+                St::None
+            }
+        })
         .collect()
 }
 
@@ -1165,7 +1268,9 @@ fn run_legacy_perception(st: &mut State) -> Option<Vec<u32>> {
     let mut has_potential_stereo_bonds = false;
     for b in 0..nb {
         let order = mol.bond(b).order;
-        if matches!(order, BondOrder::Double | BondOrder::Aromatic) && !should_detect_double_bond_stereo(ri, b) {
+        if matches!(order, BondOrder::Double | BondOrder::Aromatic)
+            && !should_detect_double_bond_stereo(ri, b)
+        {
             if st.stereo[b] != St::None {
                 st.stereo[b] = St::None;
                 st.stereo_atoms[b] = None;
@@ -1177,14 +1282,19 @@ fn run_legacy_perception(st: &mut State) -> Option<Vec<u32>> {
         }
         if !has_stereo_bonds && order == BondOrder::Double {
             let bond = mol.bond(b);
-            let specified = [bond.begin, bond.end]
-                .iter()
-                .any(|&a| mol.atom_bonds(a).iter().any(|&(_, nbd)| is_directional(st.dirs[nbd])))
-                || st.preset.as_ref().is_some_and(|p| matches!(p[b], St::E | St::Z));
+            let specified = [bond.begin, bond.end].iter().any(|&a| {
+                mol.atom_bonds(a)
+                    .iter()
+                    .any(|&(_, nbd)| is_directional(st.dirs[nbd]))
+            }) || st
+                .preset
+                .as_ref()
+                .is_some_and(|p| matches!(p[b], St::E | St::Z));
             if specified {
                 has_stereo_bonds = true;
             }
-            if !has_potential_stereo_bonds && !specified && should_detect_double_bond_stereo(ri, b) {
+            if !has_potential_stereo_bonds && !specified && should_detect_double_bond_stereo(ri, b)
+            {
                 has_potential_stereo_bonds = true;
             }
         }

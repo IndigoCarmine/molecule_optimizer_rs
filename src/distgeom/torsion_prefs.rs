@@ -47,22 +47,38 @@ pub fn parse_table(text: &str) -> Result<Vec<ExpTorsionAngle>> {
         }
         let tok: Vec<&str> = line.split(' ').filter(|t| !t.is_empty()).collect();
         if tok.len() < 13 {
-            return Err(Error::parse(ln + 1, format!("bad torsion preference line: {line}")));
+            return Err(Error::parse(
+                ln + 1,
+                format!("bad torsion preference line: {line}"),
+            ));
         }
         let mut v = [0.0; 6];
         let mut signs = [0; 6];
         for k in 0..6 {
-            signs[k] = tok[1 + 2 * k].parse().map_err(|_| Error::parse(ln + 1, "bad sign"))?;
-            v[k] = tok[2 + 2 * k].parse().map_err(|_| Error::parse(ln + 1, "bad V"))?;
+            signs[k] = tok[1 + 2 * k]
+                .parse()
+                .map_err(|_| Error::parse(ln + 1, "bad sign"))?;
+            v[k] = tok[2 + 2 * k]
+                .parse()
+                .map_err(|_| Error::parse(ln + 1, "bad V"))?;
         }
         let pattern = Smarts::parse(tok[0])?;
         let mut idx = [0usize; 4];
         for (k, slot) in idx.iter_mut().enumerate() {
-            *slot = pattern
-                .atom_with_map_number(k as u32 + 1)
-                .ok_or_else(|| Error::parse(ln + 1, format!("missing map number {} in {}", k + 1, tok[0])))?;
+            *slot = pattern.atom_with_map_number(k as u32 + 1).ok_or_else(|| {
+                Error::parse(
+                    ln + 1,
+                    format!("missing map number {} in {}", k + 1, tok[0]),
+                )
+            })?;
         }
-        out.push(ExpTorsionAngle { smarts: tok[0].to_string(), v, signs, pattern, idx });
+        out.push(ExpTorsionAngle {
+            smarts: tok[0].to_string(),
+            v,
+            signs,
+            pattern,
+            idx,
+        });
     }
     Ok(out)
 }
@@ -72,7 +88,11 @@ fn cached(cell: &'static OnceLock<Vec<ExpTorsionAngle>>, text: &str) -> &'static
 }
 
 /// The built-in parameter list for the given options (RDKit `getParams`).
-pub fn builtin_params(version: u32, small_rings: bool, macrocycles: bool) -> Result<Vec<&'static ExpTorsionAngle>> {
+pub fn builtin_params(
+    version: u32,
+    small_rings: bool,
+    macrocycles: bool,
+) -> Result<Vec<&'static ExpTorsionAngle>> {
     static V1: OnceLock<Vec<ExpTorsionAngle>> = OnceLock::new();
     static V2: OnceLock<Vec<ExpTorsionAngle>> = OnceLock::new();
     static SR: OnceLock<Vec<ExpTorsionAngle>> = OnceLock::new();
@@ -160,7 +180,11 @@ fn ring_info(mol: &Molecule) -> std::borrow::Cow<'_, RingInfo> {
 
 /// RDKit `getExperimentalTorsions` (fills `exp_torsions` and
 /// `improper_atoms`; `details.path14` must already be set).
-pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opts: &TorsionOptions) -> Result<()> {
+pub fn get_experimental_torsions(
+    mol: &Molecule,
+    details: &mut EtkdgDetails,
+    opts: &TorsionOptions,
+) -> Result<()> {
     let nb = mol.num_bonds();
     let na = mol.num_atoms();
     if na == 0 {
@@ -206,7 +230,9 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
     let mut done = vec![false; nb];
     if opts.use_basic_knowledge {
         for cfg in &details.path14 {
-            if !cfg.value.is_forced || !matches!(cfg.value.kind, TorsionType::Trans | TorsionType::Cis) {
+            if !cfg.value.is_forced
+                || !matches!(cfg.value.kind, TorsionType::Trans | TorsionType::Cis)
+            {
                 continue;
             }
             let (i, j, k, l) = (cfg.aid1, cfg.aid2, cfg.aid3, cfg.aid4);
@@ -224,17 +250,26 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
             if is_cis {
                 s[0] = -1;
             }
-            details.exp_torsions.push(ExpTorsion { atoms: [i, j, k, l], v, signs: s, smarts: String::new() });
+            details.exp_torsions.push(ExpTorsion {
+                atoms: [i, j, k, l],
+                v,
+                signs: s,
+                smarts: String::new(),
+            });
         }
     }
     if opts.use_exp_torsions {
-        let params = builtin_params(opts.version, opts.use_small_ring_torsions, opts.use_macrocycle_torsions)?;
+        let params = builtin_params(
+            opts.version,
+            opts.use_small_ring_torsions,
+            opts.use_macrocycle_torsions,
+        )?;
         for p in params {
             for m in p.pattern.find_matches(mol, false) {
                 let (a1, a2, a3, a4) = (m[p.idx[0]], m[p.idx[1]], m[p.idx[2]], m[p.idx[3]]);
-                let b = mol
-                    .bond_between(a2, a3)
-                    .ok_or_else(|| Error::Embedding("bond between central atoms not found".into()))?;
+                let b = mol.bond_between(a2, a3).ok_or_else(|| {
+                    Error::Embedding("bond between central atoms not found".into())
+                })?;
                 if excluded[b] || ri.num_bond_rings(b) > 3 {
                     done[b] = true;
                 }
@@ -246,7 +281,12 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
                 for x in v.iter_mut() {
                     *x *= details.force_consts.et_term_scaling;
                 }
-                details.exp_torsions.push(ExpTorsion { atoms: [a1, a2, a3, a4], v, signs: p.signs, smarts: p.smarts.clone() });
+                details.exp_torsions.push(ExpTorsion {
+                    atoms: [a1, a2, a3, a4],
+                    v,
+                    signs: p.signs,
+                    smarts: p.smarts.clone(),
+                });
             }
         }
     }
@@ -254,7 +294,10 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
         for aid2 in 0..na {
             let at = mol.atom(aid2);
             let an = at.atomic_num;
-            if (an == 6 || an == 7 || an == 8) && at.hybridization == Hybridization::SP2 && mol.degree(aid2) == 3 {
+            if (an == 6 || an == 7 || an == 8)
+                && at.hybridization == Hybridization::SP2
+                && mol.degree(aid2) == 3
+            {
                 let mut atoms = [0usize; 4];
                 atoms[1] = aid2;
                 let mut i = 0;
@@ -262,14 +305,23 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
                 for x in mol.neighbors(aid2) {
                     atoms[i] = x;
                     if !bound_o {
-                        bound_o = an == 6 && mol.atom(x).atomic_num == 8 && mol.atom(x).hybridization == Hybridization::SP2;
+                        bound_o = an == 6
+                            && mol.atom(x).atomic_num == 8
+                            && mol.atom(x).hybridization == Hybridization::SP2;
                     }
                     if i == 0 {
                         i += 1;
                     }
                     i += 1;
                 }
-                details.improper_atoms.push([atoms[0], atoms[1], atoms[2], atoms[3], an as usize, bound_o as usize]);
+                details.improper_atoms.push([
+                    atoms[0],
+                    atoms[1],
+                    atoms[2],
+                    atoms[3],
+                    an as usize,
+                    bound_o as usize,
+                ]);
             }
         }
         for ring in &ri.atom_rings {
@@ -290,7 +342,12 @@ pub fn get_experimental_torsions(mol: &Molecule, details: &mut EtkdgDetails, opt
                     s[1] = -1;
                     let mut v = [0.0; 6];
                     v[1] = details.force_consts.k_term_torsion;
-                    details.exp_torsions.push(ExpTorsion { atoms: [a1, a2, a3, a4], v, signs: s, smarts: String::new() });
+                    details.exp_torsions.push(ExpTorsion {
+                        atoms: [a1, a2, a3, a4],
+                        v,
+                        signs: s,
+                        smarts: String::new(),
+                    });
                 }
             }
         }

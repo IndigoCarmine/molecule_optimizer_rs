@@ -26,7 +26,11 @@ pub fn energy(mol: &Molecule, builder: &dyn ForceFieldBuilder) -> Result<EnergyR
 }
 
 /// Energy of `mol` at the given coordinates.
-pub fn energy_at(mol: &Molecule, coords: &[[f64; 3]], builder: &dyn ForceFieldBuilder) -> Result<EnergyResult> {
+pub fn energy_at(
+    mol: &Molecule,
+    coords: &[[f64; 3]],
+    builder: &dyn ForceFieldBuilder,
+) -> Result<EnergyResult> {
     let ff = builder.build_dyn(mol, &[])?;
     Ok(evaluate(&ff, coords))
 }
@@ -37,7 +41,12 @@ pub fn evaluate(ff: &dyn ForceField, coords: &[[f64; 3]]) -> EnergyResult {
     let mut g = vec![0.0; pos.len()];
     let total = ff.energy_grad(&pos, &mut g);
     let grad_rms = (g.iter().map(|x| x * x).sum::<f64>() / g.len().max(1) as f64).sqrt();
-    EnergyResult { total, breakdown: ff.energy_breakdown(&pos), gradient: to_points(&g), grad_rms }
+    EnergyResult {
+        total,
+        breakdown: ff.energy_breakdown(&pos),
+        gradient: to_points(&g),
+        grad_rms,
+    }
 }
 
 /// Snapshot of an energy batch: results computed so far (by input index).
@@ -55,29 +64,43 @@ impl Engine {
         builder: SharedBuilder,
     ) -> JobHandle<Vec<Result<EnergyResult>>, EnergyBatchSnapshot> {
         let n = items.len();
-        self.spawn(EnergyBatchSnapshot { results: vec![None; n] }, n, move |ctx| {
-            let out: Vec<Result<EnergyResult>> = items
-                .par_iter()
-                .enumerate()
-                .map(|(i, (mol, coords))| {
-                    if ctx.is_cancelled() {
-                        return Err(crate::error::Error::Cancelled);
-                    }
-                    let r = energy_at(mol, coords.as_deref().unwrap_or(&mol.coords), builder.as_ref());
-                    if let Ok(e) = &r {
-                        let t = e.total;
-                        ctx.update_silent(|s| s.results[i] = Some(t));
-                    }
-                    ctx.inc_progress();
-                    r
-                })
-                .collect();
-            Ok(out)
-        })
+        self.spawn(
+            EnergyBatchSnapshot {
+                results: vec![None; n],
+            },
+            n,
+            move |ctx| {
+                let out: Vec<Result<EnergyResult>> = items
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, (mol, coords))| {
+                        if ctx.is_cancelled() {
+                            return Err(crate::error::Error::Cancelled);
+                        }
+                        let r = energy_at(
+                            mol,
+                            coords.as_deref().unwrap_or(&mol.coords),
+                            builder.as_ref(),
+                        );
+                        if let Ok(e) = &r {
+                            let t = e.total;
+                            ctx.update_silent(|s| s.results[i] = Some(t));
+                        }
+                        ctx.inc_progress();
+                        r
+                    })
+                    .collect();
+                Ok(out)
+            },
+        )
     }
 
     /// Asynchronous single-point energy.
-    pub fn energy(&self, mol: Arc<Molecule>, builder: SharedBuilder) -> JobHandle<EnergyResult, ()> {
+    pub fn energy(
+        &self,
+        mol: Arc<Molecule>,
+        builder: SharedBuilder,
+    ) -> JobHandle<EnergyResult, ()> {
         self.spawn((), 1, move |_ctx| energy(&mol, builder.as_ref()))
     }
 }

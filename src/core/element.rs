@@ -99,7 +99,10 @@ pub fn atomic_number(symbol: &str) -> Option<u8> {
     if norm == "D" || norm == "T" {
         return Some(1);
     }
-    table().iter().find(|e| e.symbol == norm).map(|e| e.atomic_num)
+    table()
+        .iter()
+        .find(|e| e.symbol == norm)
+        .map(|e| e.atomic_num)
 }
 
 /// RDKit `PeriodicTable::moreElectroNegative`.

@@ -20,7 +20,11 @@ pub fn dot(a: V3, b: V3) -> f64 {
 }
 #[inline]
 pub fn cross(a: V3, b: V3) -> V3 {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 #[inline]
 pub fn norm(a: V3) -> f64 {
@@ -92,7 +96,11 @@ pub fn kabsch(p: &[V3], q: &[V3]) -> (f64, [[f64; 3]; 3], V3) {
     assert_eq!(p.len(), q.len());
     let n = p.len();
     if n == 0 {
-        return (0.0, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0; 3]);
+        return (
+            0.0,
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        );
     }
     let cp = centroid(p);
     let cq = centroid(q);
@@ -149,10 +157,20 @@ mod tests {
     }
     #[test]
     fn kabsch_identity_rotation() {
-        let p = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.5]];
+        let p = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.5],
+        ];
         let q: Vec<V3> = p
             .iter()
-            .map(|&x| add(rotate_about_axis(x, [0.0; 3], [1.0, 2.0, 3.0], 0.7), [3.0, -1.0, 2.0]))
+            .map(|&x| {
+                add(
+                    rotate_about_axis(x, [0.0; 3], [1.0, 2.0, 3.0], 0.7),
+                    [3.0, -1.0, 2.0],
+                )
+            })
             .collect();
         assert!(kabsch_rmsd(&p, &q) < 1e-9);
     }

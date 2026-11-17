@@ -66,13 +66,28 @@ pub(crate) struct KernelParams {
 }
 
 impl KernelParams {
-    pub fn new(p: &NbParams, rc: f64, modifier: Modifier, elec: ElecKind, eps_rf: f64, beta: f64) -> Self {
+    pub fn new(
+        p: &NbParams,
+        rc: f64,
+        modifier: Modifier,
+        elec: ElecKind,
+        eps_rf: f64,
+        beta: f64,
+    ) -> Self {
         let ele_n2 = p.distance_dielectric;
-        let delta = if elec == ElecKind::Ewald { 0.0 } else { p.ele_buffer };
+        let delta = if elec == ElecKind::Ewald {
+            0.0
+        } else {
+            p.ele_buffer
+        };
         let (mut k_rf, mut c_rf) = (0.0, 0.0);
         if elec == ElecKind::ReactionField {
             let d = p.coulomb_dielectric();
-            let kappa = if eps_rf.is_infinite() { 0.5 } else { (eps_rf - d) / (2.0 * eps_rf + d) };
+            let kappa = if eps_rf.is_infinite() {
+                0.5
+            } else {
+                (eps_rf - d) / (2.0 * eps_rf + d)
+            };
             let rho = rc + delta;
             let n = if ele_n2 { 2.0 } else { 1.0 };
             k_rf = kappa * n / (rc * rho.powf(n + 1.0));
@@ -85,14 +100,29 @@ impl KernelParams {
                 shift[k] = vdw_raw(p.kind, p.p1[k], p.p2[k], p.p3[k], rc).0;
             }
         }
-        KernelParams { vdw: p.kind, rc2: rc * rc, modifier, elec, ele_n2, delta, k_rf, c_rf, beta, shift }
+        KernelParams {
+            vdw: p.kind,
+            rc2: rc * rc,
+            modifier,
+            elec,
+            ele_n2,
+            delta,
+            k_rf,
+            c_rf,
+            beta,
+            shift,
+        }
     }
 }
 
 impl NbParams {
     /// The dielectric constant `D` (`332.0716 / coulomb`).
     pub(crate) fn coulomb_dielectric(&self) -> f64 {
-        if self.coulomb > 0.0 { super::params::MMFF_COULOMB / self.coulomb } else { 1.0 }
+        if self.coulomb > 0.0 {
+            super::params::MMFF_COULOMB / self.coulomb
+        } else {
+            1.0
+        }
     }
 }
 
@@ -114,7 +144,10 @@ pub(crate) fn vdw_raw(kind: VdwKind, p1: f64, p2: f64, p3: f64, r: f64) -> (f64,
             let r6 = r2 * r2 * r2;
             let den = 1.0 / (r6 * r + 0.12 * rs7);
             let b = 1.12 * rs7 * den - 2.0;
-            (eps * a7 * b, -7.0 * eps * a7 * (b * d1 + 1.12 * rs7 * r6 * den * den))
+            (
+                eps * a7 * b,
+                -7.0 * eps * a7 * (b * d1 + 1.12 * rs7 * r6 * den * den),
+            )
         }
         VdwKind::Uff => {
             let (x2, d) = (p1, p2);
@@ -177,14 +210,24 @@ pub(crate) fn elec_shape(kp: &KernelParams, r: f64) -> (f64, f64) {
 /// Reference energy of one pair: returns `(E_vdw, E_elec, (dE/dr)/r)`.
 /// `qq` already contains the Coulomb prefactor (and any scaling).
 #[inline]
-pub(crate) fn pair_ref(kp: &KernelParams, p: &NbParams, idx: usize, qq: f64, r2: f64) -> (f64, f64, f64) {
+pub(crate) fn pair_ref(
+    kp: &KernelParams,
+    p: &NbParams,
+    idx: usize,
+    qq: f64,
+    r2: f64,
+) -> (f64, f64, f64) {
     let in_rc = r2 < kp.rc2;
     let elec_on = kp.elec != ElecKind::None && (kp.elec == ElecKind::Full || in_rc);
     if !in_rc && !elec_on {
         return (0.0, 0.0, 0.0);
     }
     let r = r2.sqrt();
-    let (ev, dev) = if in_rc { vdw_modified(kp, p, idx, r) } else { (0.0, 0.0) };
+    let (ev, dev) = if in_rc {
+        vdw_modified(kp, p, idx, r)
+    } else {
+        (0.0, 0.0)
+    };
     let (ee, dee) = if elec_on {
         let (f, df) = elec_shape(kp, r);
         (qq * f, qq * df)
@@ -202,7 +245,12 @@ const fn lane(b: bool) -> f64 {
     if b { f64::from_bits(u64::MAX) } else { 0.0 }
 }
 const fn mask4(bits: usize) -> f64x4 {
-    f64x4::new([lane(bits & 1 != 0), lane(bits & 2 != 0), lane(bits & 4 != 0), lane(bits & 8 != 0)])
+    f64x4::new([
+        lane(bits & 1 != 0),
+        lane(bits & 2 != 0),
+        lane(bits & 4 != 0),
+        lane(bits & 8 != 0),
+    ])
 }
 const MASKS: [f64x4; 16] = {
     let mut m = [f64x4::new([0.0; 4]); 16];
@@ -241,14 +289,23 @@ const MOD_SWITCH: u8 = 2;
 
 #[inline(always)]
 fn gather(tab: &[f64], base: usize, t: &[u32; 4]) -> f64x4 {
-    f64x4::new([tab[base + t[0] as usize], tab[base + t[1] as usize], tab[base + t[2] as usize], tab[base + t[3] as usize]])
+    f64x4::new([
+        tab[base + t[0] as usize],
+        tab[base + t[1] as usize],
+        tab[base + t[2] as usize],
+        tab[base + t[3] as usize],
+    ])
 }
 
 /// SIMD kernel for I-cluster `ci`: returns `(E_vdw, E_elec)` (already
 /// halved: the list is symmetric) and writes the gradient of its four atoms
 /// to `g` (`[x0..x3, y0..y3, z0..z3]`) if `GRAD`.
 #[inline(always)]
-fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &Ctx, ci: usize, g: &mut [f64; 12]) -> (f64, f64) {
+fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(
+    ctx: &Ctx,
+    ci: usize,
+    g: &mut [f64; 12],
+) -> (f64, f64) {
     let kp = ctx.kp;
     let p = ctx.p;
     let l = ctx.list;
@@ -266,7 +323,12 @@ fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &C
     let mut gx = [zero; 4];
     let mut gy = [zero; 4];
     let mut gz = [zero; 4];
-    let (k_rf, c_rf, beta, delta) = (f64x4::splat(kp.k_rf), f64x4::splat(kp.c_rf), f64x4::splat(kp.beta), f64x4::splat(kp.delta));
+    let (k_rf, c_rf, beta, delta) = (
+        f64x4::splat(kp.k_rf),
+        f64x4::splat(kp.c_rf),
+        f64x4::splat(kp.beta),
+        f64x4::splat(kp.delta),
+    );
     let (rsw, inv_w) = match kp.modifier {
         Modifier::Switch { rsw, inv_w } => (f64x4::splat(rsw), f64x4::splat(inv_w)),
         _ => (zero, zero),
@@ -300,13 +362,20 @@ fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &C
             // All reciprocals from one division: denominators r, A, B, C
             // (constant 1 when unused, folded by the compiler).
             let (rs, eps, rs7) = if VDW == VDW_MMFF {
-                (gather(&p.p1, base, tj), gather(&p.p2, base, tj), gather(&p.p3, base, tj))
+                (
+                    gather(&p.p1, base, tj),
+                    gather(&p.p2, base, tj),
+                    gather(&p.p3, base, tj),
+                )
             } else {
                 (gather(&p.p1, base, tj), gather(&p.p2, base, tj), zero)
             };
             let r6 = r2s * r2s * r2s;
             let (da, db) = if VDW == VDW_MMFF {
-                (r + f64x4::splat(0.07) * rs, r6 * r + f64x4::splat(0.12) * rs7)
+                (
+                    r + f64x4::splat(0.07) * rs,
+                    r6 * r + f64x4::splat(0.12) * rs7,
+                )
             } else {
                 (one, one)
             };
@@ -332,20 +401,32 @@ fn simd_i<const VDW: u8, const EL: u8, const MODI: u8, const GRAD: bool>(ctx: &C
                 let a7 = a2 * a2 * a2 * at;
                 let den = inv_b;
                 let b = f64x4::splat(1.12) * rs7 * den - f64x4::splat(2.0);
-                (eps * a7 * b, f64x4::splat(-7.0) * eps * a7 * (b * d1 + f64x4::splat(1.12) * rs7 * r6 * den * den))
+                (
+                    eps * a7 * b,
+                    f64x4::splat(-7.0)
+                        * eps
+                        * a7
+                        * (b * d1 + f64x4::splat(1.12) * rs7 * r6 * den * den),
+                )
             } else {
                 let (x2, d) = (rs, eps);
                 let s = x2 * rinv * rinv;
                 let s3 = s * s * s;
                 let s6 = s3 * s3;
-                (d * (s6 - f64x4::splat(2.0) * s3), f64x4::splat(-12.0) * d * (s6 - s3) * rinv)
+                (
+                    d * (s6 - f64x4::splat(2.0) * s3),
+                    f64x4::splat(-12.0) * d * (s6 - s3) * rinv,
+                )
             };
             let (ev, dev) = match MODI {
                 MOD_SHIFT => (ev - gather(&kp.shift, base, tj), dev),
                 MOD_SWITCH => {
                     let t = ((r - rsw) * inv_w).max(zero);
                     let t2 = t * t;
-                    let sw = one - t2 * t * (f64x4::splat(10.0) - f64x4::splat(15.0) * t + f64x4::splat(6.0) * t2);
+                    let sw = one
+                        - t2 * t
+                            * (f64x4::splat(10.0) - f64x4::splat(15.0) * t
+                                + f64x4::splat(6.0) * t2);
                     let omt = one - t;
                     let dsw = f64x4::splat(-30.0) * t2 * omt * omt * inv_w;
                     (ev * sw, dev * sw + ev * dsw)
@@ -474,7 +555,11 @@ macro_rules! pick_simd {
 /// Selects the kernel for the given settings.
 pub(crate) fn select_kernel(kp: &KernelParams, simd: bool, grad: bool) -> ClusterKernel {
     if !simd {
-        return if grad { scalar_i::<true> } else { scalar_i::<false> };
+        return if grad {
+            scalar_i::<true>
+        } else {
+            scalar_i::<false>
+        };
     }
     let v = match kp.vdw {
         VdwKind::Mmff => VDW_MMFF,

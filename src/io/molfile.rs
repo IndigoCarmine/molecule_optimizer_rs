@@ -15,10 +15,14 @@ fn field(line: &str, start: usize, len: usize) -> &str {
 }
 
 fn parse_f(s: &str, line: usize) -> Result<f64> {
-    s.trim().parse::<f64>().map_err(|_| Error::parse(line, format!("bad number '{s}'")))
+    s.trim()
+        .parse::<f64>()
+        .map_err(|_| Error::parse(line, format!("bad number '{s}'")))
 }
 fn parse_u(s: &str, line: usize) -> Result<usize> {
-    s.trim().parse::<usize>().map_err(|_| Error::parse(line, format!("bad integer '{s}'")))
+    s.trim()
+        .parse::<usize>()
+        .map_err(|_| Error::parse(line, format!("bad integer '{s}'")))
 }
 
 fn bond_from_code(code: i32, line: usize) -> Result<BondOrder> {
@@ -103,7 +107,9 @@ fn parse_v2000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
         let l = lines[ln];
         let a1 = parse_u(field(l, 0, 3), base + ln + 1)?;
         let a2 = parse_u(field(l, 3, 3), base + ln + 1)?;
-        let t: i32 = field(l, 6, 3).parse().map_err(|_| Error::parse(base + ln + 1, "bad bond type"))?;
+        let t: i32 = field(l, 6, 3)
+            .parse()
+            .map_err(|_| Error::parse(base + ln + 1, "bad bond type"))?;
         if a1 == 0 || a2 == 0 || a1 > na || a2 > na {
             return Err(Error::parse(base + ln + 1, "bond atom index out of range"));
         }
@@ -129,8 +135,14 @@ fn parse_v2000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
             let mut v = Vec::new();
             let n: usize = items.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             for k in 0..n {
-                let a: usize = items.get(1 + 2 * k).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let b: i32 = items.get(2 + 2 * k).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let a: usize = items
+                    .get(1 + 2 * k)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                let b: i32 = items
+                    .get(2 + 2 * k)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
                 if a > 0 {
                     v.push((a - 1, b));
                 }
@@ -190,7 +202,9 @@ fn parse_v3000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
         if l.starts_with("M  END") {
             break;
         }
-        let Some(rest) = l.strip_prefix("M  V30 ") else { continue };
+        let Some(rest) = l.strip_prefix("M  V30 ") else {
+            continue;
+        };
         let (ln, mut s) = pending.take().unwrap_or((base + k + 1, String::new()));
         if let Some(r) = rest.strip_suffix('-') {
             s.push_str(r);
@@ -223,7 +237,8 @@ fn parse_v3000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
                     return Err(Error::parse(*ln, "bad V3000 atom line"));
                 }
                 let sym = f[1];
-                let anum = atomic_number(sym).ok_or_else(|| Error::UnknownElement(sym.to_string()))?;
+                let anum =
+                    atomic_number(sym).ok_or_else(|| Error::UnknownElement(sym.to_string()))?;
                 let mut a = Atom::new(anum);
                 for kv in &f[6..] {
                     if let Some((k, v)) = kv.split_once('=') {
@@ -251,16 +266,29 @@ fn parse_v3000(mol: &mut Molecule, lines: &[&str], base: usize) -> Result<()> {
                         }
                     }
                 }
-                let i = mol.add_atom(a, [parse_f(f[2], *ln)?, parse_f(f[3], *ln)?, parse_f(f[4], *ln)?]);
+                let i = mol.add_atom(
+                    a,
+                    [
+                        parse_f(f[2], *ln)?,
+                        parse_f(f[3], *ln)?,
+                        parse_f(f[4], *ln)?,
+                    ],
+                );
                 idx_map.insert(f[0].to_string(), i);
             }
             "BOND" => {
                 if f.len() < 4 {
                     return Err(Error::parse(*ln, "bad V3000 bond line"));
                 }
-                let t: i32 = f[1].parse().map_err(|_| Error::parse(*ln, "bad bond type"))?;
-                let a1 = *idx_map.get(f[2]).ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
-                let a2 = *idx_map.get(f[3]).ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
+                let t: i32 = f[1]
+                    .parse()
+                    .map_err(|_| Error::parse(*ln, "bad bond type"))?;
+                let a1 = *idx_map
+                    .get(f[2])
+                    .ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
+                let a2 = *idx_map
+                    .get(f[3])
+                    .ok_or_else(|| Error::parse(*ln, "unknown atom index"))?;
                 let b = mol.add_bond(a1, a2, bond_from_code(t, *ln)?);
                 let cfg = f[4..].iter().find_map(|kv| kv.strip_prefix("CFG="));
                 mol.bond_mut(b).dir = match cfg {
@@ -301,7 +329,10 @@ pub fn read_sdf_lenient(text: &str) -> Vec<Result<Molecule>> {
         }
         let rec = &lines[start..end];
         if rec.iter().any(|l| !l.trim().is_empty()) {
-            let mend = rec.iter().position(|l| l.starts_with("M  END")).unwrap_or(rec.len());
+            let mend = rec
+                .iter()
+                .position(|l| l.starts_with("M  END"))
+                .unwrap_or(rec.len());
             let mut res = parse_molblock(&rec[..(mend + 1).min(rec.len())], start);
             if let Ok(mol) = res.as_mut() {
                 parse_data_fields(mol, &rec[(mend + 1).min(rec.len())..]);
@@ -348,12 +379,20 @@ pub fn write_molblock_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
     let _ = writeln!(s, "{}", mol.name);
     let _ = writeln!(s, "  molecule_optimizer_rs   3D");
     let _ = writeln!(s);
-    let _ = writeln!(s, "{:>3}{:>3}  0  0  0  0  0  0  0  0999 V2000", km.num_atoms(), km.num_bonds());
+    let _ = writeln!(
+        s,
+        "{:>3}{:>3}  0  0  0  0  0  0  0  0999 V2000",
+        km.num_atoms(),
+        km.num_bonds()
+    );
     for (a, p) in km.atoms().iter().zip(coords) {
         let _ = writeln!(
             s,
             "{:>10.4}{:>10.4}{:>10.4} {:<3} 0  0  0  0  0  0  0  0  0  0  0  0",
-            p[0], p[1], p[2], a.symbol()
+            p[0],
+            p[1],
+            p[2],
+            a.symbol()
         );
     }
     for b in km.bonds() {
@@ -366,11 +405,20 @@ pub fn write_molblock_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
             BondOrder::Zero => 0,
         };
         // crossed ("either") double bonds keep their stereo flag
-        let stereo = if b.order == BondOrder::Double && b.dir == BondDir::Either { 3 } else { 0 };
+        let stereo = if b.order == BondOrder::Double && b.dir == BondDir::Either {
+            3
+        } else {
+            0
+        };
         let _ = writeln!(s, "{:>3}{:>3}{:>3}{:>3}", b.begin + 1, b.end + 1, t, stereo);
     }
-    let charged: Vec<(usize, i8)> =
-        km.atoms().iter().enumerate().filter(|(_, a)| a.formal_charge != 0).map(|(i, a)| (i, a.formal_charge)).collect();
+    let charged: Vec<(usize, i8)> = km
+        .atoms()
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.formal_charge != 0)
+        .map(|(i, a)| (i, a.formal_charge))
+        .collect();
     for chunk in charged.chunks(8) {
         let _ = write!(s, "M  CHG{:>3}", chunk.len());
         for (i, c) in chunk {
@@ -383,7 +431,11 @@ pub fn write_molblock_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
 }
 
 /// Writes an SDF record (molblock + data fields + `$$$$`).
-pub fn write_sdf_record(mol: &Molecule, coords: Option<&[[f64; 3]]>, extra: &[(&str, String)]) -> String {
+pub fn write_sdf_record(
+    mol: &Molecule,
+    coords: Option<&[[f64; 3]]>,
+    extra: &[(&str, String)],
+) -> String {
     let mut s = write_molblock_coords(mol, coords.unwrap_or(&mol.coords));
     for (k, v) in mol.props.iter() {
         let _ = writeln!(s, "> <{}>\n{}\n", k, v);

@@ -86,7 +86,10 @@ use crate::error::{Error, Result};
 #[allow(unused_imports)]
 use crate::ff::{mmff::MmffBuilder, uff::UffBuilder};
 use arc_swap::ArcSwap;
-use kernel::{ClusterKernel, Ctx, ElecKind, KernelParams, Modifier, elec_shape, pair_ref, select_kernel, vdw_modified};
+use kernel::{
+    ClusterKernel, Ctx, ElecKind, KernelParams, Modifier, elec_shape, pair_ref, select_kernel,
+    vdw_modified,
+};
 use pairlist::PairList;
 use params::NbParams;
 use rayon::prelude::*;
@@ -184,10 +187,15 @@ pub fn build_approx_nonbonded(
 ) -> Result<ApproxNonbonded> {
     let rc = opts.cutoff;
     if !(rc > 0.0 && rc.is_finite()) {
-        return Err(Error::InvalidArgument(format!("cutoff must be positive (got {rc})")));
+        return Err(Error::InvalidArgument(format!(
+            "cutoff must be positive (got {rc})"
+        )));
     }
     if !(opts.buffer >= 0.0 && opts.buffer.is_finite()) {
-        return Err(Error::InvalidArgument(format!("buffer must be non-negative (got {})", opts.buffer)));
+        return Err(Error::InvalidArgument(format!(
+            "buffer must be non-negative (got {})",
+            opts.buffer
+        )));
     }
     if mol.coords.len() != mol.num_atoms() {
         return Err(Error::InvalidArgument("molecule has no coordinates".into()));
@@ -213,9 +221,18 @@ pub fn build_approx_nonbonded(
         VdwModifier::PotentialShift => Modifier::Shift,
         VdwModifier::Switch { r_switch } => {
             if r_switch.is_nan() || r_switch < 0.0 {
-                return Err(Error::InvalidArgument(format!("r_switch must be non-negative (got {r_switch})")));
+                return Err(Error::InvalidArgument(format!(
+                    "r_switch must be non-negative (got {r_switch})"
+                )));
             }
-            if r_switch >= rc { Modifier::None } else { Modifier::Switch { rsw: r_switch, inv_w: 1.0 / (rc - r_switch) } }
+            if r_switch >= rc {
+                Modifier::None
+            } else {
+                Modifier::Switch {
+                    rsw: r_switch,
+                    inv_w: 1.0 / (rc - r_switch),
+                }
+            }
         }
     };
     let (mut eps_rf, mut beta) = (f64::INFINITY, 0.0);
@@ -231,20 +248,32 @@ pub fn build_approx_nonbonded(
         }
         Electrostatics::ReactionField { eps_rf: e } => {
             if e.is_nan() || e <= 0.0 {
-                return Err(Error::InvalidArgument(format!("eps_rf must be positive (got {e})")));
+                return Err(Error::InvalidArgument(format!(
+                    "eps_rf must be positive (got {e})"
+                )));
             }
             eps_rf = e;
             ElecKind::ReactionField
         }
-        Electrostatics::Pme { ewald_rtol, grid_spacing, order } => {
+        Electrostatics::Pme {
+            ewald_rtol,
+            grid_spacing,
+            order,
+        } => {
             let Some(c) = &cell else {
-                return Err(Error::InvalidArgument("PME requires a periodic cell (Molecule::cell)".into()));
+                return Err(Error::InvalidArgument(
+                    "PME requires a periodic cell (Molecule::cell)".into(),
+                ));
             };
             if !(ewald_rtol > 0.0 && ewald_rtol < 1.0) {
-                return Err(Error::InvalidArgument(format!("ewald_rtol must be in (0, 1) (got {ewald_rtol})")));
+                return Err(Error::InvalidArgument(format!(
+                    "ewald_rtol must be in (0, 1) (got {ewald_rtol})"
+                )));
             }
             if p.distance_dielectric {
-                return Err(Error::InvalidArgument("the distance-dependent dielectric cannot be used with PME".into()));
+                return Err(Error::InvalidArgument(
+                    "the distance-dependent dielectric cannot be used with PME".into(),
+                ));
             }
             if p.has_charges && p.ignore_interfrag && p.num_frags > 1 {
                 return Err(Error::InvalidArgument(
@@ -268,7 +297,8 @@ pub fn build_approx_nonbonded(
         pme = Some(pme::Pme::new(&c, beta, spacing, order, &qs)?);
         let q2: f64 = qs.iter().map(|q| q * q).sum();
         let qt: f64 = qs.iter().sum();
-        ewald_const = -beta / std::f64::consts::PI.sqrt() * q2 - std::f64::consts::PI * qt * qt / (2.0 * c.volume() * beta * beta);
+        ewald_const = -beta / std::f64::consts::PI.sqrt() * q2
+            - std::f64::consts::PI * qt * qt / (2.0 * c.volume() * beta * beta);
     } else if let (Some((c, spacing, order)), false) = (pme_opts, p.has_charges) {
         // validate the grid settings even without charges
         let _ = pme::Pme::new(&c, ewald_beta(rc, 1e-5), spacing, order, &[])?;
@@ -315,7 +345,11 @@ pub fn build_approx_nonbonded(
         ewald_const,
         explicit,
         qs,
-        name: if simd { "cpu-simd-cluster" } else { "cpu-scalar-cluster" },
+        name: if simd {
+            "cpu-simd-cluster"
+        } else {
+            "cpu-scalar-cluster"
+        },
         p,
     })
 }
@@ -379,7 +413,13 @@ impl ApproxNonbonded {
     }
 
     fn store_new_list(&self, pos: &[f64]) -> Arc<PairList> {
-        let l = Arc::new(pairlist::build(&self.p, pos, self.cell.as_ref(), self.rlist, self.all_pairs));
+        let l = Arc::new(pairlist::build(
+            &self.p,
+            pos,
+            self.cell.as_ref(),
+            self.rlist,
+            self.all_pairs,
+        ));
         self.list.store(l.clone());
         self.builds.fetch_add(1, Ordering::Relaxed);
         l
@@ -401,7 +441,11 @@ impl ApproxNonbonded {
 
     #[inline]
     fn delta(&self, pos: &[f64], i: usize, j: usize) -> [f64; 3] {
-        let d = [pos[3 * i] - pos[3 * j], pos[3 * i + 1] - pos[3 * j + 1], pos[3 * i + 2] - pos[3 * j + 2]];
+        let d = [
+            pos[3 * i] - pos[3 * j],
+            pos[3 * i + 1] - pos[3 * j + 1],
+            pos[3 * i + 2] - pos[3 * j + 2],
+        ];
         match &self.cell {
             Some(c) => c.min_image(d),
             None => d,
@@ -409,7 +453,13 @@ impl ApproxNonbonded {
     }
 
     /// Explicit pair `(i, j)`: `(E_vdw, E_elec, (dE/dr)/r, d)`.
-    fn explicit_pair(&self, pos: &[f64], i: usize, j: usize, is14: bool) -> (f64, f64, f64, [f64; 3]) {
+    fn explicit_pair(
+        &self,
+        pos: &[f64],
+        i: usize,
+        j: usize,
+        is14: bool,
+    ) -> (f64, f64, f64, [f64; 3]) {
         let kp = &self.kp;
         let d = self.delta(pos, i, j);
         let r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
@@ -419,7 +469,8 @@ impl ApproxNonbonded {
         let (mut ee, mut dee) = (0.0, 0.0);
         if is14 {
             if r2 < kp.rc2 {
-                let idx = self.p.atom_type[i] as usize * self.p.ntypes + self.p.atom_type[j] as usize;
+                let idx =
+                    self.p.atom_type[i] as usize * self.p.ntypes + self.p.atom_type[j] as usize;
                 (ev, dev) = vdw_modified(kp, &self.p, idx, r);
             }
             let s = self.p.scale14;
@@ -460,9 +511,18 @@ impl ApproxNonbonded {
         let coords = list.gather(pos);
         let do_grad = grad.is_some();
         let kern: ClusterKernel = select_kernel(&self.kp, self.simd, do_grad);
-        let ctx = Ctx { kp: &self.kp, p: &self.p, list: &list, c: &coords };
+        let ctx = Ctx {
+            kp: &self.kp,
+            p: &self.p,
+            list: &list,
+            c: &coords,
+        };
         let nc = list.nclusters;
-        let mut cg: Vec<[f64; 12]> = if do_grad { vec![[0.0; 12]; nc] } else { Vec::new() };
+        let mut cg: Vec<[f64; 12]> = if do_grad {
+            vec![[0.0; 12]; nc]
+        } else {
+            Vec::new()
+        };
         let parts: Vec<(f64, f64)> = if do_grad {
             cg.par_chunks_mut(BLOCK)
                 .enumerate()
@@ -556,7 +616,10 @@ impl ApproxNonbonded {
         if let Some(pme) = &self.pme {
             ee += pme.energy_grad(pos, grad) + self.ewald_const;
         }
-        NonbondedEnergy { vdw: ev, electrostatic: ee }
+        NonbondedEnergy {
+            vdw: ev,
+            electrostatic: ee,
+        }
     }
 
     /// Brute-force O(N²) evaluation with the scalar per-pair reference
@@ -608,12 +671,18 @@ impl ApproxNonbonded {
                 *o += v;
             }
         }
-        NonbondedEnergy { vdw: ev, electrostatic: ee }
+        NonbondedEnergy {
+            vdw: ev,
+            electrostatic: ee,
+        }
     }
 
     /// Reciprocal-space PME energy alone (0 without PME).
     pub fn pme_reciprocal_energy(&self, pos: &[f64]) -> f64 {
-        self.pme.as_ref().map(|p| p.energy_grad(pos, None)).unwrap_or(0.0)
+        self.pme
+            .as_ref()
+            .map(|p| p.energy_grad(pos, None))
+            .unwrap_or(0.0)
     }
 }
 

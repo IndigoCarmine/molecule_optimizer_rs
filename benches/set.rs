@@ -25,15 +25,31 @@ fn bench(c: &mut Criterion) {
     let uff_mols: Vec<&Molecule> = all.iter().collect();
     let cases: Vec<(&str, Box<dyn ForceFieldBuilder>, &Vec<&Molecule>)> = vec![
         ("MMFF94", Box::new(MmffBuilder::default()), &mmff_mols),
-        ("MMFF94/fast", Box::new(FastBuilder::new(MmffBuilder::default(), FastOptions::exact())), &mmff_mols),
+        (
+            "MMFF94/fast",
+            Box::new(FastBuilder::new(
+                MmffBuilder::default(),
+                FastOptions::exact(),
+            )),
+            &mmff_mols,
+        ),
         ("UFF", Box::new(UffBuilder::default()), &uff_mols),
-        ("UFF/fast", Box::new(FastBuilder::new(UffBuilder::default(), FastOptions::exact())), &uff_mols),
+        (
+            "UFF/fast",
+            Box::new(FastBuilder::new(
+                UffBuilder::default(),
+                FastOptions::exact(),
+            )),
+            &uff_mols,
+        ),
     ];
     let mut g = c.benchmark_group("set");
     g.sample_size(10);
     for (name, b, mols) in &cases {
-        let ffs: Vec<(Box<dyn ForceField>, Vec<f64>)> =
-            mols.iter().map(|m| (b.build_dyn(m, &[]).unwrap(), m.flat_coords())).collect();
+        let ffs: Vec<(Box<dyn ForceField>, Vec<f64>)> = mols
+            .iter()
+            .map(|m| (b.build_dyn(m, &[]).unwrap(), m.flat_coords()))
+            .collect();
         g.bench_function(format!("{name}/energy_grad_all"), |bch| {
             bch.iter(|| {
                 let mut e = 0.0;
@@ -51,7 +67,10 @@ fn bench(c: &mut Criterion) {
                 }
             })
         });
-        let opts = MinimizeOptions { max_iters: 2000, ..Default::default() };
+        let opts = MinimizeOptions {
+            max_iters: 2000,
+            ..Default::default()
+        };
         g.bench_function(format!("{name}/minimize_all"), |bch| {
             bch.iter(|| {
                 let mut e = 0.0;

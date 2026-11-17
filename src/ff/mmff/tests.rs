@@ -6,7 +6,11 @@ use crate::ff::{Contrib, ForceField};
 const SDF: &str = include_str!("../../../tests/data/mmff/MMFF94_dative.sdf");
 
 fn molecules(n: usize) -> Vec<Molecule> {
-    crate::io::molfile::read_sdf_lenient(SDF).into_iter().filter_map(|r| r.ok()).take(n).collect()
+    crate::io::molfile::read_sdf_lenient(SDF)
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .take(n)
+        .collect()
 }
 
 /// Central-difference check of one contrib at slightly perturbed
@@ -44,13 +48,23 @@ fn analytic_gradients_match_numeric_for_every_term() {
     let mut seen = std::collections::BTreeMap::<&'static str, usize>::new();
     for variant in [MmffVariant::Mmff94, MmffVariant::Mmff94s] {
         for diel in [DielectricModel::Constant, DielectricModel::Distance] {
-            let b = MmffBuilder { variant, dielectric_model: diel, dielectric_constant: 2.0, ..Default::default() };
+            let b = MmffBuilder {
+                variant,
+                dielectric_model: diel,
+                dielectric_constant: 2.0,
+                ..Default::default()
+            };
             for mol in molecules(40) {
                 let ff = b.build(&mol, &[]).unwrap();
                 let pos = perturbed(&mol);
                 for c in ff.contribs() {
                     let err = check_contrib(c.as_ref(), &pos);
-                    assert!(err < 1e-5, "{} {}: gradient error {err}", mol.name, c.label());
+                    assert!(
+                        err < 1e-5,
+                        "{} {}: gradient error {err}",
+                        mol.name,
+                        c.label()
+                    );
                     *seen.entry(c.label()).or_default() += 1;
                 }
                 // whole force field (including fixed-point handling)
@@ -58,7 +72,14 @@ fn analytic_gradients_match_numeric_for_every_term() {
             }
         }
     }
-    for l in ["BondStretch", "AngleBend", "StretchBend", "OopBend", "Torsion", "Nonbonded"] {
+    for l in [
+        "BondStretch",
+        "AngleBend",
+        "StretchBend",
+        "OopBend",
+        "Torsion",
+        "Nonbonded",
+    ] {
         assert!(seen.get(l).copied().unwrap_or(0) > 0, "no {l} terms tested");
     }
 }
@@ -74,7 +95,15 @@ fn breakdown_reports_all_labels_and_sums_to_total() {
     let pos = mol.flat_coords();
     let bd = ff.energy_breakdown(&pos);
     let labels: Vec<&str> = bd.iter().map(|(k, _)| k.as_str()).collect();
-    for l in ["BondStretch", "AngleBend", "StretchBend", "OopBend", "Torsion", "VdW", "Electrostatic"] {
+    for l in [
+        "BondStretch",
+        "AngleBend",
+        "StretchBend",
+        "OopBend",
+        "Torsion",
+        "VdW",
+        "Electrostatic",
+    ] {
         assert!(labels.contains(&l), "{l} missing in {labels:?}");
     }
     let sum: f64 = bd.iter().map(|(_, e)| e).sum();
@@ -99,6 +128,8 @@ fn builder_names_and_validity() {
 fn constraints_are_added() {
     let mol = &molecules(1)[0];
     let plain = MmffBuilder::default().build(mol, &[]).unwrap();
-    let c = MmffBuilder::default().build(mol, &[Constraint::distance(0, 1, 2.0, 100.0)]).unwrap();
+    let c = MmffBuilder::default()
+        .build(mol, &[Constraint::distance(0, 1, 2.0, 100.0)])
+        .unwrap();
     assert!(c.num_contribs() > plain.num_contribs());
 }

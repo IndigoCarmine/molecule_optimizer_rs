@@ -20,7 +20,9 @@ const MAX_MATCHES: usize = 1000;
 
 /// Atom maps (heavy atoms) used to compare conformers.
 pub fn self_matches(mol: &Molecule, p: &EmbedParams) -> Vec<Vec<usize>> {
-    let heavy: Vec<usize> = (0..mol.num_atoms()).filter(|&i| mol.atom(i).atomic_num != 1).collect();
+    let heavy: Vec<usize> = (0..mol.num_atoms())
+        .filter(|&i| mol.atom(i).atomic_num != 1)
+        .collect();
     if p.use_symmetry_for_pruning && !heavy.is_empty() {
         return automorphisms(mol, &heavy);
     }
@@ -34,11 +36,16 @@ pub fn self_matches(mol: &Molecule, p: &EmbedParams) -> Vec<Vec<usize>> {
 fn automorphisms(mol: &Molecule, heavy: &[usize]) -> Vec<Vec<usize>> {
     let n = mol.num_atoms();
     let is_heavy = |a: usize| mol.atom(a).atomic_num != 1;
-    let hdeg: Vec<usize> = (0..n).map(|a| mol.neighbors(a).filter(|&b| is_heavy(b)).count()).collect();
+    let hdeg: Vec<usize> = (0..n)
+        .map(|a| mol.neighbors(a).filter(|&b| is_heavy(b)).count())
+        .collect();
     let terminal_conj = |a: usize| -> bool {
         hdeg[a] == 1
             && matches!(mol.atom(a).atomic_num, 7 | 8 | 16)
-            && mol.atom_bonds(a).iter().any(|&(nb, b)| is_heavy(nb) && mol.bond(b).is_conjugated)
+            && mol
+                .atom_bonds(a)
+                .iter()
+                .any(|&(nb, b)| is_heavy(nb) && mol.bond(b).is_conjugated)
     };
     let tc: Vec<bool> = (0..n).map(terminal_conj).collect();
     let atom_ok = |q: usize, t: usize| {
@@ -100,7 +107,12 @@ fn automorphisms(mol: &Molecule, heavy: &[usize]) -> Vec<Vec<usize>> {
 }
 
 /// RDKit `_isConfFarFromRest`.
-pub fn is_far_from_rest(conf: &[[f64; 3]], kept: &[Vec<[f64; 3]>], threshold: f64, matches: &[Vec<usize>]) -> bool {
+pub fn is_far_from_rest(
+    conf: &[[f64; 3]],
+    kept: &[Vec<[f64; 3]>],
+    threshold: f64,
+    matches: &[Vec<usize>],
+) -> bool {
     let reference: Vec<[f64; 3]> = matches[0].iter().map(|&i| conf[i]).collect();
     let ssr_thresh = matches[0].len() as f64 * threshold * threshold;
     for m in matches {

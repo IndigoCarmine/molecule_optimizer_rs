@@ -15,9 +15,21 @@ pub const THETA_HOH: f64 = 104.52;
 fn rotate(q: [f64; 4], v: [f64; 3]) -> [f64; 3] {
     let [w, x, y, z] = q;
     let m = [
-        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
-        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
-        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - w * z),
+            2.0 * (x * z + w * y),
+        ],
+        [
+            2.0 * (x * y + w * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - w * x),
+        ],
+        [
+            2.0 * (x * z - w * y),
+            2.0 * (y * z + w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
     ];
     [0, 1, 2].map(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
 }
@@ -60,7 +72,14 @@ pub fn water_box(n: [usize; 3], spacing: f64, seed: u64) -> Molecule {
         }
     }
     sanitize(&mut m).expect("sanitize water box");
-    m.cell = Some(UnitCell::orthorhombic(n[0] as f64 * spacing, n[1] as f64 * spacing, n[2] as f64 * spacing).unwrap());
+    m.cell = Some(
+        UnitCell::orthorhombic(
+            n[0] as f64 * spacing,
+            n[1] as f64 * spacing,
+            n[2] as f64 * spacing,
+        )
+        .unwrap(),
+    );
     m
 }
 
@@ -79,7 +98,11 @@ pub struct BondedWater {
 
 impl BondedWater {
     pub fn new(nwat: usize) -> Self {
-        BondedWater { nwat, kb: 1000.0, ka: 100.0 }
+        BondedWater {
+            nwat,
+            kb: 1000.0,
+            ka: 100.0,
+        }
     }
     pub fn energy_grad(&self, pos: &[f64], mut grad: Option<&mut [f64]>) -> f64 {
         let th0 = THETA_HOH.to_radians();

@@ -24,7 +24,9 @@ use std::time::Duration;
 
 fn load(path: &str) -> Option<Molecule> {
     let p = format!("{}/{path}", env!("CARGO_MANIFEST_DIR"));
-    molecule_optimizer_rs::io::read_file(&p).ok().map(|mut v| v.remove(0))
+    molecule_optimizer_rs::io::read_file(&p)
+        .ok()
+        .map(|mut v| v.remove(0))
 }
 
 fn molecules() -> Vec<(&'static str, Molecule)> {
@@ -45,9 +47,13 @@ fn molecules() -> Vec<(&'static str, Molecule)> {
 type Builder = Box<dyn ForceFieldBuilder>;
 
 fn bench_eg(c: &mut Criterion) {
-    let one = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+    let one = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
     let mut g = c.benchmark_group("eg");
-    g.warm_up_time(Duration::from_millis(500)).measurement_time(Duration::from_secs(3));
+    g.warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(3));
     for (name, mol) in molecules() {
         if mol.num_atoms() > 1000 {
             g.sample_size(10);
@@ -59,14 +65,26 @@ fn bench_eg(c: &mut Criterion) {
             (
                 "MMFF",
                 Box::new(MmffBuilder::default()),
-                Box::new(FastBuilder::new(MmffBuilder::default(), FastOptions::exact())),
-                Box::new(FastBuilder::new(MmffBuilder::default(), FastOptions::exact().simd(false))),
+                Box::new(FastBuilder::new(
+                    MmffBuilder::default(),
+                    FastOptions::exact(),
+                )),
+                Box::new(FastBuilder::new(
+                    MmffBuilder::default(),
+                    FastOptions::exact().simd(false),
+                )),
             ),
             (
                 "UFF",
                 Box::new(UffBuilder::default()),
-                Box::new(FastBuilder::new(UffBuilder::default(), FastOptions::exact())),
-                Box::new(FastBuilder::new(UffBuilder::default(), FastOptions::exact().simd(false))),
+                Box::new(FastBuilder::new(
+                    UffBuilder::default(),
+                    FastOptions::exact(),
+                )),
+                Box::new(FastBuilder::new(
+                    UffBuilder::default(),
+                    FastOptions::exact().simd(false),
+                )),
             ),
         ];
         for (ffname, contrib, fast, scalar) in &builders {
@@ -83,7 +101,9 @@ fn bench_eg(c: &mut Criterion) {
                 });
                 if *imp != "fast-scalar" {
                     g.bench_with_input(BenchmarkId::new(id, format!("{imp}-1t")), &(), |b, _| {
-                        one.install(|| b.iter(|| black_box(ff.energy_grad(black_box(&pos), &mut grad))))
+                        one.install(|| {
+                            b.iter(|| black_box(ff.energy_grad(black_box(&pos), &mut grad)))
+                        })
                     });
                 }
             }
@@ -109,23 +129,51 @@ fn perturbed(mol: &Molecule, k: usize) -> Vec<[f64; 3]> {
 
 fn bench_batch(c: &mut Criterion) {
     let mol = Arc::new(load("examples/data/paracetamol.mol").unwrap());
-    let items: Vec<_> = (0..1000).map(|k| (mol.clone(), Some(perturbed(&mol, k)))).collect();
-    let engine = Engine::new(EngineConfig { num_threads: None, publish_interval: Duration::ZERO }).unwrap();
+    let items: Vec<_> = (0..1000)
+        .map(|k| (mol.clone(), Some(perturbed(&mol, k))))
+        .collect();
+    let engine = Engine::new(EngineConfig {
+        num_threads: None,
+        publish_interval: Duration::ZERO,
+    })
+    .unwrap();
     let mut g = c.benchmark_group("batch");
-    g.sample_size(10).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(8));
+    g.sample_size(10)
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(8));
     let cases: Vec<(&str, &str, Arc<dyn ForceFieldBuilder>)> = vec![
         ("MMFF", "contrib", Arc::new(MmffBuilder::default())),
-        ("MMFF", "fast", Arc::new(FastBuilder::new(MmffBuilder::default(), FastOptions::exact()))),
+        (
+            "MMFF",
+            "fast",
+            Arc::new(FastBuilder::new(
+                MmffBuilder::default(),
+                FastOptions::exact(),
+            )),
+        ),
         ("UFF", "contrib", Arc::new(UffBuilder::default())),
-        ("UFF", "fast", Arc::new(FastBuilder::new(UffBuilder::default(), FastOptions::exact()))),
+        (
+            "UFF",
+            "fast",
+            Arc::new(FastBuilder::new(
+                UffBuilder::default(),
+                FastOptions::exact(),
+            )),
+        ),
     ];
     for (ff, imp, b) in cases {
-        g.bench_function(BenchmarkId::new(format!("paracetamol-1000/{ff}"), imp), |bch| {
-            bch.iter(|| {
-                let r = engine.optimize_batch(items.clone(), b.clone(), OptimizeOptions::default()).wait_blocking().unwrap();
-                black_box(r.len())
-            })
-        });
+        g.bench_function(
+            BenchmarkId::new(format!("paracetamol-1000/{ff}"), imp),
+            |bch| {
+                bch.iter(|| {
+                    let r = engine
+                        .optimize_batch(items.clone(), b.clone(), OptimizeOptions::default())
+                        .wait_blocking()
+                        .unwrap();
+                    black_box(r.len())
+                })
+            },
+        );
     }
     g.finish();
 }

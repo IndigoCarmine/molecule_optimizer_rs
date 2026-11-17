@@ -29,7 +29,10 @@ pub struct SanitizeOptions {
 
 impl Default for SanitizeOptions {
     fn default() -> Self {
-        SanitizeOptions { aromaticity: true, stereo_from_3d: true }
+        SanitizeOptions {
+            aromaticity: true,
+            stereo_from_3d: true,
+        }
     }
 }
 
@@ -129,7 +132,15 @@ mod tests {
             m.add_bond(k, h, BondOrder::Single);
         }
         for k in 0..6 {
-            m.add_bond(k, (k + 1) % 6, if k % 2 == 0 { BondOrder::Double } else { BondOrder::Single });
+            m.add_bond(
+                k,
+                (k + 1) % 6,
+                if k % 2 == 0 {
+                    BondOrder::Double
+                } else {
+                    BondOrder::Single
+                },
+            );
         }
         m
     }
@@ -162,7 +173,10 @@ mod tests {
             let mut ring = Vec::new();
             for k in 0..5 {
                 let a = 2.0 * std::f64::consts::PI / 5.0 * k as f64;
-                ring.push(m.add_atom(Atom::new(if k == 0 { het } else { 6 }), [1.2 * a.cos(), 1.2 * a.sin(), 0.0]));
+                ring.push(m.add_atom(
+                    Atom::new(if k == 0 { het } else { 6 }),
+                    [1.2 * a.cos(), 1.2 * a.sin(), 0.0],
+                ));
             }
             m.add_bond(0, 1, BondOrder::Single);
             m.add_bond(1, 2, BondOrder::Double);
@@ -185,7 +199,14 @@ mod tests {
             let a = std::f64::consts::PI / 3.0 * k as f64;
             m.add_atom(Atom::new(6), [1.4 * a.cos(), 1.4 * a.sin(), 0.0]);
         }
-        let orders = [BondOrder::Double, BondOrder::Single, BondOrder::Double, BondOrder::Single, BondOrder::Single, BondOrder::Single];
+        let orders = [
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Single,
+            BondOrder::Single,
+        ];
         for k in 0..6 {
             m.add_bond(k, (k + 1) % 6, orders[k]);
         }

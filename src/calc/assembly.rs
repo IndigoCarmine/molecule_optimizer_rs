@@ -66,7 +66,10 @@ pub enum MonomerConformers {
     /// `num_conformers` ETKDG conformers per distinct molecule (conformer `i`
     /// = conformer `i` of RDKit `EmbedMultipleConfs` with `params`),
     /// minimized; each trial picks one at random per copy.
-    Etkdg { params: EmbedParams, num_conformers: usize },
+    Etkdg {
+        params: EmbedParams,
+        num_conformers: usize,
+    },
 }
 
 /// Search strategy of each trial.
@@ -94,7 +97,11 @@ pub struct PlacementOptions {
 
 impl Default for PlacementOptions {
     fn default() -> Self {
-        PlacementOptions { radius: None, min_distance: 2.0, max_attempts: 200 }
+        PlacementOptions {
+            radius: None,
+            min_distance: 2.0,
+            max_attempts: 200,
+        }
     }
 }
 
@@ -113,7 +120,11 @@ pub struct ConfinementSchedule {
 
 impl Default for ConfinementSchedule {
     fn default() -> Self {
-        ConfinementSchedule { radius_start: None, radius_end: None, force_constant: 10.0 }
+        ConfinementSchedule {
+            radius_start: None,
+            radius_end: None,
+            force_constant: 10.0,
+        }
     }
 }
 
@@ -127,7 +138,11 @@ pub fn geometric_schedule(start: f64, steps: usize) -> Vec<(f64, f64)> {
     let start = start.clamp(1e-12, 1.0);
     (0..steps)
         .map(|k| {
-            let l = if k + 1 == steps { 1.0 } else { start * (1.0 / start).powf(k as f64 / (steps - 1) as f64) };
+            let l = if k + 1 == steps {
+                1.0
+            } else {
+                start * (1.0 / start).powf(k as f64 / (steps - 1) as f64)
+            };
             (l, l)
         })
         .collect()
@@ -180,9 +195,15 @@ impl Default for AssemblySearchOptions {
             mode: AssemblyMode::LambdaContinuation,
             lambda_schedule: geometric_schedule(0.02, 12),
             softcore: SoftCoreParams::default(),
-            step_minimize: MinimizeOptions { max_iters: 500, ..Default::default() },
+            step_minimize: MinimizeOptions {
+                max_iters: 500,
+                ..Default::default()
+            },
             confinement: Some(ConfinementSchedule::default()),
-            final_minimize: MinimizeOptions { max_iters: 5000, ..Default::default() },
+            final_minimize: MinimizeOptions {
+                max_iters: 5000,
+                ..Default::default()
+            },
             energy_tolerance: 0.01,
             rmsd_threshold: 0.25,
             rmsd_with_hydrogens: true,
@@ -344,9 +365,9 @@ fn extract_molecule(mol: &Molecule, atoms: &[usize]) -> Molecule {
             d.is_aromatic = b.is_aromatic;
             d.is_conjugated = b.is_conjugated;
             d.stereo = b.stereo;
-            d.stereo_atoms = b
-                .stereo_atoms
-                .and_then(|(x, y)| (map[x] != usize::MAX && map[y] != usize::MAX).then_some((map[x], map[y])));
+            d.stereo_atoms = b.stereo_atoms.and_then(|(x, y)| {
+                (map[x] != usize::MAX && map[y] != usize::MAX).then_some((map[x], map[y]))
+            });
         }
     }
     m.name = mol.name.clone();
@@ -365,7 +386,10 @@ fn same_graph(a: &Molecule, b: &Molecule) -> bool {
                 && x.implicit_hs == y.implicit_hs
                 && x.is_aromatic == y.is_aromatic
         })
-        && a.bonds().iter().zip(b.bonds()).all(|(x, y)| x.begin == y.begin && x.end == y.end && x.order == y.order)
+        && a.bonds()
+            .iter()
+            .zip(b.bonds())
+            .all(|(x, y)| x.begin == y.begin && x.end == y.end && x.order == y.order)
 }
 
 fn splitmix64(mut z: u64) -> u64 {
@@ -389,15 +413,31 @@ fn random_rotation(rng: &mut ChaCha8Rng) -> [[f64; 3]; 3] {
     };
     let [w, x, y, z] = q;
     [
-        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
-        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
-        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - w * z),
+            2.0 * (x * z + w * y),
+        ],
+        [
+            2.0 * (x * y + w * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - w * x),
+        ],
+        [
+            2.0 * (x * z - w * y),
+            2.0 * (y * z + w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
     ]
 }
 
 fn random_in_ball(rng: &mut ChaCha8Rng, r: f64) -> V3 {
     loop {
-        let p = [rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)];
+        let p = [
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+        ];
         if p[0] * p[0] + p[1] * p[1] + p[2] * p[2] <= 1.0 {
             return p.map(|v| v * r);
         }
@@ -473,7 +513,17 @@ fn automorphisms(m: &Molecule, cap: usize) -> Vec<Vec<usize>> {
     let mut cls: Vec<u64> = (0..n)
         .map(|i| {
             let a = m.atom(i);
-            h(&|s| (a.atomic_num, a.formal_charge, a.isotope, a.implicit_hs, a.is_aromatic, m.degree(i)).hash(s))
+            h(&|s| {
+                (
+                    a.atomic_num,
+                    a.formal_charge,
+                    a.isotope,
+                    a.implicit_hs,
+                    a.is_aromatic,
+                    m.degree(i),
+                )
+                    .hash(s)
+            })
         })
         .collect();
     let count = |c: &[u64]| c.iter().collect::<std::collections::BTreeSet<_>>().len();
@@ -481,7 +531,11 @@ fn automorphisms(m: &Molecule, cap: usize) -> Vec<Vec<usize>> {
     for _ in 0..n {
         let next: Vec<u64> = (0..n)
             .map(|i| {
-                let mut nb: Vec<(u64, u8)> = m.atom_bonds(i).iter().map(|&(j, b)| (cls[j], bt(b))).collect();
+                let mut nb: Vec<(u64, u8)> = m
+                    .atom_bonds(i)
+                    .iter()
+                    .map(|&(j, b)| (cls[j], bt(b)))
+                    .collect();
                 nb.sort_unstable();
                 h(&|s| (cls[i], &nb).hash(s))
             })
@@ -538,7 +592,9 @@ fn automorphisms(m: &Molecule, cap: usize) -> Vec<Vec<usize>> {
         }
         let i = st.order[k];
         // identity first so that it is always found
-        let mut cands: Vec<usize> = (0..st.order.len()).filter(|&j| !st.used[j] && st.cls[j] == st.cls[i]).collect();
+        let mut cands: Vec<usize> = (0..st.order.len())
+            .filter(|&j| !st.used[j] && st.cls[j] == st.cls[i])
+            .collect();
         if let Some(p) = cands.iter().position(|&j| j == i) {
             cands.swap(0, p);
         }
@@ -617,10 +673,21 @@ impl Matcher {
     fn new(monomers: &[Monomer], copies: &[CopyInfo], with_h: bool) -> Self {
         let used = monomers
             .iter()
-            .map(|m| (0..m.mol.num_atoms()).filter(|&k| with_h || m.mol.atom(k).atomic_num != 1).collect())
+            .map(|m| {
+                (0..m.mol.num_atoms())
+                    .filter(|&k| with_h || m.mol.atom(k).atomic_num != 1)
+                    .collect()
+            })
             .collect();
-        let autos = monomers.iter().map(|m| automorphisms(&m.mol, MAX_AUTOMORPHISMS)).collect();
-        Matcher { copies: copies.to_vec(), used, autos }
+        let autos = monomers
+            .iter()
+            .map(|m| automorphisms(&m.mol, MAX_AUTOMORPHISMS))
+            .collect();
+        Matcher {
+            copies: copies.to_vec(),
+            used,
+            autos,
+        }
     }
 
     /// Atom pairs (A index, B index) for copy assignment `assign` (B copy of
@@ -638,7 +705,13 @@ impl Matcher {
         (ai, bi)
     }
 
-    fn eval(&self, a: &[V3], b: &[V3], assign: &[usize], auto: &[usize]) -> (f64, [[f64; 3]; 3], V3) {
+    fn eval(
+        &self,
+        a: &[V3],
+        b: &[V3],
+        assign: &[usize],
+        auto: &[usize],
+    ) -> (f64, [[f64; 3]; 3], V3) {
         let (ai, bi) = self.pairs(assign, auto);
         let pa: Vec<V3> = ai.iter().map(|&i| a[i]).collect();
         let pb: Vec<V3> = bi.iter().map(|&i| b[i]).collect();
@@ -647,13 +720,32 @@ impl Matcher {
 
     /// Σ squared distances of copy `c` of A to copy `cb` of B (transformed
     /// by `rot`, `t`) under automorphism `p`.
-    fn copy_cost(&self, a: &[V3], b: &[V3], (c, cb): (usize, usize), p: &[usize], rot: &[[f64; 3]; 3], t: V3) -> f64 {
+    fn copy_cost(
+        &self,
+        a: &[V3],
+        b: &[V3],
+        (c, cb): (usize, usize),
+        p: &[usize],
+        rot: &[[f64; 3]; 3],
+        t: V3,
+    ) -> f64 {
         let ca = &self.copies[c];
         let atoms_b = &self.copies[cb].atoms;
-        self.used[ca.monomer].iter().map(|&k| dist2(a[ca.atoms[k]], transform(rot, t, b[atoms_b[p[k]]]))).sum()
+        self.used[ca.monomer]
+            .iter()
+            .map(|&k| dist2(a[ca.atoms[k]], transform(rot, t, b[atoms_b[p[k]]])))
+            .sum()
     }
 
-    fn best_auto(&self, a: &[V3], b: &[V3], c: usize, cb: usize, rot: &[[f64; 3]; 3], t: V3) -> (f64, usize) {
+    fn best_auto(
+        &self,
+        a: &[V3],
+        b: &[V3],
+        c: usize,
+        cb: usize,
+        rot: &[[f64; 3]; 3],
+        t: V3,
+    ) -> (f64, usize) {
         let mon = self.copies[c].monomer;
         let mut best = (f64::INFINITY, 0);
         for (q, p) in self.autos[mon].iter().enumerate() {
@@ -695,7 +787,11 @@ impl Matcher {
                 }
                 assigns = next;
             }
-            let radix: Vec<usize> = self.copies.iter().map(|c| self.autos[c.monomer].len()).collect();
+            let radix: Vec<usize> = self
+                .copies
+                .iter()
+                .map(|c| self.autos[c.monomer].len())
+                .collect();
             let ncombo: usize = radix.iter().product();
             let mut best = f64::INFINITY;
             let mut auto = vec![0; nc];
@@ -733,8 +829,14 @@ impl Matcher {
                     if ra.is_empty() {
                         continue;
                     }
-                    let cost: Vec<Vec<(f64, usize)>> =
-                        ra.iter().map(|&c| rb.iter().map(|&x| self.best_auto(a, b, c, x, &rot, t)).collect()).collect();
+                    let cost: Vec<Vec<(f64, usize)>> = ra
+                        .iter()
+                        .map(|&c| {
+                            rb.iter()
+                                .map(|&x| self.best_auto(a, b, c, x, &rot, t))
+                                .collect()
+                        })
+                        .collect();
                     if ra.len() <= 6 {
                         let mut bp = (f64::INFINITY, Vec::new());
                         for p in permutations(ra.len()) {
@@ -807,7 +909,11 @@ fn minimize_monomer<B: SoftCoreInner>(
     Ok((to_points(&pos), r.energy))
 }
 
-fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &AssemblySearchOptions) -> Result<System> {
+fn prepare<B: SoftCoreInner>(
+    input: &AssemblyInput,
+    builder: &B,
+    opts: &AssemblySearchOptions,
+) -> Result<System> {
     // distinct molecules + copies (complex atom indices) + input geometry per copy
     let mut monomers: Vec<Molecule> = Vec::new();
     let mut copies: Vec<(usize, Vec<usize>, Vec<V3>)> = Vec::new();
@@ -819,7 +925,9 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
                     return Err(Error::InvalidArgument("assembly: empty molecule".into()));
                 }
                 if m.fragments().len() != 1 {
-                    return Err(Error::InvalidArgument("assembly: each input molecule must be connected".into()));
+                    return Err(Error::InvalidArgument(
+                        "assembly: each input molecule must be connected".into(),
+                    ));
                 }
                 let idx = match monomers.iter().position(|x| same_graph(x, m)) {
                     Some(i) => i,
@@ -862,10 +970,14 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
         }
     };
     if copies.len() < 2 {
-        return Err(Error::InvalidArgument("assembly: at least two molecules are needed".into()));
+        return Err(Error::InvalidArgument(
+            "assembly: at least two molecules are needed".into(),
+        ));
     }
     if complex.coords.len() != complex.num_atoms() {
-        return Err(Error::InvalidArgument("assembly: molecule has no coordinates".into()));
+        return Err(Error::InvalidArgument(
+            "assembly: molecule has no coordinates".into(),
+        ));
     }
 
     // starting geometries per monomer (and the fixed conformer of each copy)
@@ -884,7 +996,10 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
                 own[k] = Some(pos);
             }
         }
-        MonomerConformers::Etkdg { params, num_conformers } => {
+        MonomerConformers::Etkdg {
+            params,
+            num_conformers,
+        } => {
             for (mi, m) in monomers.iter().enumerate() {
                 let generator = EtkdgGenerator::new(params.clone());
                 let confs: Vec<Option<Vec<V3>>> = (0..*num_conformers)
@@ -902,8 +1017,10 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
     }
     let mut mons = Vec::with_capacity(monomers.len());
     for (mi, m) in monomers.into_iter().enumerate() {
-        let res: Vec<Result<(Vec<V3>, f64)>> =
-            starts[mi].par_iter().map(|c| minimize_monomer(builder, &m, c, &opts.final_minimize)).collect();
+        let res: Vec<Result<(Vec<V3>, f64)>> = starts[mi]
+            .par_iter()
+            .map(|c| minimize_monomer(builder, &m, c, &opts.final_minimize))
+            .collect();
         let mut confs = Vec::new();
         let mut energies = Vec::new();
         for r in res {
@@ -911,14 +1028,24 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
             confs.push(c);
             energies.push(e);
         }
-        mons.push(Monomer { mol: m, confs, energies });
+        mons.push(Monomer {
+            mol: m,
+            confs,
+            energies,
+        });
     }
-    let monomer_energies: Vec<f64> =
-        mons.iter().map(|m| m.energies.iter().copied().fold(f64::INFINITY, f64::min)).collect();
+    let monomer_energies: Vec<f64> = mons
+        .iter()
+        .map(|m| m.energies.iter().copied().fold(f64::INFINITY, f64::min))
+        .collect();
     let copies: Vec<CopyInfo> = copies
         .into_iter()
         .zip(own)
-        .map(|((monomer, atoms, _), own_conf)| CopyInfo { monomer, atoms, own_conf })
+        .map(|((monomer, atoms, _), own_conf)| CopyInfo {
+            monomer,
+            atoms,
+            own_conf,
+        })
         .collect();
     let reference_energy: f64 = copies.iter().map(|c| monomer_energies[c.monomer]).sum();
     let placement_radius = match opts.placement.radius {
@@ -930,7 +1057,10 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
                 .map(|c| {
                     let conf = &mons[c.monomer].confs[c.own_conf.unwrap_or(0)];
                     let cc = centroid(conf);
-                    let r = conf.iter().map(|&p| dist2(p, cc).sqrt()).fold(0.0, f64::max);
+                    let r = conf
+                        .iter()
+                        .map(|&p| dist2(p, cc).sqrt())
+                        .fold(0.0, f64::max);
                     (r + half).powi(3)
                 })
                 .sum();
@@ -938,7 +1068,15 @@ fn prepare<B: SoftCoreInner>(input: &AssemblyInput, builder: &B, opts: &Assembly
         }
     };
     let matcher = Matcher::new(&mons, &copies, opts.rmsd_with_hydrogens);
-    Ok(System { complex, monomers: mons, copies, monomer_energies, reference_energy, placement_radius, matcher })
+    Ok(System {
+        complex,
+        monomers: mons,
+        copies,
+        monomer_energies,
+        reference_energy,
+        placement_radius,
+        matcher,
+    })
 }
 
 impl System {
@@ -948,10 +1086,15 @@ impl System {
         let dmin2 = opts.placement.min_distance * opts.placement.min_distance;
         for c in &self.copies {
             let mon = &self.monomers[c.monomer];
-            let k = c.own_conf.unwrap_or_else(|| rng.gen_range(0..mon.confs.len()));
+            let k = c
+                .own_conf
+                .unwrap_or_else(|| rng.gen_range(0..mon.confs.len()));
             let conf = &mon.confs[k];
             let cc = centroid(conf);
-            let local: Vec<V3> = conf.iter().map(|&p| [p[0] - cc[0], p[1] - cc[1], p[2] - cc[2]]).collect();
+            let local: Vec<V3> = conf
+                .iter()
+                .map(|&p| [p[0] - cc[0], p[1] - cc[1], p[2] - cc[2]])
+                .collect();
             let mut radius = self.placement_radius;
             let mut attempts = 0;
             let pts = loop {
@@ -964,7 +1107,10 @@ impl System {
                         [x[0] + center[0], x[1] + center[1], x[2] + center[2]]
                     })
                     .collect();
-                if pts.iter().all(|&p| placed.iter().all(|&q| dist2(p, q) >= dmin2)) {
+                if pts
+                    .iter()
+                    .all(|&p| placed.iter().all(|&q| dist2(p, q) >= dmin2))
+                {
                     break pts;
                 }
                 attempts += 1;
@@ -985,7 +1131,12 @@ impl System {
         let n = self.copies.len();
         let c2 = contact * contact;
         let touch = |a: usize, b: usize| {
-            self.copies[a].atoms.iter().any(|&i| self.copies[b].atoms.iter().any(|&j| dist2(coords[i], coords[j]) < c2))
+            self.copies[a].atoms.iter().any(|&i| {
+                self.copies[b]
+                    .atoms
+                    .iter()
+                    .any(|&j| dist2(coords[i], coords[j]) < c2)
+            })
         };
         let mut seen = vec![false; n];
         let mut stack = vec![0];
@@ -1022,7 +1173,11 @@ fn minimize_observed(
                         stage,
                         lambda_vdw: lambda.0,
                         lambda_ele: lambda.1,
-                        frame: Frame { coords: to_points(pos), energy: f64::NAN, iteration: 0 },
+                        frame: Frame {
+                            coords: to_points(pos),
+                            energy: f64::NAN,
+                            iteration: 0,
+                        },
                     },
                 );
             });
@@ -1036,7 +1191,11 @@ fn minimize_observed(
                             stage,
                             lambda_vdw: lambda.0,
                             lambda_ele: lambda.1,
-                            frame: Frame { coords, energy: e, iteration: it },
+                            frame: Frame {
+                                coords,
+                                energy: e,
+                                iteration: it,
+                            },
                         },
                     );
                 });
@@ -1061,7 +1220,12 @@ fn run_trial<B: SoftCoreInner>(
         ctx.update_silent(|s| {
             s.in_flight.insert(
                 trial,
-                TrialProgress { stage: TrialStage::Placing, lambda_vdw: 0.0, lambda_ele: 0.0, frame: Frame::default() },
+                TrialProgress {
+                    stage: TrialStage::Placing,
+                    lambda_vdw: 0.0,
+                    lambda_ele: 0.0,
+                    frame: Frame::default(),
+                },
             );
         });
     }
@@ -1082,13 +1246,23 @@ fn run_trial<B: SoftCoreInner>(
             None => (f64::INFINITY, f64::INFINITY, None),
         };
         let sc = SoftCoreBuilder::new(builder.clone())
-            .with_params(SoftCoreParams { include_all_pairs: true, ..opts.softcore })
-            .with_confinement(k.map(|k| Confinement { radius: r0, force_constant: k }));
+            .with_params(SoftCoreParams {
+                include_all_pairs: true,
+                ..opts.softcore
+            })
+            .with_confinement(k.map(|k| Confinement {
+                radius: r0,
+                force_constant: k,
+            }));
         let (ff, handle) = sc.build_with_handle(&mol, &[])?;
         for (step, &(lv, le)) in sched.iter().enumerate() {
             handle.set_lambda(lv, le);
             if k.is_some() {
-                let f = if sched.len() > 1 { step as f64 / (sched.len() - 1) as f64 } else { 1.0 };
+                let f = if sched.len() > 1 {
+                    step as f64 / (sched.len() - 1) as f64
+                } else {
+                    1.0
+                };
                 handle.set_confinement_radius(r0 + (r1 - r0) * f);
             }
             let r = minimize_observed(
@@ -1109,7 +1283,15 @@ fn run_trial<B: SoftCoreInner>(
     }
     mol.coords = to_points(&pos);
     let ff = builder.with_interfrag(true).build_dyn(&mol, &[])?;
-    let r = minimize_observed(ff.as_ref(), &mut pos, &opts.final_minimize, job, trial, TrialStage::Final, (1.0, 1.0));
+    let r = minimize_observed(
+        ff.as_ref(),
+        &mut pos,
+        &opts.final_minimize,
+        job,
+        trial,
+        TrialStage::Final,
+        (1.0, 1.0),
+    );
     if r.status == MinimizeStatus::Cancelled {
         return Err(Error::Cancelled);
     }
@@ -1128,11 +1310,22 @@ fn run_trial<B: SoftCoreInner>(
     })
 }
 
-fn is_duplicate(m: &Matcher, a: &AssemblyStructure, b: &AssemblyStructure, opts: &AssemblySearchOptions) -> bool {
-    (a.energy - b.energy).abs() < opts.energy_tolerance && m.rmsd(&a.coords, &b.coords) < opts.rmsd_threshold
+fn is_duplicate(
+    m: &Matcher,
+    a: &AssemblyStructure,
+    b: &AssemblyStructure,
+    opts: &AssemblySearchOptions,
+) -> bool {
+    (a.energy - b.energy).abs() < opts.energy_tolerance
+        && m.rmsd(&a.coords, &b.coords) < opts.rmsd_threshold
 }
 
-fn insert_found(found: &mut Vec<AssemblyStructure>, s: AssemblyStructure, m: &Matcher, opts: &AssemblySearchOptions) {
+fn insert_found(
+    found: &mut Vec<AssemblyStructure>,
+    s: AssemblyStructure,
+    m: &Matcher,
+    opts: &AssemblySearchOptions,
+) {
     if let Some(p) = found.iter().position(|o| is_duplicate(m, o, &s, opts)) {
         if (s.energy, s.trial) < (found[p].energy, found[p].trial) {
             found[p] = s;
@@ -1145,7 +1338,11 @@ fn insert_found(found: &mut Vec<AssemblyStructure>, s: AssemblyStructure, m: &Ma
     found.sort_by(|a, b| a.energy.total_cmp(&b.energy).then(a.trial.cmp(&b.trial)));
 }
 
-fn deduplicate(mut all: Vec<AssemblyStructure>, m: &Matcher, opts: &AssemblySearchOptions) -> Vec<AssemblyStructure> {
+fn deduplicate(
+    mut all: Vec<AssemblyStructure>,
+    m: &Matcher,
+    opts: &AssemblySearchOptions,
+) -> Vec<AssemblyStructure> {
     all.sort_by(|a, b| a.energy.total_cmp(&b.energy).then(a.trial.cmp(&b.trial)));
     let emin = all.first().map(|c| c.energy).unwrap_or(0.0);
     let mut out: Vec<AssemblyStructure> = Vec::new();
@@ -1169,12 +1366,23 @@ impl AssemblySearchResult {
     /// RMSD (Å) between two structures of this result, minimized over
     /// permutations of identical molecules and of equivalent terminal atoms.
     pub fn rmsd(&self, a: &[V3], b: &[V3], with_hydrogens: bool) -> f64 {
-        let mons: Vec<Monomer> =
-            self.monomers.iter().map(|m| Monomer { mol: m.clone(), confs: vec![], energies: vec![] }).collect();
+        let mons: Vec<Monomer> = self
+            .monomers
+            .iter()
+            .map(|m| Monomer {
+                mol: m.clone(),
+                confs: vec![],
+                energies: vec![],
+            })
+            .collect();
         let copies: Vec<CopyInfo> = self
             .copies
             .iter()
-            .map(|c| CopyInfo { monomer: c.monomer, atoms: c.atoms.clone(), own_conf: None })
+            .map(|c| CopyInfo {
+                monomer: c.monomer,
+                atoms: c.atoms.clone(),
+                own_conf: None,
+            })
             .collect();
         Matcher::new(&mons, &copies, with_hydrogens).rmsd(a, b)
     }
@@ -1222,7 +1430,9 @@ fn search<B: SoftCoreInner>(
         }
     }
     if all.is_empty() && !cancelled && opts.num_trials > 0 {
-        return Err(Error::ForceField("assembly search: every trial failed".into()));
+        return Err(Error::ForceField(
+            "assembly search: every trial failed".into(),
+        ));
     }
     let structures = deduplicate(all.clone(), &sys.matcher, opts);
     let mut complex = sys.complex.clone();
@@ -1233,7 +1443,14 @@ fn search<B: SoftCoreInner>(
         complex,
         monomers: sys.monomers.iter().map(|m| m.mol.clone()).collect(),
         monomer_energies: sys.monomer_energies.clone(),
-        copies: sys.copies.iter().map(|c| AssemblyCopy { monomer: c.monomer, atoms: c.atoms.clone() }).collect(),
+        copies: sys
+            .copies
+            .iter()
+            .map(|c| AssemblyCopy {
+                monomer: c.monomer,
+                atoms: c.atoms.clone(),
+            })
+            .collect(),
         reference_energy: sys.reference_energy,
         structures,
         all,
@@ -1265,9 +1482,15 @@ impl Engine {
         opts: AssemblySearchOptions,
     ) -> JobHandle<AssemblySearchResult, AssemblySearchSnapshot> {
         let n = opts.num_trials;
-        self.spawn(AssemblySearchSnapshot { total: n, preparing: true, ..Default::default() }, n, move |ctx| {
-            search(&input, &builder, &opts, Some(&ctx))
-        })
+        self.spawn(
+            AssemblySearchSnapshot {
+                total: n,
+                preparing: true,
+                ..Default::default()
+            },
+            n,
+            move |ctx| search(&input, &builder, &opts, Some(&ctx)),
+        )
     }
 }
 

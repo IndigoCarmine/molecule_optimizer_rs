@@ -104,7 +104,9 @@ pub struct MmffVdwRijstarEps {
 }
 
 /// MMFF aromatic atom types (RDKit `defaultMMFFArom`).
-pub const MMFF_AROMATIC_TYPES: [u8; 17] = [37, 38, 39, 44, 58, 59, 63, 64, 65, 66, 69, 76, 78, 79, 80, 81, 82];
+pub const MMFF_AROMATIC_TYPES: [u8; 17] = [
+    37, 38, 39, 44, 58, 59, 63, 64, 65, 66, 69, 76, 78, 79, 80, 81, 82,
+];
 
 // ---------------------------------------------------------------------------
 // parsing helpers (RDKit: RDKit::getLine + boost::char_separator("\t"))
@@ -120,11 +122,15 @@ fn data_lines(text: &str) -> impl Iterator<Item = Vec<&str>> {
 }
 
 fn pu(s: &str) -> u8 {
-    s.trim().parse::<u32>().unwrap_or_else(|_| panic!("bad integer '{s}' in MMFF table")) as u8
+    s.trim()
+        .parse::<u32>()
+        .unwrap_or_else(|_| panic!("bad integer '{s}' in MMFF table")) as u8
 }
 
 fn pf(s: &str) -> f64 {
-    s.trim().parse::<f64>().unwrap_or_else(|_| panic!("bad number '{s}' in MMFF table"))
+    s.trim()
+        .parse::<f64>()
+        .unwrap_or_else(|_| panic!("bad number '{s}' in MMFF table"))
 }
 
 /// `std::equal_range(keys[lo..hi], val)` (keys sorted within the range).
@@ -259,7 +265,12 @@ pub struct PbciTable {
 }
 impl PbciTable {
     fn parse(text: &str) -> Self {
-        let params = data_lines(text).map(|t| MmffPbci { pbci: pf(t[2]), fcadj: pf(t[3]) }).collect();
+        let params = data_lines(text)
+            .map(|t| MmffPbci {
+                pbci: pf(t[2]),
+                fcadj: pf(t[3]),
+            })
+            .collect();
         PbciTable { params }
     }
     pub fn get(&self, atom_type: u8) -> Option<&MmffPbci> {
@@ -300,7 +311,12 @@ impl ChgTable {
             sign = 1;
         }
         let (lo, hi) = self.i_ranges[ci as usize];
-        let r = nested_lookup_in(lo as usize, hi as usize, &[&self.j, &self.bond_type], &[cj, bond_type]);
+        let r = nested_lookup_in(
+            lo as usize,
+            hi as usize,
+            &[&self.j, &self.bond_type],
+            &[cj, bond_type],
+        );
         (sign, r.map(|k| self.bci[k]))
     }
 }
@@ -321,14 +337,23 @@ impl BondTable {
             s.bond_type.push(pu(t[0]));
             s.i.push(pu(t[1]));
             s.j.push(pu(t[2]));
-            s.params.push(MmffBond { kb: pf(t[3]), r0: pf(t[4]) });
+            s.params.push(MmffBond {
+                kb: pf(t[3]),
+                r0: pf(t[4]),
+            });
         }
         s
     }
     pub fn get(&self, bond_type: u8, a: u8, b: u8) -> Option<MmffBond> {
         let (ci, cj) = if a > b { (b, a) } else { (a, b) };
         let (lo, hi) = self.i_ranges[ci as usize];
-        nested_lookup_in(lo as usize, hi as usize, &[&self.j, &self.bond_type], &[cj, bond_type]).map(|k| self.params[k])
+        nested_lookup_in(
+            lo as usize,
+            hi as usize,
+            &[&self.j, &self.bond_type],
+            &[cj, bond_type],
+        )
+        .map(|k| self.params[k])
     }
 }
 
@@ -344,7 +369,10 @@ impl BndkTable {
         for t in data_lines(text) {
             s.i.push(pu(t[0]));
             s.j.push(pu(t[1]));
-            s.params.push(MmffBond { r0: pf(t[2]), kb: pf(t[3]) });
+            s.params.push(MmffBond {
+                r0: pf(t[2]),
+                kb: pf(t[3]),
+            });
         }
         s
     }
@@ -366,7 +394,11 @@ impl HerschbachLaurieTable {
         for t in data_lines(text) {
             s.i.push(pu(t[0]));
             s.j.push(pu(t[1]));
-            s.params.push(MmffHerschbachLaurie { a_ij: pf(t[2]), d_ij: pf(t[3]), dp_ij: pf(t[4]) });
+            s.params.push(MmffHerschbachLaurie {
+                a_ij: pf(t[2]),
+                d_ij: pf(t[3]),
+                dp_ij: pf(t[4]),
+            });
         }
         s
     }
@@ -386,7 +418,10 @@ impl CovRadPauEleTable {
         let mut s = CovRadPauEleTable::default();
         for t in data_lines(text) {
             s.anum.push(pu(t[0]));
-            s.params.push(MmffCovRadPauEle { r0: pf(t[1]), chi: pf(t[2]) });
+            s.params.push(MmffCovRadPauEle {
+                r0: pf(t[1]),
+                chi: pf(t[2]),
+            });
         }
         s
     }
@@ -413,7 +448,10 @@ impl AngleTable {
             s.i.push(pu(t[1]));
             s.j.push(pu(t[2]));
             s.k.push(pu(t[3]));
-            s.params.push(MmffAngle { ka: pf(t[4]), theta0: pf(t[5]) });
+            s.params.push(MmffAngle {
+                ka: pf(t[4]),
+                theta0: pf(t[5]),
+            });
         }
         s
     }
@@ -466,12 +504,23 @@ impl StbnTable {
             s.i.push(pu(t[1]));
             s.j.push(pu(t[2]));
             s.k.push(pu(t[3]));
-            s.params.push(MmffStbn { kba_ijk: pf(t[4]), kba_kji: pf(t[5]) });
+            s.params.push(MmffStbn {
+                kba_ijk: pf(t[4]),
+                kba_kji: pf(t[5]),
+            });
         }
         s
     }
     /// RDKit `getMMFFStbnParams`: `(swap, params)`.
-    pub fn get(&self, stbn_type: u8, bond_type1: u8, bond_type2: u8, it: u8, jt: u8, kt: u8) -> (bool, Option<MmffStbn>) {
+    pub fn get(
+        &self,
+        stbn_type: u8,
+        bond_type1: u8,
+        bond_type2: u8,
+        it: u8,
+        jt: u8,
+        kt: u8,
+    ) -> (bool, Option<MmffStbn>) {
         let (mut ci, mut ck, mut swap) = (it, kt, false);
         if it > kt {
             ci = kt;
@@ -481,7 +530,12 @@ impl StbnTable {
             swap = bond_type1 < bond_type2;
         }
         let (lo, hi) = self.j_ranges[jt as usize];
-        let r = nested_lookup_in(lo as usize, hi as usize, &[&self.i, &self.k, &self.stbn_type], &[ci, ck, stbn_type]);
+        let r = nested_lookup_in(
+            lo as usize,
+            hi as usize,
+            &[&self.i, &self.k, &self.stbn_type],
+            &[ci, ck, stbn_type],
+        );
         (swap, r.map(|x| self.params[x]))
     }
 }
@@ -494,7 +548,13 @@ impl DfsbTable {
     fn parse(text: &str) -> Self {
         let mut params = HashMap::new();
         for t in data_lines(text) {
-            params.insert((pu(t[0]), pu(t[1]), pu(t[2])), MmffStbn { kba_ijk: pf(t[3]), kba_kji: pf(t[4]) });
+            params.insert(
+                (pu(t[0]), pu(t[1]), pu(t[2])),
+                MmffStbn {
+                    kba_ijk: pf(t[3]),
+                    kba_kji: pf(t[4]),
+                },
+            );
         }
         DfsbTable { params }
     }
@@ -579,20 +639,38 @@ impl TorTable {
             s.j.push(pu(t[2]));
             s.k.push(pu(t[3]));
             s.l.push(pu(t[4]));
-            s.params.push(MmffTor { v1: pf(t[5]), v2: pf(t[6]), v3: pf(t[7]) });
+            s.params.push(MmffTor {
+                v1: pf(t[5]),
+                v2: pf(t[6]),
+                v3: pf(t[7]),
+            });
         }
         s
     }
 
     fn find(&self, tt: u8, ci: u8, cj: u8, ck: u8, cl: u8) -> Option<MmffTor> {
         let (lo, hi) = self.j_ranges[cj as usize];
-        nested_lookup_in(lo as usize, hi as usize, &[&self.k, &self.i, &self.l, &self.tor_type], &[ck, ci, cl, tt]).map(|x| self.params[x])
+        nested_lookup_in(
+            lo as usize,
+            hi as usize,
+            &[&self.k, &self.i, &self.l, &self.tor_type],
+            &[ck, ci, cl, tt],
+        )
+        .map(|x| self.params[x])
     }
 
     /// RDKit `getMMFFTorParams` (including its wildcard step-down and the
     /// fall-back to the secondary torsion type). Returns the torsion type
     /// that was used and the parameters.
-    pub fn get(&self, def: &DefTable, tor_type: (u8, u8), it: u8, jt: u8, kt: u8, lt: u8) -> (u8, Option<MmffTor>) {
+    pub fn get(
+        &self,
+        def: &DefTable,
+        tor_type: (u8, u8),
+        it: u8,
+        jt: u8,
+        kt: u8,
+        lt: u8,
+    ) -> (u8, Option<MmffTor>) {
         let mut res: Option<MmffTor> = None;
         let mut iter: u32 = 0;
         let mut max_iter: u32 = 5;
@@ -708,13 +786,23 @@ impl MmffParams {
             chg: ChgTable::parse(include_str!("data/chg.par")),
             bond: BondTable::parse(include_str!("data/bond.par")),
             bndk: BndkTable::parse(include_str!("data/bndk.par")),
-            herschbach_laurie: HerschbachLaurieTable::parse(include_str!("data/herschbach_laurie.par")),
+            herschbach_laurie: HerschbachLaurieTable::parse(include_str!(
+                "data/herschbach_laurie.par"
+            )),
             cov_rad_pau_ele: CovRadPauEleTable::parse(include_str!("data/covrad_pauele.par")),
             angle: AngleTable::parse(include_str!("data/angle.par")),
             stbn: StbnTable::parse(include_str!("data/stbn.par")),
             dfsb: DfsbTable::parse(include_str!("data/dfsb.par")),
-            oop: OopTable::parse(if mmffs { include_str!("data/oop_mmffs.par") } else { include_str!("data/oop.par") }),
-            tor: TorTable::parse(if mmffs { include_str!("data/tor_mmffs.par") } else { include_str!("data/tor.par") }),
+            oop: OopTable::parse(if mmffs {
+                include_str!("data/oop_mmffs.par")
+            } else {
+                include_str!("data/oop.par")
+            }),
+            tor: TorTable::parse(if mmffs {
+                include_str!("data/tor_mmffs.par")
+            } else {
+                include_str!("data/tor.par")
+            }),
             vdw: VdwTable::parse(include_str!("data/vdw.par")),
         };
         // first-key equal ranges: the nested lookups start from a direct
@@ -732,7 +820,11 @@ impl MmffParams {
     pub fn get(mmffs: bool) -> &'static MmffParams {
         static MMFF94: OnceLock<MmffParams> = OnceLock::new();
         static MMFF94S: OnceLock<MmffParams> = OnceLock::new();
-        if mmffs { MMFF94S.get_or_init(|| MmffParams::load(true)) } else { MMFF94.get_or_init(|| MmffParams::load(false)) }
+        if mmffs {
+            MMFF94S.get_or_init(|| MmffParams::load(true))
+        } else {
+            MMFF94.get_or_init(|| MmffParams::load(false))
+        }
     }
 }
 
@@ -767,10 +859,26 @@ mod tests {
             assert!(sorted_by(&[&p.bndk.i, &p.bndk.j]));
             assert!(sorted_by(&[&p.herschbach_laurie.i, &p.herschbach_laurie.j]));
             assert!(sorted_by(&[&p.cov_rad_pau_ele.anum]));
-            assert!(sorted_by(&[&p.angle.j, &p.angle.i, &p.angle.k, &p.angle.angle_type]));
-            assert!(sorted_by(&[&p.stbn.j, &p.stbn.i, &p.stbn.k, &p.stbn.stbn_type]));
+            assert!(sorted_by(&[
+                &p.angle.j,
+                &p.angle.i,
+                &p.angle.k,
+                &p.angle.angle_type
+            ]));
+            assert!(sorted_by(&[
+                &p.stbn.j,
+                &p.stbn.i,
+                &p.stbn.k,
+                &p.stbn.stbn_type
+            ]));
             assert!(sorted_by(&[&p.oop.j, &p.oop.i, &p.oop.k, &p.oop.l]));
-            assert!(sorted_by(&[&p.tor.j, &p.tor.k, &p.tor.i, &p.tor.l, &p.tor.tor_type]));
+            assert!(sorted_by(&[
+                &p.tor.j,
+                &p.tor.k,
+                &p.tor.i,
+                &p.tor.l,
+                &p.tor.tor_type
+            ]));
             assert!(sorted_by(&[&p.vdw.types]));
         }
     }
@@ -785,7 +893,13 @@ mod tests {
         assert_eq!(p.pbci.params.len(), 99);
         let c = p.prop.get(1).unwrap();
         assert_eq!((c.atno, c.crd, c.val), (6, 4, 4));
-        assert_eq!(p.bond.get(0, 1, 1), Some(MmffBond { kb: 4.258, r0: 1.508 }));
+        assert_eq!(
+            p.bond.get(0, 1, 1),
+            Some(MmffBond {
+                kb: 4.258,
+                r0: 1.508
+            })
+        );
         assert_eq!(p.vdw.power, 0.25);
         assert_eq!(p.vdw.beta, 12.0);
         let v = p.vdw.get(5).unwrap();

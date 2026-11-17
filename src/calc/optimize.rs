@@ -38,7 +38,11 @@ pub struct OptimizeSnapshot {
 
 fn energy_without_constraints(ff_with: &dyn ForceField, ff_energy_total: f64, pos: &[f64]) -> f64 {
     let bd = ff_with.energy_breakdown(pos);
-    let c: f64 = bd.iter().filter(|(k, _)| k == "Constraint").map(|(_, v)| v).sum();
+    let c: f64 = bd
+        .iter()
+        .filter(|(k, _)| k == "Constraint")
+        .map(|(_, v)| v)
+        .sum();
     ff_energy_total - c
 }
 
@@ -53,7 +57,11 @@ pub fn optimize_coords(
     let ff = builder.build_dyn(mol, &opts.constraints)?;
     let mut pos = to_flat(coords);
     let r = optim::minimize(&ff, &mut pos, &opts.minimize, observer);
-    let ff_energy = if opts.constraints.is_empty() { r.energy } else { energy_without_constraints(&ff, r.energy, &pos) };
+    let ff_energy = if opts.constraints.is_empty() {
+        r.energy
+    } else {
+        energy_without_constraints(&ff, r.energy, &pos)
+    };
     Ok(OptimizeResult {
         coords: to_points(&pos),
         energy: r.energy,
@@ -65,7 +73,11 @@ pub fn optimize_coords(
 }
 
 /// Optimizes `mol` at its current coordinates (synchronous).
-pub fn optimize(mol: &Molecule, builder: &dyn ForceFieldBuilder, opts: &OptimizeOptions) -> Result<OptimizeResult> {
+pub fn optimize(
+    mol: &Molecule,
+    builder: &dyn ForceFieldBuilder,
+    opts: &OptimizeOptions,
+) -> Result<OptimizeResult> {
     optimize_coords(mol, &mol.coords, builder, opts, &mut optim::NoObserver)
 }
 
@@ -100,7 +112,11 @@ impl JobHandle<OptimizeResult, OptimizeSnapshot> {
         self.snapshot_stream()
             .filter_map(move |s| {
                 let f = &s.data.frame;
-                let dup = last.as_ref().is_some_and(|l| l.iteration == f.iteration && l.energy.to_bits() == f.energy.to_bits() && l.coords == f.coords);
+                let dup = last.as_ref().is_some_and(|l| {
+                    l.iteration == f.iteration
+                        && l.energy.to_bits() == f.energy.to_bits()
+                        && l.coords == f.coords
+                });
                 if !dup {
                     last = Some(f.clone());
                 }
@@ -130,18 +146,39 @@ impl Engine {
         builder: SharedBuilder,
         opts: OptimizeOptions,
     ) -> JobHandle<OptimizeResult, OptimizeSnapshot> {
-        let init = OptimizeSnapshot { frame: Frame { coords: mol.coords.clone(), energy: f64::NAN, iteration: 0 }, finished: false };
+        let init = OptimizeSnapshot {
+            frame: Frame {
+                coords: mol.coords.clone(),
+                energy: f64::NAN,
+                iteration: 0,
+            },
+            finished: false,
+        };
         // progress total 0 = unknown (endless mode has no iteration limit)
-        let total = if opts.minimize.is_endless() { 0 } else { opts.minimize.max_iters };
+        let total = if opts.minimize.is_endless() {
+            0
+        } else {
+            opts.minimize.max_iters
+        };
         self.spawn(init, total, move |ctx: JobContext<OptimizeSnapshot>| {
             let mut obs = CtxObserver::new(&ctx, |ctx, info| {
                 let coords = to_points(info.pos);
                 let (e, it) = (info.energy, info.iteration);
-                ctx.update(|s| s.frame = Frame { coords, energy: e, iteration: it });
+                ctx.update(|s| {
+                    s.frame = Frame {
+                        coords,
+                        energy: e,
+                        iteration: it,
+                    }
+                });
                 ctx.set_progress(it, total);
             });
             let r = optimize_coords(&mol, &mol.coords, builder.as_ref(), &opts, &mut obs)?;
-            let fr = Frame { coords: r.coords.clone(), energy: r.energy, iteration: r.iterations };
+            let fr = Frame {
+                coords: r.coords.clone(),
+                energy: r.energy,
+                iteration: r.iterations,
+            };
             ctx.update(|s| {
                 s.frame = fr;
                 s.finished = true;
@@ -160,32 +197,63 @@ impl Engine {
         opts: OptimizeOptions,
     ) -> JobHandle<Vec<Result<OptimizeResult>>, BatchOptimizeSnapshot> {
         let n = items.len();
-        self.spawn(BatchOptimizeSnapshot { items: vec![None; n] }, n, move |ctx| {
-            let out = items
-                .par_iter()
-                .enumerate()
-                .map(|(i, (mol, coords))| {
-                    let start = coords.as_deref().unwrap_or(&mol.coords);
-                    ctx.update_silent(|s| {
-                        s.items[i] = Some(OptimizeSnapshot { frame: Frame { coords: start.to_vec(), energy: f64::NAN, iteration: 0 }, finished: false })
-                    });
-                    let mut obs = CtxObserver::new(&ctx, |ctx, info| {
-                        let coords = to_points(info.pos);
-                        let (e, it) = (info.energy, info.iteration);
-                        ctx.update(|s| s.items[i] = Some(OptimizeSnapshot { frame: Frame { coords, energy: e, iteration: it }, finished: false }));
-                    });
-                    let r = optimize_coords(mol, start, builder.as_ref(), &opts, &mut obs);
-                    if let Ok(r) = &r {
-                        let fr = Frame { coords: r.coords.clone(), energy: r.energy, iteration: r.iterations };
-                        // published on request / periodically only: publishing
-                        // clones the snapshot of every item
-                        ctx.update_throttled(&mut obs.served_epoch, |s| s.items[i] = Some(OptimizeSnapshot { frame: fr, finished: true }));
-                    }
-                    ctx.inc_progress();
-                    r
-                })
-                .collect();
-            Ok(out)
-        })
+        self.spawn(
+            BatchOptimizeSnapshot {
+                items: vec![None; n],
+            },
+            n,
+            move |ctx| {
+                let out = items
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, (mol, coords))| {
+                        let start = coords.as_deref().unwrap_or(&mol.coords);
+                        ctx.update_silent(|s| {
+                            s.items[i] = Some(OptimizeSnapshot {
+                                frame: Frame {
+                                    coords: start.to_vec(),
+                                    energy: f64::NAN,
+                                    iteration: 0,
+                                },
+                                finished: false,
+                            })
+                        });
+                        let mut obs = CtxObserver::new(&ctx, |ctx, info| {
+                            let coords = to_points(info.pos);
+                            let (e, it) = (info.energy, info.iteration);
+                            ctx.update(|s| {
+                                s.items[i] = Some(OptimizeSnapshot {
+                                    frame: Frame {
+                                        coords,
+                                        energy: e,
+                                        iteration: it,
+                                    },
+                                    finished: false,
+                                })
+                            });
+                        });
+                        let r = optimize_coords(mol, start, builder.as_ref(), &opts, &mut obs);
+                        if let Ok(r) = &r {
+                            let fr = Frame {
+                                coords: r.coords.clone(),
+                                energy: r.energy,
+                                iteration: r.iterations,
+                            };
+                            // published on request / periodically only: publishing
+                            // clones the snapshot of every item
+                            ctx.update_throttled(&mut obs.served_epoch, |s| {
+                                s.items[i] = Some(OptimizeSnapshot {
+                                    frame: fr,
+                                    finished: true,
+                                })
+                            });
+                        }
+                        ctx.inc_progress();
+                        r
+                    })
+                    .collect();
+                Ok(out)
+            },
+        )
     }
 }

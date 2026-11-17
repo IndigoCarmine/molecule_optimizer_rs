@@ -16,7 +16,11 @@ fn unsaturation(mol: &Molecule, i: usize, single_bonds: &[bool]) -> i32 {
     }
     let mut v = at.num_explicit_hs as i32 + at.implicit_hs as i32 + at.num_radical_electrons as i32;
     for &(_, bi) in mol.atom_bonds(i) {
-        v += if single_bonds[bi] { 1 } else { mol.bond(bi).valence_contrib(i).round() as i32 };
+        v += if single_bonds[bi] {
+            1
+        } else {
+            mol.bond(bi).valence_contrib(i).round() as i32
+        };
     }
     match vals.iter().copied().find(|&x| x >= v) {
         Some(x) => x - v,
@@ -29,7 +33,9 @@ fn unsaturation(mol: &Molecule, i: usize, single_bonds: &[bool]) -> i32 {
 /// [`crate::perception::sanitize`]).
 pub fn kekulize(mol: &mut Molecule) -> Result<()> {
     let nb = mol.num_bonds();
-    let arom: Vec<bool> = (0..nb).map(|b| mol.bond(b).order == BondOrder::Aromatic).collect();
+    let arom: Vec<bool> = (0..nb)
+        .map(|b| mol.bond(b).order == BondOrder::Aromatic)
+        .collect();
     if !arom.iter().any(|&x| x) {
         return Ok(());
     }
@@ -65,7 +71,11 @@ pub fn kekulize(mol: &mut Molecule) -> Result<()> {
     for b in 0..nb {
         if arom[b] {
             let (x, y) = (mol.bond(b).begin, mol.bond(b).end);
-            let ord = if mate[x] == y { BondOrder::Double } else { BondOrder::Single };
+            let ord = if mate[x] == y {
+                BondOrder::Double
+            } else {
+                BondOrder::Single
+            };
             mol.bond_mut(b).order = ord;
         }
     }
@@ -82,7 +92,10 @@ pub fn kekulize(mol: &mut Molecule) -> Result<()> {
             }
         }
         if !ok {
-            return Err(Error::Perception(format!("can't kekulize atoms {:?}", unmatched)));
+            return Err(Error::Perception(format!(
+                "can't kekulize atoms {:?}",
+                unmatched
+            )));
         }
     }
     Ok(())
@@ -99,7 +112,11 @@ pub fn assign_bond_orders(mol: &mut Molecule) {
         a.implicit_hs = 0;
     }
     let terminal_o = |mol: &Molecule, i: usize| -> Vec<(usize, usize)> {
-        mol.atom_bonds(i).iter().copied().filter(|&(o, _)| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1).collect()
+        mol.atom_bonds(i)
+            .iter()
+            .copied()
+            .filter(|&(o, _)| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1)
+            .collect()
     };
     for i in 0..n {
         let z = mol.atom(i).atomic_num;
@@ -137,7 +154,11 @@ pub fn assign_bond_orders(mol: &mut Molecule) {
         for &u in &leftover {
             for v in mol.neighbors(u) {
                 let a = mol.atom(v);
-                if a.atomic_num == 7 && a.formal_charge == 0 && mol.degree(v) == 3 && !cands.contains(&v) {
+                if a.atomic_num == 7
+                    && a.formal_charge == 0
+                    && mol.degree(v) == 3
+                    && !cands.contains(&v)
+                {
                     cands.push(v);
                 }
             }
@@ -148,7 +169,11 @@ pub fn assign_bond_orders(mol: &mut Molecule) {
                 for w in mol.neighbors(u) {
                     for v in mol.neighbors(w) {
                         let a = mol.atom(v);
-                        if a.atomic_num == 7 && a.formal_charge == 0 && mol.degree(v) == 3 && !cands.contains(&v) {
+                        if a.atomic_num == 7
+                            && a.formal_charge == 0
+                            && mol.degree(v) == 3
+                            && !cands.contains(&v)
+                        {
                             cands.push(v);
                         }
                     }
@@ -183,7 +208,11 @@ pub fn assign_bond_orders(mol: &mut Molecule) {
     let flags = vec![false; mol.num_bonds()];
     for i in 0..n {
         let a = mol.atom(i);
-        if (a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1 && a.formal_charge == 0 && unsaturation(mol, i, &flags) == 1 {
+        if (a.atomic_num == 8 || a.atomic_num == 16)
+            && mol.degree(i) == 1
+            && a.formal_charge == 0
+            && unsaturation(mol, i, &flags) == 1
+        {
             mol.atom_mut(i).formal_charge = -1;
         }
     }
@@ -241,7 +270,8 @@ fn match_unsaturations(mol: &mut Molecule, base: &[BondOrder]) -> Vec<usize> {
     (0..n)
         .filter(|&i| {
             let a = mol.atom(i);
-            unsaturation(mol, i, &flags) > 0 && !((a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1)
+            unsaturation(mol, i, &flags) > 0
+                && !((a.atomic_num == 8 || a.atomic_num == 16) && mol.degree(i) == 1)
         })
         .collect()
 }

@@ -67,12 +67,19 @@ pub fn assign(mol: &Molecule, kind: ForceFieldKind) -> Result<Assignment> {
     let m = normalized(mol)?;
     match kind {
         ForceFieldKind::Mmff94 | ForceFieldKind::Mmff94s => {
-            let variant = if kind == ForceFieldKind::Mmff94 { MmffVariant::Mmff94 } else { MmffVariant::Mmff94s };
+            let variant = if kind == ForceFieldKind::Mmff94 {
+                MmffVariant::Mmff94
+            } else {
+                MmffVariant::Mmff94s
+            };
             let p = MmffMolProperties::new(&m, variant)?;
             let t = p.atom_types().to_vec();
             Ok(Assignment {
                 kind,
-                types: t.iter().map(|&x| if x == 0 { String::new() } else { x.to_string() }).collect(),
+                types: t
+                    .iter()
+                    .map(|&x| if x == 0 { String::new() } else { x.to_string() })
+                    .collect(),
                 missing: (0..t.len()).filter(|&i| t[i] == 0).collect(),
                 mmff_types: Some(t),
                 partial_charges: Some(p.partial_charges().to_vec()),

@@ -29,6 +29,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
     pub(crate) fn parse(line: usize, msg: impl Into<String>) -> Self {
-        Error::Parse { line, msg: msg.into() }
+        Error::Parse {
+            line,
+            msg: msg.into(),
+        }
     }
 }

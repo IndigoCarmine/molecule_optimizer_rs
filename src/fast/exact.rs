@@ -80,7 +80,16 @@ impl ParamTable {
         if let ParamTable::Mmff(v) = self {
             let r2 = rs * rs;
             let r7 = r2 * r2 * r2 * rs;
-            v.push([rs, e, e / rs, VDW1 * rs, VDW1M1 * rs, VDW2 * r7, VDW2M1 * r7, 0.0]);
+            v.push([
+                rs,
+                e,
+                e / rs,
+                VDW1 * rs,
+                VDW1M1 * rs,
+                VDW2 * r7,
+                VDW2M1 * r7,
+                0.0,
+            ]);
         }
     }
 }
@@ -173,17 +182,38 @@ impl std::fmt::Debug for ExactNonbonded {
 
 impl ExactNonbonded {
     /// Builds the backend from pairs ordered by row (`i`).
-    pub(crate) fn from_sorted_pairs(n_atoms: usize, pairs: PairArrays, params: Arc<ParamTable>, grain: usize, simd: bool) -> Self {
-        let PairArrays { mmff, mut i, mut j, mut p, mut flags, mut ct } = pairs;
+    pub(crate) fn from_sorted_pairs(
+        n_atoms: usize,
+        pairs: PairArrays,
+        params: Arc<ParamTable>,
+        grain: usize,
+        simd: bool,
+    ) -> Self {
+        let PairArrays {
+            mmff,
+            mut i,
+            mut j,
+            mut p,
+            mut flags,
+            mut ct,
+        } = pairs;
         // the kernels index without bounds checks: validate here
         let np = params.len();
         assert!(n_atoms < u32::MAX as usize / 3, "too many atoms");
-        assert!(j.len() == i.len() && p.len() == i.len() && flags.len() == i.len() && ct.len() == if mmff { i.len() } else { 0 });
+        assert!(
+            j.len() == i.len()
+                && p.len() == i.len()
+                && flags.len() == i.len()
+                && ct.len() == if mmff { i.len() } else { 0 }
+        );
         let mut row_start = vec![0u32; n_atoms + 1];
         let mut last = 0u32;
         for t in 0..i.len() {
             assert!(i[t] >= last, "pairs must be ordered by their first atom");
-            assert!((i[t] as usize) < n_atoms && (j[t] as usize) < n_atoms, "pair atom index out of range");
+            assert!(
+                (i[t] as usize) < n_atoms && (j[t] as usize) < n_atoms,
+                "pair atom index out of range"
+            );
             assert!((p[t] as usize) < np, "pair parameter index out of range");
             last = i[t];
             row_start[i[t] as usize + 1] += 1;
@@ -197,7 +227,11 @@ impl ExactNonbonded {
         crate::ff::utils::shrink_vec(&mut p);
         crate::ff::utils::shrink_vec(&mut flags);
         crate::ff::utils::shrink_vec(&mut ct);
-        let has_vdw = if mmff { flags.iter().any(|f| f & F_VDW != 0) } else { !i.is_empty() };
+        let has_vdw = if mmff {
+            flags.iter().any(|f| f & F_VDW != 0)
+        } else {
+            !i.is_empty()
+        };
         let has_ele = mmff && flags.iter().any(|f| f & F_ELE != 0);
         let mut nb = ExactNonbonded {
             mmff,
@@ -233,8 +267,16 @@ impl ExactNonbonded {
                 if acc >= per || i + 1 == self.n_atoms {
                     if acc > 0 {
                         let rows = start..i + 1;
-                        let (s, e) = (self.row_start[rows.start] as usize, self.row_start[rows.end] as usize);
-                        let lo = self.j[s..e].iter().map(|&j| j as usize).min().unwrap_or(rows.start).min(rows.start);
+                        let (s, e) = (
+                            self.row_start[rows.start] as usize,
+                            self.row_start[rows.end] as usize,
+                        );
+                        let lo = self.j[s..e]
+                            .iter()
+                            .map(|&j| j as usize)
+                            .min()
+                            .unwrap_or(rows.start)
+                            .min(rows.start);
                         self.chunks.push(NbChunk { rows, lo });
                     }
                     start = i + 1;
@@ -320,13 +362,25 @@ impl ExactNonbonded {
     /// Safety: `t + L::N <= num_pairs` (parameter indices are validated).
     #[inline(always)]
     unsafe fn par<L: Lane, const W: usize>(&self, tab: &[[f64; W]], t: usize, f: usize) -> L {
-        unsafe { L::from_fn(|k| *tab.get_unchecked(*self.p.get_unchecked(t + k) as usize).get_unchecked(f)) }
+        unsafe {
+            L::from_fn(|k| {
+                *tab.get_unchecked(*self.p.get_unchecked(t + k) as usize)
+                    .get_unchecked(f)
+            })
+        }
     }
 
     /// Safety: see [`Self::eval_rows`].
     #[inline(always)]
-    unsafe fn uff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], t: usize) -> L {
-        let ParamTable::Uff(tab) = &*self.params else { unreachable!() };
+    unsafe fn uff_block<L: Lane, const G: bool>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        t: usize,
+    ) -> L {
+        let ParamTable::Uff(tab) = &*self.params else {
+            unreachable!()
+        };
         let xi = unsafe { Self::ldp::<L>(pos, &self.i, t) };
         let pj = unsafe { Self::ldp::<L>(pos, &self.j, t) };
         let g = |f: usize| unsafe { self.par::<L, 4>(tab, t, f) };
@@ -356,8 +410,15 @@ impl ExactNonbonded {
 
     /// Safety: see [`Self::eval_rows`].
     #[inline(always)]
-    unsafe fn mmff_block<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], t: usize) -> (L, L) {
-        let ParamTable::Mmff(tab) = &*self.params else { unreachable!() };
+    unsafe fn mmff_block<L: Lane, const G: bool>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        t: usize,
+    ) -> (L, L) {
+        let ParamTable::Mmff(tab) = &*self.params else {
+            unreachable!()
+        };
         let xi = unsafe { Self::ldp::<L>(pos, &self.i, t) };
         let pj = unsafe { Self::ldp::<L>(pos, &self.j, t) };
         let g = |f: usize| unsafe { self.par::<L, 8>(tab, t, f) };
@@ -390,7 +451,9 @@ impl ExactNonbonded {
             let tt = L::splat(VDW1) / (q + VDW1 - 1.0);
             let t2 = tt * tt;
             let t7 = t2 * t2 * t2 * tt;
-            let de_v = g(2) * t7 * (q6 * -VDW2T7 / (q7p * q7p) + ((L::splat(-VDW2T7) / q7p + 14.0) / (q + VDW1M1)));
+            let de_v = g(2)
+                * t7
+                * (q6 * -VDW2T7 / (q7p * q7p) + ((L::splat(-VDW2T7) / q7p + 14.0) / (q + VDW1M1)));
             let vg = L::select(vm, de_v / dist, z);
             let cg = corr * L::select(dm, corr * corr, corr);
             let bm = L::select(dm, L::splat(-DIEL * 2.0), L::splat(-DIEL * 1.0));
@@ -415,13 +478,30 @@ impl ExactNonbonded {
     /// then electrostatics, as the reference contribs do); returns the
     /// separate (vdW, electrostatic) sums.
     #[inline(always)]
-    fn eval_rows<L: Lane, const G: bool>(&self, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
+    fn eval_rows<L: Lane, const G: bool>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        rows: Range<usize>,
+        acc: &mut f64,
+    ) -> (f64, f64) {
         // bounds for the unchecked kernels (indices validated at construction)
-        assert!(pos.len() >= 3 * self.n_atoms && (!G || grad.len() >= 3 * self.n_atoms) && rows.end <= self.n_atoms);
+        assert!(
+            pos.len() >= 3 * self.n_atoms
+                && (!G || grad.len() >= 3 * self.n_atoms)
+                && rows.end <= self.n_atoms
+        );
         let (mut ev, mut ee) = (0.0, 0.0);
         let mut lv = [0.0f64; 4];
         let mut le = [0.0f64; 4];
-        let (s, e) = if rows.is_empty() { (0, 0) } else { (self.row_start[rows.start] as usize, self.row_start[rows.end] as usize) };
+        let (s, e) = if rows.is_empty() {
+            (0, 0)
+        } else {
+            (
+                self.row_start[rows.start] as usize,
+                self.row_start[rows.end] as usize,
+            )
+        };
         let mut t = s;
         if self.mmff {
             // Absent parts are 0.0; a running sum that starts at +0.0 can
@@ -465,14 +545,26 @@ impl ExactNonbonded {
         (ev, ee)
     }
 
-    fn eval_rows_dispatch<const G: bool>(&self, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
+    fn eval_rows_dispatch<const G: bool>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        rows: Range<usize>,
+        acc: &mut f64,
+    ) -> (f64, f64) {
         if !self.simd {
             return self.eval_rows::<f64, G>(pos, grad, rows, acc);
         }
         #[cfg(target_arch = "x86_64")]
         if super::avx::available() {
             #[target_feature(enable = "avx")]
-            unsafe fn avx<const G: bool>(nb: &ExactNonbonded, pos: &[f64], grad: &mut [f64], rows: Range<usize>, acc: &mut f64) -> (f64, f64) {
+            unsafe fn avx<const G: bool>(
+                nb: &ExactNonbonded,
+                pos: &[f64],
+                grad: &mut [f64],
+                rows: Range<usize>,
+                acc: &mut f64,
+            ) -> (f64, f64) {
                 nb.eval_rows::<super::avx::A4, G>(pos, grad, rows, acc)
             }
             // SAFETY: the CPU supports AVX (checked above).
@@ -484,7 +576,12 @@ impl ExactNonbonded {
     /// Evaluates all pairs, adds the energy to the running total `acc` in
     /// the reference contribs' order (UFF: pair by pair; MMFF: the pair sum
     /// of the single nonbonded contrib) and the gradient to `grad` (if `G`).
-    pub fn eval_into<const G: bool>(&self, pos: &[f64], grad: &mut [f64], acc: &mut f64) -> NonbondedEnergy {
+    pub fn eval_into<const G: bool>(
+        &self,
+        pos: &[f64],
+        grad: &mut [f64],
+        acc: &mut f64,
+    ) -> NonbondedEnergy {
         self.eval_overlapped::<G, ()>(pos, grad, acc, |_| ()).0
     }
 
@@ -514,7 +611,13 @@ impl ExactNonbonded {
             } else {
                 self.eval_rows_dispatch::<G>(pos, grad, 0..self.n_atoms, acc)
             };
-            return (NonbondedEnergy { vdw: v, electrostatic: e }, other(grad));
+            return (
+                NonbondedEnergy {
+                    vdw: v,
+                    electrostatic: e,
+                },
+                other(grad),
+            );
         }
         let len = 3 * self.n_atoms;
         self.ws.with(|ws| {
@@ -523,14 +626,20 @@ impl ExactNonbonded {
                 let (r, ()) = rayon::join(
                     || other(&mut *grad),
                     || {
-                        bufs.par_chunks_mut(len).zip(energies.par_iter_mut()).zip(self.chunks.par_iter()).for_each(
-                            |((buf, en), ch)| {
+                        bufs.par_chunks_mut(len)
+                            .zip(energies.par_iter_mut())
+                            .zip(self.chunks.par_iter())
+                            .for_each(|((buf, en), ch)| {
                                 buf[3 * ch.lo..].fill(0.0);
                                 let mut c = 0.0;
-                                let (v, e) = self.eval_rows_dispatch::<true>(pos, buf, ch.rows.clone(), &mut c);
+                                let (v, e) = self.eval_rows_dispatch::<true>(
+                                    pos,
+                                    buf,
+                                    ch.rows.clone(),
+                                    &mut c,
+                                );
                                 *en = [c, v, e];
-                            },
-                        )
+                            })
                     },
                 );
                 let chunks = &self.chunks;
@@ -552,11 +661,19 @@ impl ExactNonbonded {
                 let (r, ()) = rayon::join(
                     || other(&mut *grad),
                     || {
-                        energies.par_iter_mut().zip(self.chunks.par_iter()).for_each(|(en, ch)| {
-                            let mut c = 0.0;
-                            let (v, e) = self.eval_rows_dispatch::<false>(pos, &mut [], ch.rows.clone(), &mut c);
-                            *en = [c, v, e];
-                        })
+                        energies
+                            .par_iter_mut()
+                            .zip(self.chunks.par_iter())
+                            .for_each(|(en, ch)| {
+                                let mut c = 0.0;
+                                let (v, e) = self.eval_rows_dispatch::<false>(
+                                    pos,
+                                    &mut [],
+                                    ch.rows.clone(),
+                                    &mut c,
+                                );
+                                *en = [c, v, e];
+                            })
                     },
                 );
                 r
@@ -576,7 +693,11 @@ impl ExactNonbonded {
 
 impl NonbondedBackend for ExactNonbonded {
     fn name(&self) -> &str {
-        if self.simd { "cpu-simd-exact" } else { "cpu-scalar-exact" }
+        if self.simd {
+            "cpu-simd-exact"
+        } else {
+            "cpu-scalar-exact"
+        }
     }
     fn energy(&self, pos: &[f64]) -> NonbondedEnergy {
         self.eval_into::<false>(pos, &mut [], &mut 0.0)
@@ -627,7 +748,13 @@ impl PairCollector {
         }
         let key = [c.xij.to_bits(), c.well_depth.to_bits(), c.thresh.to_bits()];
         let p = self.key_index(key, |t| t.push_uff(c.xij, c.well_depth, c.thresh));
-        self.pairs.push(Pair { i: c.idx1 as u32, j: c.idx2 as u32, p, flags: F_VDW, ct: 0.0 });
+        self.pairs.push(Pair {
+            i: c.idx1 as u32,
+            j: c.idx2 as u32,
+            p,
+            flags: F_VDW,
+            ct: 0.0,
+        });
         true
     }
 
@@ -661,7 +788,13 @@ impl PairCollector {
                     flags |= F_DIST;
                 }
             }
-            self.pairs.push(Pair { i: c.at1[t], j: c.at2[t], p, flags, ct: c.charge_term[t] });
+            self.pairs.push(Pair {
+                i: c.at1[t],
+                j: c.at2[t],
+                p,
+                flags,
+                ct: c.charge_term[t],
+            });
         }
         true
     }
@@ -688,7 +821,11 @@ pub enum NbRule {
     Uff { vdw_thresh: f64 },
     /// MMFF: not 1-2/1-3 (1-4 scaled), `!(dist > thresh)`, vdW and/or
     /// electrostatic part present.
-    Mmff { thresh: f64, dielectric_constant: f64, distance_model: bool },
+    Mmff {
+        thresh: f64,
+        dielectric_constant: f64,
+        distance_model: bool,
+    },
 }
 
 /// Position-independent nonbonded data of a molecule (typing, charges,
@@ -731,7 +868,10 @@ impl Clone for PairHint {
 
 /// Topological neighbors up to `depth` bonds (BFS shortest-path distance),
 /// as CSR.
-pub(crate) fn topo_relations(mol: &crate::core::Molecule, depth: u8) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
+pub(crate) fn topo_relations(
+    mol: &crate::core::Molecule,
+    depth: u8,
+) -> (Vec<u32>, Vec<u32>, Vec<u8>) {
     let n = mol.num_atoms();
     let mut start = Vec::with_capacity(n + 1);
     let mut js = Vec::new();
@@ -742,7 +882,12 @@ pub(crate) fn topo_relations(mol: &crate::core::Molecule, depth: u8) -> (Vec<u32
     for s in 0..n {
         bd.compute(mol, s);
         row.clear();
-        row.extend(bd.within().iter().filter(|&&v| v != s).map(|&v| (v as u32, bd.get(v))));
+        row.extend(
+            bd.within()
+                .iter()
+                .filter(|&&v| v != s)
+                .map(|&v| (v as u32, bd.get(v))),
+        );
         row.sort_unstable();
         for &(v, d) in &row {
             js.push(v);
@@ -809,7 +954,10 @@ impl NbTemplate {
     }
 
     /// MMFF template from the molecule properties.
-    pub fn mmff(props: &crate::ff::mmff::MmffMolProperties, b: &crate::ff::mmff::MmffBuilder) -> Self {
+    pub fn mmff(
+        props: &crate::ff::mmff::MmffMolProperties,
+        b: &crate::ff::mmff::MmffBuilder,
+    ) -> Self {
         use crate::ff::mmff::DielectricModel;
         let mol = props.typing_molecule();
         let n = mol.num_atoms();
@@ -874,7 +1022,11 @@ impl NbTemplate {
     /// finite bound).
     fn max_cutoff(&self) -> Option<f64> {
         let c = match self.rule {
-            NbRule::Uff { vdw_thresh } => self.pair_x.iter().map(|&x| vdw_thresh * x).fold(0.0, f64::max),
+            NbRule::Uff { vdw_thresh } => self
+                .pair_x
+                .iter()
+                .map(|&x| vdw_thresh * x)
+                .fold(0.0, f64::max),
             NbRule::Mmff { thresh, .. } => thresh,
         };
         (c.is_finite() && c > 0.0).then_some(c)
@@ -899,15 +1051,33 @@ impl NbTemplate {
                     return None;
                 }
                 let p = ti as usize * self.nt + tj as usize;
-                let d = [coords[i][0] - coords[j][0], coords[i][1] - coords[j][1], coords[i][2] - coords[j][2]];
+                let d = [
+                    coords[i][0] - coords[j][0],
+                    coords[i][1] - coords[j][1],
+                    coords[i][2] - coords[j][2],
+                ];
                 let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-                (dist < vdw_thresh * self.pair_x[p]).then_some(Pair { i: i as u32, j: j as u32, p: p as u32, flags: F_VDW, ct: 0.0 })
+                (dist < vdw_thresh * self.pair_x[p]).then_some(Pair {
+                    i: i as u32,
+                    j: j as u32,
+                    p: p as u32,
+                    flags: F_VDW,
+                    ct: 0.0,
+                })
             }
-            NbRule::Mmff { thresh, dielectric_constant, distance_model } => {
+            NbRule::Mmff {
+                thresh,
+                dielectric_constant,
+                distance_model,
+            } => {
                 if rel == 1 || rel == 2 {
                     return None;
                 }
-                let d = [coords[i][0] - coords[j][0], coords[i][1] - coords[j][1], coords[i][2] - coords[j][2]];
+                let d = [
+                    coords[i][0] - coords[j][0],
+                    coords[i][1] - coords[j][1],
+                    coords[i][2] - coords[j][2],
+                ];
                 let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 if dist > thresh {
                     return None;
@@ -931,7 +1101,13 @@ impl NbTemplate {
                 if flags == 0 {
                     return None;
                 }
-                Some(Pair { i: i as u32, j: j as u32, p: p as u32, flags, ct })
+                Some(Pair {
+                    i: i as u32,
+                    j: j as u32,
+                    p: p as u32,
+                    flags,
+                    ct,
+                })
             }
         }
     }
@@ -943,7 +1119,10 @@ impl NbTemplate {
         // molecule select similar numbers): usually no regrowth and little
         // unused capacity
         let hint = self.pair_hint.0.load(Ordering::Relaxed);
-        let mut out = PairArrays::with_capacity(matches!(self.rule, NbRule::Mmff { .. }), hint + hint / 64 + 8);
+        let mut out = PairArrays::with_capacity(
+            matches!(self.rule, NbRule::Mmff { .. }),
+            hint + hint / 64 + 8,
+        );
         let mut mark = vec![u32::MAX; n];
         let mut relv = vec![0u8; n];
         let set_rel = |i: usize, mark: &mut [u32], relv: &mut [u8]| {
@@ -954,7 +1133,11 @@ impl NbTemplate {
             }
         };
         let finite = coords.iter().all(|c| c.iter().all(|x| x.is_finite()));
-        let grid = if finite { self.max_cutoff().and_then(|c| Grid::new(coords, c)) } else { None };
+        let grid = if finite {
+            self.max_cutoff().and_then(|c| Grid::new(coords, c))
+        } else {
+            None
+        };
         match grid {
             None => {
                 for i in 0..n {
@@ -993,7 +1176,13 @@ impl NbTemplate {
 
     /// Builds the exact backend for `coords`.
     pub fn select(&self, coords: &[[f64; 3]], grain: usize, simd: bool) -> ExactNonbonded {
-        ExactNonbonded::from_sorted_pairs(self.n, self.select_pairs(coords), self.params.clone(), grain, simd)
+        ExactNonbonded::from_sorted_pairs(
+            self.n,
+            self.select_pairs(coords),
+            self.params.clone(),
+            grain,
+            simd,
+        )
     }
 }
 
@@ -1034,7 +1223,9 @@ impl Grid {
         // margin so that rounding can never move a pair closer than the
         // cutoff into non-adjacent cells
         let mut cs = cutoff * (1.0 + 1.0e-9) + 1.0e-9;
-        let dims_for = |cs: f64| -> [usize; 3] { [0, 1, 2].map(|d| ((hi[d] - lo[d]) / cs).floor() as usize + 1) };
+        let dims_for = |cs: f64| -> [usize; 3] {
+            [0, 1, 2].map(|d| ((hi[d] - lo[d]) / cs).floor() as usize + 1)
+        };
         let mut dims = dims_for(cs);
         while dims.iter().product::<usize>() > 4 * n + 64 {
             cs *= 1.5;
@@ -1047,7 +1238,8 @@ impl Grid {
         let cell_of: Vec<usize> = coords
             .iter()
             .map(|c| {
-                let ix = [0, 1, 2].map(|d| (((c[d] - lo[d]) / cs).floor() as usize).min(dims[d] - 1));
+                let ix =
+                    [0, 1, 2].map(|d| (((c[d] - lo[d]) / cs).floor() as usize).min(dims[d] - 1));
                 (ix[2] * dims[1] + ix[1]) * dims[0] + ix[0]
             })
             .collect();
@@ -1064,7 +1256,12 @@ impl Grid {
             atoms[fill[c] as usize] = i as u32;
             fill[c] += 1;
         }
-        Some(Grid { dims, cell_of, cell_start, atoms })
+        Some(Grid {
+            dims,
+            cell_of,
+            cell_start,
+            atoms,
+        })
     }
 
     fn for_neighbors(&self, i: usize, mut f: impl FnMut(usize)) {
@@ -1075,7 +1272,9 @@ impl Grid {
             for y in ix[1].saturating_sub(1)..=(ix[1] + 1).min(self.dims[1] - 1) {
                 for x in ix[0].saturating_sub(1)..=(ix[0] + 1).min(self.dims[0] - 1) {
                     let cc = (z * dy + y) * dx + x;
-                    for &a in &self.atoms[self.cell_start[cc] as usize..self.cell_start[cc + 1] as usize] {
+                    for &a in
+                        &self.atoms[self.cell_start[cc] as usize..self.cell_start[cc + 1] as usize]
+                    {
                         f(a as usize);
                     }
                 }

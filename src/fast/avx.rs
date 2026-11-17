@@ -123,14 +123,22 @@ impl Lane for A4 {
         // NaN, giving `f64::max` semantics.
         unsafe {
             let b = _mm256_set1_pd(o);
-            A4(_mm256_blendv_pd(_mm256_max_pd(self.0, b), self.0, _mm256_cmp_pd::<_CMP_UNORD_Q>(b, b)))
+            A4(_mm256_blendv_pd(
+                _mm256_max_pd(self.0, b),
+                self.0,
+                _mm256_cmp_pd::<_CMP_UNORD_Q>(b, b),
+            ))
         }
     }
     #[inline(always)]
     fn min(self, o: f64) -> Self {
         unsafe {
             let b = _mm256_set1_pd(o);
-            A4(_mm256_blendv_pd(_mm256_min_pd(self.0, b), self.0, _mm256_cmp_pd::<_CMP_UNORD_Q>(b, b)))
+            A4(_mm256_blendv_pd(
+                _mm256_min_pd(self.0, b),
+                self.0,
+                _mm256_cmp_pd::<_CMP_UNORD_Q>(b, b),
+            ))
         }
     }
     #[inline(always)]

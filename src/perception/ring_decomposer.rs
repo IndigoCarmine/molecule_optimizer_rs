@@ -38,7 +38,10 @@ struct Graph {
 
 impl Graph {
     fn new(v: usize) -> Graph {
-        Graph { adj: vec![Vec::new(); v], edges: Vec::new() }
+        Graph {
+            adj: vec![Vec::new(); v],
+            edges: Vec::new(),
+        }
     }
     fn v(&self) -> usize {
         self.adj.len()
@@ -62,7 +65,11 @@ impl Graph {
     /// `RDL_edgeId`.
     fn edge_id(&self, a: usize, b: usize) -> usize {
         let (from, to) = (a.min(b), a.max(b));
-        self.adj[from].iter().find(|&&(n, _)| n == to).map(|&(_, e)| e).expect("edge")
+        self.adj[from]
+            .iter()
+            .find(|&&(n, _)| n == to)
+            .map(|&(_, e)| e)
+            .expect("edge")
     }
 }
 
@@ -147,7 +154,12 @@ fn tarjan(g: &Graph) -> (Vec<usize>, usize) {
         time += 1;
         d[start] = time;
         low[start] = time;
-        dfs.push(El { u: start, parent: usize::MAX, j: 0, expected_time: usize::MAX });
+        dfs.push(El {
+            u: start,
+            parent: usize::MAX,
+            j: 0,
+            expected_time: usize::MAX,
+        });
         while let Some(top) = dfs.last_mut() {
             let u = top.u;
             let parent = top.parent;
@@ -161,7 +173,12 @@ fn tarjan(g: &Graph) -> (Vec<usize>, usize) {
                     d[v] = time;
                     low[v] = time;
                     top.expected_time = time;
-                    dfs.push(El { u: v, parent: u, j: 0, expected_time: usize::MAX });
+                    dfs.push(El {
+                        u: v,
+                        parent: u,
+                        j: 0,
+                        expected_time: usize::MAX,
+                    });
                 } else {
                     top.j += 1;
                     if d[v] == top.expected_time {
@@ -229,7 +246,13 @@ fn tarjan_bcc(g: &Graph) -> BccGraph {
         if u == usize::MAX {
             continue;
         }
-        let local = |node: usize| node_to[node].iter().find(|&&(b, _)| b == u).map(|&(_, l)| l).expect("bcc node");
+        let local = |node: usize| {
+            node_to[node]
+                .iter()
+                .find(|&&(b, _)| b == u)
+                .map(|&(_, l)| l)
+                .expect("bcc node")
+        };
         let (a, b) = (local(g.edges[i][0]), local(g.edges[i][1]));
         graphs[u].add_uedge(a, b);
     }
@@ -254,7 +277,11 @@ fn all_pairs_shortest_paths(g: &Graph) -> SPathInfo {
         pred: vec![vec![INF; n]; n],
         dist: vec![vec![INF; n]; n],
         reachable: vec![vec![false; n]; n],
-        d_paths: (0..n).map(|_| DGraph { adj: vec![Vec::new(); n] }).collect(),
+        d_paths: (0..n)
+            .map(|_| DGraph {
+                adj: vec![Vec::new(); n],
+            })
+            .collect(),
     };
     let mut color = vec![false; n];
     let mut queue: Vec<usize> = Vec::with_capacity(n);
@@ -278,8 +305,9 @@ fn all_pairs_shortest_paths(g: &Graph) -> SPathInfo {
                 let w = queue[head];
                 head += 1;
                 for &(j, _) in &g.adj[w] {
-                    let precedes =
-                        run == 2 || (g.degree(j) == g.degree(i) && j < i) || g.degree(j) < g.degree(i);
+                    let precedes = run == 2
+                        || (g.degree(j) == g.degree(i) && j < i)
+                        || g.degree(j) < g.degree(i);
                     if precedes && !color[j] {
                         let dw1 = spi.dist[i][w].wrapping_add(1);
                         if run == 2 && dw1 < spi.dist[i][j] {
@@ -543,7 +571,14 @@ fn check_dependencies(fams: &mut [CFam], g: &Graph, u: &mut UrfInfo) {
 }
 
 /// `RDL_giveEdges`.
-fn give_edges(a: usize, b: usize, out: &mut [bool], g: &Graph, spi: &SPathInfo, visited: &mut [bool]) {
+fn give_edges(
+    a: usize,
+    b: usize,
+    out: &mut [bool],
+    g: &Graph,
+    spi: &SPathInfo,
+    visited: &mut [bool],
+) {
     if a == b {
         return;
     }
@@ -643,8 +678,15 @@ fn check_urf_relation(fams: &mut [CFam], g: &Graph, spi: &SPathInfo) -> UrfInfo 
         }
         *nof_protos.last_mut().unwrap() += 1;
     }
-    let urf_rel = nof_protos.iter().map(|&n| vec![vec![false; n]; n]).collect();
-    let mut u = UrfInfo { nof_protos, urf_rel, urfs: Vec::new() };
+    let urf_rel = nof_protos
+        .iter()
+        .map(|&n| vec![vec![false; n]; n])
+        .collect();
+    let mut u = UrfInfo {
+        nof_protos,
+        urf_rel,
+        urfs: Vec::new(),
+    };
     check_dependencies(fams, g, &mut u);
     check_edges(fams, g, &mut u, spi);
     find_transitive_closure(&mut u);
@@ -696,7 +738,12 @@ fn list_paths(r: usize, p: usize, g: &Graph, spi: &SPathInfo) -> Vec<Bits> {
 /// `RingUtils::normalizeRing`: rotate to the smallest index, then orient
 /// towards the smaller neighbor.
 fn normalize_ring(ring: &mut [usize]) {
-    let start = ring.iter().enumerate().min_by_key(|&(_, &v)| v).map(|(i, _)| i).unwrap_or(0);
+    let start = ring
+        .iter()
+        .enumerate()
+        .min_by_key(|&(_, &v)| v)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     ring.rotate_left(start);
     if ring.len() > 2 && ring[ring.len() - 1] < ring[1] {
         ring[1..].reverse();

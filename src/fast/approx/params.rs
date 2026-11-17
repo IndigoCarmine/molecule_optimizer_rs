@@ -149,7 +149,9 @@ pub(crate) fn extract(mol: &Molecule, inner_builder: &dyn std::any::Any) -> Resu
     } else if let Some(b) = inner_builder.downcast_ref::<UffBuilder>() {
         extract_uff(mol, b)
     } else {
-        Err(Error::ForceField("approximate nonbonded mode supports MmffBuilder and UffBuilder only".into()))
+        Err(Error::ForceField(
+            "approximate nonbonded mode supports MmffBuilder and UffBuilder only".into(),
+        ))
     }
 }
 
@@ -183,7 +185,10 @@ fn topology(mol: &Molecule, mask_14: bool) -> (Vec<Vec<u32>>, PairVec, PairVec) 
 fn extract_mmff(mol: &Molecule, b: &MmffBuilder) -> Result<NbParams> {
     let props = MmffMolProperties::new(mol, b.variant)?;
     if !props.is_valid() {
-        return Err(Error::MissingParameters(format!("{}: missing MMFF atom types", b.variant.name())));
+        return Err(Error::MissingParameters(format!(
+            "{}: missing MMFF atom types",
+            b.variant.name()
+        )));
     }
     let n = mol.num_atoms();
     let types = props.atom_types();
@@ -213,7 +218,11 @@ fn extract_mmff(mol: &Molecule, b: &MmffBuilder) -> Result<NbParams> {
             p3[a * nt + c] = r2 * r2 * r2 * r;
         }
     }
-    let q: Vec<f64> = props.partial_charges().iter().map(|&x| exact_zero(x)).collect();
+    let q: Vec<f64> = props
+        .partial_charges()
+        .iter()
+        .map(|&x| exact_zero(x))
+        .collect();
     let has_charges = q.iter().any(|&x| x != 0.0);
     let (frag, num_frags) = fragments(mol);
     let (masked, pairs14, excluded) = topology(mol, true);
@@ -249,7 +258,11 @@ fn extract_uff(mol: &Molecule, b: &UffBuilder) -> Result<NbParams> {
     let mut reps = Vec::new();
     let mut atom_type = Vec::with_capacity(n);
     for i in 0..n {
-        let key = if params[i].is_some() { labels[i].clone() } else { String::from("\u{0}none") };
+        let key = if params[i].is_some() {
+            labels[i].clone()
+        } else {
+            String::from("\u{0}none")
+        };
         let k = *index.entry(key).or_insert_with(|| {
             reps.push(params[i]);
             (reps.len() - 1) as u32

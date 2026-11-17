@@ -31,7 +31,10 @@ pub fn allowed_valences(atomic_num: u8, charge: i8) -> Vec<i32> {
 
 /// Default (first) valence for the charged atom, `-1` if unrestricted.
 pub fn default_valence(atomic_num: u8, charge: i8) -> i32 {
-    allowed_valences(atomic_num, charge).first().copied().unwrap_or(-1)
+    allowed_valences(atomic_num, charge)
+        .first()
+        .copied()
+        .unwrap_or(-1)
 }
 
 /// Computes `implicit_hs` for every atom.

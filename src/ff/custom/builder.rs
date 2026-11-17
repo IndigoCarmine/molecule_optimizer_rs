@@ -33,7 +33,12 @@ pub struct WithCustomTerms<B> {
 impl<B: ForceFieldBuilder> WithCustomTerms<B> {
     pub fn new(inner: B) -> Self {
         let name = format!("{}+Custom", inner.name());
-        WithCustomTerms { inner, globals: Globals::new(), terms: Vec::new(), name }
+        WithCustomTerms {
+            inner,
+            globals: Globals::new(),
+            terms: Vec::new(),
+            name,
+        }
     }
     pub fn inner(&self) -> &B {
         &self.inner
@@ -71,7 +76,10 @@ impl<B: ForceFieldBuilder> WithCustomTerms<B> {
     }
     /// Creates the custom contribs for `mol`.
     pub fn custom_contribs(&self, mol: &Molecule) -> Result<Vec<Box<dyn Contrib>>> {
-        self.terms.iter().map(|t| t.contrib(mol, &self.globals)).collect()
+        self.terms
+            .iter()
+            .map(|t| t.contrib(mol, &self.globals))
+            .collect()
     }
 }
 
@@ -82,7 +90,9 @@ impl<B: ForceFieldBuilder> ForceFieldBuilder for WithCustomTerms<B> {
     fn build(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<ContribForceField> {
         let mut ff = self.inner.build(mol, constraints)?;
         if ff.dimension() != 3 {
-            return Err(Error::ForceField("custom terms require 3D coordinates".into()));
+            return Err(Error::ForceField(
+                "custom terms require 3D coordinates".into(),
+            ));
         }
         ff.add_contribs(self.custom_contribs(mol)?);
         Ok(ff)
@@ -93,9 +103,14 @@ impl<B: ForceFieldBuilder> ForceFieldBuilder for WithCustomTerms<B> {
             return Ok(base);
         }
         if base.dimension() != 3 {
-            return Err(Error::ForceField("custom terms require 3D coordinates".into()));
+            return Err(Error::ForceField(
+                "custom terms require 3D coordinates".into(),
+            ));
         }
-        Ok(Box::new(CompositeForceField { base, extra: self.custom_contribs(mol)? }))
+        Ok(Box::new(CompositeForceField {
+            base,
+            extra: self.custom_contribs(mol)?,
+        }))
     }
 }
 
@@ -131,10 +146,13 @@ impl ForceField for CompositeForceField {
     fn energy_breakdown(&self, pos: &[f64]) -> Vec<(String, f64)> {
         let mut out = self.base.energy_breakdown(pos);
         for c in &self.extra {
-            c.energy_terms(pos, &mut |label, e| match out.iter_mut().find(|(k, _)| k == label) {
-                Some((_, v)) => *v += e,
-                None => out.push((label.to_string(), e)),
-            });
+            c.energy_terms(
+                pos,
+                &mut |label, e| match out.iter_mut().find(|(k, _)| k == label) {
+                    Some((_, v)) => *v += e,
+                    None => out.push((label.to_string(), e)),
+                },
+            );
         }
         out
     }
@@ -148,7 +166,11 @@ impl ForceField for CompositeForceField {
 
 /// `dE/d(global)` summed over the custom contribs in `contribs`.
 pub fn energy_param_derivative(contribs: &[Box<dyn Contrib>], name: &str, pos: &[f64]) -> f64 {
-    contribs.iter().filter_map(|c| as_custom(c.as_ref())).map(|c| c.param_derivative(name, pos)).sum()
+    contribs
+        .iter()
+        .filter_map(|c| as_custom(c.as_ref()))
+        .map(|c| c.param_derivative(name, pos))
+        .sum()
 }
 
 /// Sets `name` in every global store referenced by the custom contribs.
@@ -176,7 +198,9 @@ pub trait CustomTermsExt {
 
 fn set_or_err(n: usize, name: &str) -> Result<()> {
     if n == 0 {
-        return Err(Error::InvalidArgument(format!("no custom term declares global parameter '{name}'")));
+        return Err(Error::InvalidArgument(format!(
+            "no custom term declares global parameter '{name}'"
+        )));
     }
     Ok(())
 }

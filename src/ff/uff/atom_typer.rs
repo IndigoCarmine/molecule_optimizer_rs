@@ -11,7 +11,9 @@ use super::params::{AtomicParams, params};
 use crate::core::{Hybridization, Molecule, element};
 
 fn atom_has_conjugated_bond(mol: &Molecule, i: usize) -> bool {
-    mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).is_conjugated)
+    mol.atom_bonds(i)
+        .iter()
+        .any(|&(_, b)| mol.bond(b).is_conjugated)
 }
 
 /// RDKit `Tools::addAtomChargeFlags` (with `tolerateChargeMismatch = true`,
@@ -81,7 +83,9 @@ pub fn atom_label(mol: &Molecule, i: usize) -> String {
                 Hybridization::S => {}
                 Hybridization::SP => key.push('1'),
                 Hybridization::SP2 => {
-                    if (atom.is_aromatic || atom_has_conjugated_bond(mol, i)) && matches!(anum, 6 | 7 | 8 | 16) {
+                    if (atom.is_aromatic || atom_has_conjugated_bond(mol, i))
+                        && matches!(anum, 6 | 7 | 8 | 16)
+                    {
                         key.push('R');
                     } else {
                         key.push('2');
@@ -101,7 +105,9 @@ pub fn atom_label(mol: &Molecule, i: usize) -> String {
 
 /// Atom labels plus parameters (`None` where the label is unknown) and a
 /// flag telling whether all atoms were typed (RDKit `getAtomTypes`).
-pub fn atom_types_and_params(mol: &Molecule) -> (Vec<String>, Vec<Option<&'static AtomicParams>>, bool) {
+pub fn atom_types_and_params(
+    mol: &Molecule,
+) -> (Vec<String>, Vec<Option<&'static AtomicParams>>, bool) {
     let labels: Vec<String> = (0..mol.num_atoms()).map(|i| atom_label(mol, i)).collect();
     let ps: Vec<_> = labels.iter().map(|l| params(l)).collect();
     let all = ps.iter().all(|p| p.is_some());

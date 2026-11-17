@@ -25,7 +25,10 @@ fn variant_params(name: &str, exp: &Value) -> Compute2DCoordsParams {
         "coordmap" => {
             let mut m = BTreeMap::new();
             for (k, v) in exp["map"].as_object().unwrap() {
-                m.insert(k.parse().unwrap(), [v[0].as_f64().unwrap(), v[1].as_f64().unwrap()]);
+                m.insert(
+                    k.parse().unwrap(),
+                    [v[0].as_f64().unwrap(), v[1].as_f64().unwrap()],
+                );
             }
             p.coord_map = m;
         }
@@ -48,7 +51,8 @@ fn max_dev(got: &[[f64; 3]], want: &Value) -> f64 {
 
 fn run(key: &str, sdf: &str) -> (usize, Vec<String>) {
     let reference: Value =
-        serde_json::from_str(&std::fs::read_to_string("tests/data/depict/reference.json").unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string("tests/data/depict/reference.json").unwrap())
+            .unwrap();
     let text = std::fs::read_to_string(sdf).unwrap();
     let mols = io::read_sdf(&text).unwrap();
     let mut checked = 0;
@@ -58,12 +62,19 @@ fn run(key: &str, sdf: &str) -> (usize, Vec<String>) {
         assert!(exp.is_object(), "no reference for {key}/{}", mol.name);
         for (variant, v) in exp.as_object().unwrap() {
             let params = variant_params(variant, v);
-            let want = if variant == "coordmap" { &v["coords"] } else { v };
+            let want = if variant == "coordmap" {
+                &v["coords"]
+            } else {
+                v
+            };
             let got = compute_2d_coords(mol, &params).unwrap();
             let d = max_dev(&got, want);
             checked += 1;
             if d.is_nan() || d > TOL {
-                fails.push(format!("{key}/{}/{variant}: max deviation {d:.3e}", mol.name));
+                fails.push(format!(
+                    "{key}/{}/{variant}: max deviation {d:.3e}",
+                    mol.name
+                ));
             }
         }
     }
@@ -75,7 +86,11 @@ fn check(key: &str, sdf: &str) {
     for f in &fails {
         eprintln!("{f}");
     }
-    assert!(fails.is_empty(), "{} of {checked} depictions differ from RDKit", fails.len());
+    assert!(
+        fails.is_empty(),
+        "{} of {checked} depictions differ from RDKit",
+        fails.len()
+    );
 }
 
 #[test]

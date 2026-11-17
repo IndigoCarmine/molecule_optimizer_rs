@@ -17,7 +17,9 @@ fn is_atom_conjug_cand(mol: &Molecule, i: usize) -> bool {
         }
     }
     let nouter = element(at.atomic_num).n_outer;
-    ((at.atomic_num <= 10) || (nouter != 5 && nouter != 6) || (nouter == 6 && mol.total_degree(i) < 2))
+    ((at.atomic_num <= 10)
+        || (nouter != 5 && nouter != 6)
+        || (nouter == 6 && mol.total_degree(i) < 2))
         && count_atom_elec(mol, i) > 0
 }
 
@@ -31,7 +33,11 @@ pub fn set_conjugation(mol: &mut Molecule) {
     let mut nsub = vec![0usize; n];
     for i in 0..n {
         cand[i] = is_atom_conjug_cand(mol, i);
-        nsub[i] = if cand[i] { mol.degree(i) + mol.atom(i).total_hidden_hs() as usize } else { 0 };
+        nsub[i] = if cand[i] {
+            mol.degree(i) + mol.atom(i).total_hidden_hs() as usize
+        } else {
+            0
+        };
     }
     let mut to_mark = Vec::new();
     for i in 0..n {
@@ -89,7 +95,9 @@ fn num_bonds_plus_lone_pairs(mol: &Molecule, i: usize) -> i32 {
 }
 
 fn atom_has_conjugated_bond(mol: &Molecule, i: usize) -> bool {
-    mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).is_conjugated)
+    mol.atom_bonds(i)
+        .iter()
+        .any(|&(_, b)| mol.bond(b).is_conjugated)
 }
 
 /// RDKit `MolOps::setHybridization`.
@@ -104,7 +112,11 @@ pub fn set_hybridization(mol: &mut Molecule) {
             mol.atom_mut(i).hybridization = Hybridization::SP3;
             continue;
         }
-        let norbs = if at.atomic_num < 89 { num_bonds_plus_lone_pairs(mol, i) } else { mol.total_degree(i) as i32 };
+        let norbs = if at.atomic_num < 89 {
+            num_bonds_plus_lone_pairs(mol, i)
+        } else {
+            mol.total_degree(i) as i32
+        };
         let h = match norbs {
             0 | 1 => Hybridization::S,
             2 => Hybridization::SP,

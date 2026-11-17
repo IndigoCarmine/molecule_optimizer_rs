@@ -20,7 +20,8 @@ const KNOWN_PERCEPTION_DIFFS: &[&str] = &[];
 fn check(sdf: &str, json: &str) -> (usize, usize) {
     let text = std::fs::read_to_string(format!("{DATA}{sdf}")).unwrap();
     let mols = io::read_sdf(&text).unwrap();
-    let refs: Value = serde_json::from_str(&std::fs::read_to_string(format!("{DATA}{json}")).unwrap()).unwrap();
+    let refs: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{DATA}{json}")).unwrap()).unwrap();
     let refs = refs.as_array().unwrap();
     assert_eq!(mols.len(), refs.len());
 
@@ -66,7 +67,10 @@ fn check(sdf: &str, json: &str) -> (usize, usize) {
             match (ours, b[2].as_f64()) {
                 (Some(x), Some(y)) if (x - y).abs() < 1e-9 => {}
                 (None, None) => {}
-                (x, y) => errs.push(format!("bond {i}-{j} r0 {x:?} vs {y:?} ({} {})", labels[i], labels[j])),
+                (x, y) => errs.push(format!(
+                    "bond {i}-{j} r0 {x:?} vs {y:?} ({} {})",
+                    labels[i], labels[j]
+                )),
             }
         }
         if !errs.is_empty() {
@@ -77,9 +81,18 @@ fn check(sdf: &str, json: &str) -> (usize, usize) {
     for f in &failures {
         println!("{f}");
     }
-    let expected: Vec<&str> =
-        KNOWN_PERCEPTION_DIFFS.iter().copied().filter(|k| refs.iter().any(|r| r["name"] == *k)).collect();
-    assert_eq!(failed_names, expected, "{} of {} molecules differ", failures.len(), mols.len());
+    let expected: Vec<&str> = KNOWN_PERCEPTION_DIFFS
+        .iter()
+        .copied()
+        .filter(|k| refs.iter().any(|r| r["name"] == *k))
+        .collect();
+    assert_eq!(
+        failed_names,
+        expected,
+        "{} of {} molecules differ",
+        failures.len(),
+        mols.len()
+    );
     (mols.len(), nbonds)
 }
 

@@ -80,7 +80,10 @@ struct SysLayout {
 fn cluster_body() -> String {
     let mut s = String::new();
     for a in 0..4 {
-        s.push_str(&format!("            if (((mask >> {}u) & 15u) != 0u) {{\n", 4 * a));
+        s.push_str(&format!(
+            "            if (((mask >> {}u) & 15u) != 0u) {{\n",
+            4 * a
+        ));
         for b in 0..4 {
             s.push_str(&format!(
                 "                if ((mask & {}u) != 0u) {{\n                    let d = pi{a}.xyz - xj{b};\n                    let o = interact(d, pi{a}.w * pj{b}.w, ti{a} + tj{b});\n                    en += o.xyz;\n                    g{a} += o.w * d;\n                }}\n",
@@ -163,15 +166,25 @@ impl Engine {
     /// settings). PME is set up from the first template if it has one
     /// (single-system mode only).
     pub fn new(ctx: &GpuContext, templates: &[&ApproxNonbonded], with_pme: bool) -> Result<Engine> {
-        let t0 = templates.first().ok_or_else(|| Error::InvalidArgument("no systems".into()))?;
+        let t0 = templates
+            .first()
+            .ok_or_else(|| Error::InvalidArgument("no systems".into()))?;
         let kp = &t0.kp;
         for t in templates {
-            if !same_kernel_settings(kp, &t.kp) || t.p.kind != t0.p.kind || t.p.scale14 != t0.p.scale14 {
-                return Err(Error::InvalidArgument("all systems of a GPU batch need the same force field and options".into()));
+            if !same_kernel_settings(kp, &t.kp)
+                || t.p.kind != t0.p.kind
+                || t.p.scale14 != t0.p.scale14
+            {
+                return Err(Error::InvalidArgument(
+                    "all systems of a GPU batch need the same force field and options".into(),
+                ));
             }
         }
-        let erfc_consts: Vec<(String, Const)> =
-            crate::fast::approx::erfc::A.iter().enumerate().map(|(k, &a)| (format!("ERFC_A{k}"), Const::F(a))).collect();
+        let erfc_consts: Vec<(String, Const)> = crate::fast::approx::erfc::A
+            .iter()
+            .enumerate()
+            .map(|(k, &a)| (format!("ERFC_A{k}"), Const::F(a)))
+            .collect();
         let mut consts: Vec<(&str, Const)> = vec![
             ("VDW", Const::U(if kp.vdw == VdwKind::Mmff { 0 } else { 1 })),
             (
@@ -220,17 +233,35 @@ impl Engine {
         for t in templates {
             tab_off.push(tab.len());
             for k in 0..t.p.ntypes * t.p.ntypes {
-                tab.push([t.p.p1[k] as f32, t.p.p2[k] as f32, t.p.p3[k] as f32, t.kp.shift[k] as f32]);
+                tab.push([
+                    t.p.p1[k] as f32,
+                    t.p.p2[k] as f32,
+                    t.p.p3[k] as f32,
+                    t.kp.shift[k] as f32,
+                ]);
             }
         }
         if tab.len() >= u32::MAX as usize / 2 {
             return Err(Error::InvalidArgument("GPU type table too large".into()));
         }
         let tabb = util::storage(ctx, "type-pair table", tab.len() * 16);
-        ctx.queue().write_buffer(&tabb, 0, bytemuck::cast_slice(&tab));
+        ctx.queue()
+            .write_buffer(&tabb, 0, bytemuck::cast_slice(&tab));
         use Bind::*;
-        let cluster_layout = util::seq_layout(ctx, "cluster", &[Uniform, Read, Read, Read, Read, Read, Read, ReadWrite, ReadWrite]);
-        let atoms_layout = util::seq_layout(ctx, "atoms", &[Uniform, Read, Read, Read, Read, Read, Read, ReadWrite, ReadWrite]);
+        let cluster_layout = util::seq_layout(
+            ctx,
+            "cluster",
+            &[
+                Uniform, Read, Read, Read, Read, Read, Read, ReadWrite, ReadWrite,
+            ],
+        );
+        let atoms_layout = util::seq_layout(
+            ctx,
+            "atoms",
+            &[
+                Uniform, Read, Read, Read, Read, Read, Read, ReadWrite, ReadWrite,
+            ],
+        );
         let pme = match (&t0.pme, with_pme) {
             (Some(p), true) => Some(PmeGpu::new(ctx, p, t0.p.n)?),
             _ => None,
@@ -239,7 +270,12 @@ impl Engine {
         let atoms_pipes = [false, true]
             .iter()
             .map(|&g| {
-                let h = util::header(&[("WG", Const::U(WG)), ("GRAD", Const::B(g)), ("HAS_PME", Const::B(has_pme)), ("SPLIT_C", Const::B(false))]);
+                let h = util::header(&[
+                    ("WG", Const::U(WG)),
+                    ("GRAD", Const::B(g)),
+                    ("HAS_PME", Const::B(has_pme)),
+                    ("SPLIT_C", Const::B(false)),
+                ]);
                 let m = util::module(ctx, "atoms", &[&header, &h, PAIR_WGSL, ATOMS_WGSL]);
                 util::pipeline(ctx, "atoms", &m, "main", &atoms_layout)
             })
@@ -253,7 +289,11 @@ impl Engine {
             atoms_pipes,
             params: util::uniform(ctx, "nonbonded params", std::mem::size_of::<NbParamsGpu>()),
             base_params,
-            c_rf: if kp.elec == ElecKind::ReactionField { kp.c_rf } else { 0.0 },
+            c_rf: if kp.elec == ElecKind::ReactionField {
+                kp.c_rf
+            } else {
+                0.0
+            },
             tab: tabb,
             tab_off,
             xyzq: Grow::new(ctx, "slot coordinates", 16),
@@ -312,8 +352,15 @@ impl Engine {
     fn cluster_pipe(&mut self, tpc: u32, grad: bool) -> &wgpu::ComputePipeline {
         let (ctx, header, layout) = (&self.ctx, &self.header, &self.cluster_layout);
         self.cluster_pipes.entry((tpc, grad)).or_insert_with(|| {
-            let h = util::header(&[("WG", Const::U(WG)), ("TPC", Const::U(tpc)), ("GRAD", Const::B(grad)), ("SPLIT_C", Const::B(true))]);
-            let src = CLUSTER_WGSL.replace("//!BODY\n", &cluster_body()).replace("//!BODY\r\n", &cluster_body());
+            let h = util::header(&[
+                ("WG", Const::U(WG)),
+                ("TPC", Const::U(tpc)),
+                ("GRAD", Const::B(grad)),
+                ("SPLIT_C", Const::B(true)),
+            ]);
+            let src = CLUSTER_WGSL
+                .replace("//!BODY\n", &cluster_body())
+                .replace("//!BODY\r\n", &cluster_body());
             let m = util::module(ctx, "cluster", &[header, &h, PAIR_WGSL, &src]);
             util::pipeline(ctx, "cluster", &m, "main", layout)
         })
@@ -334,11 +381,20 @@ impl Engine {
             let (l, p) = (&*s.list, &s.nb.p);
             let toff = self.tab_off[s.tmpl];
             let nt = p.ntypes;
-            self.sys.push(SysLayout { coff, nclusters: l.nclusters, aoff, natoms: p.n });
+            self.sys.push(SysLayout {
+                coff,
+                nclusters: l.nclusters,
+                aoff,
+                natoms: p.n,
+            });
             self.list_ids.push(Arc::as_ptr(&s.list) as usize);
             let wpos = |i: usize| -> [f64; 3] {
                 let t = l.tshift[i];
-                [l.ref_pos[3 * i] + t[0], l.ref_pos[3 * i + 1] + t[1], l.ref_pos[3 * i + 2] + t[2]]
+                [
+                    l.ref_pos[3 * i] + t[0],
+                    l.ref_pos[3 * i + 1] + t[1],
+                    l.ref_pos[3 * i + 2] + t[2],
+                ]
             };
             for a in &l.atoms {
                 let mut o = [0.0; 3];
@@ -370,8 +426,14 @@ impl Engine {
                 for ent in &l.cj[b..e] {
                     let oj = self.origins[coff + ent.j as usize];
                     let sh = l.shifts[ent.shift as usize];
-                    self.h_cj.push([(coff + ent.j as usize) as u32, ent.mask as u32]);
-                    self.h_cjd.push([(oj[0] + sh[0] - oi[0]) as f32, (oj[1] + sh[1] - oi[1]) as f32, (oj[2] + sh[2] - oi[2]) as f32, 0.0]);
+                    self.h_cj
+                        .push([(coff + ent.j as usize) as u32, ent.mask as u32]);
+                    self.h_cjd.push([
+                        (oj[0] + sh[0] - oi[0]) as f32,
+                        (oj[1] + sh[1] - oi[1]) as f32,
+                        (oj[2] + sh[2] - oi[2]) as f32,
+                        0.0,
+                    ]);
                 }
                 self.h_cinfo.push([start as u32, self.h_cj.len() as u32]);
             }
@@ -391,12 +453,20 @@ impl Engine {
                         Some(c) => c.min_image(d0),
                         None => d0,
                     };
-                    let cst = [0, 1, 2].map(|d| ((oi[d] - ti[d]) - (oj[d] - tj[d]) + (dm[d] - d0[d])) as f32);
+                    let cst = [0, 1, 2]
+                        .map(|d| ((oi[d] - ti[d]) - (oj[d] - tj[d]) + (dm[d] - d0[d])) as f32);
                     let tidx = toff + p.atom_type[i] as usize * nt + p.atom_type[j] as usize;
-                    self.h_ex.push([(4 * coff + sj) as u32, ex.is14[k] as u32, tidx as u32, 0]);
-                    self.h_ex.push([cst[0].to_bits(), cst[1].to_bits(), cst[2].to_bits(), 0]);
+                    self.h_ex
+                        .push([(4 * coff + sj) as u32, ex.is14[k] as u32, tidx as u32, 0]);
+                    self.h_ex
+                        .push([cst[0].to_bits(), cst[1].to_bits(), cst[2].to_bits(), 0]);
                 }
-                self.h_ainfo.push([(4 * coff + si) as u32, start as u32, (self.h_ex.len() / 2) as u32, 0]);
+                self.h_ainfo.push([
+                    (4 * coff + si) as u32,
+                    start as u32,
+                    (self.h_ex.len() / 2) as u32,
+                    0,
+                ]);
             }
             coff += l.nclusters;
             aoff += p.n;
@@ -420,20 +490,41 @@ impl Engine {
         let mut prm = self.base_params;
         prm.nclusters = self.nclusters as u32;
         prm.natoms = self.natoms as u32;
-        ctx.queue().write_buffer(&self.params, 0, bytemuck::bytes_of(&prm));
+        ctx.queue()
+            .write_buffer(&self.params, 0, bytemuck::bytes_of(&prm));
         if grown || self.bg_cluster.is_none() {
             self.bg_cluster = Some(util::seq_bind_group(
                 &ctx,
                 "cluster",
                 &self.cluster_layout,
-                &[&self.params, &self.xyzq.buf, &self.stype.buf, &self.tab, &self.cinfo.buf, &self.cj.buf, &self.cjd.buf, &self.cgrad.buf, &self.cener.buf],
+                &[
+                    &self.params,
+                    &self.xyzq.buf,
+                    &self.stype.buf,
+                    &self.tab,
+                    &self.cinfo.buf,
+                    &self.cj.buf,
+                    &self.cjd.buf,
+                    &self.cgrad.buf,
+                    &self.cener.buf,
+                ],
             ));
             let pg = self.pme.as_ref().map(|p| &p.pgrad).unwrap_or(&self.dummy);
             self.bg_atoms = Some(util::seq_bind_group(
                 &ctx,
                 "atoms",
                 &self.atoms_layout,
-                &[&self.params, &self.xyzq.buf, &self.tab, &self.ainfo.buf, &self.ex.buf, &self.cgrad.buf, pg, &self.grad.buf, &self.aener.buf],
+                &[
+                    &self.params,
+                    &self.xyzq.buf,
+                    &self.tab,
+                    &self.ainfo.buf,
+                    &self.ex.buf,
+                    &self.cgrad.buf,
+                    pg,
+                    &self.grad.buf,
+                    &self.aener.buf,
+                ],
             ));
         }
         // invocations per i-cluster from the average list length
@@ -442,7 +533,9 @@ impl Engine {
         while tpc < 64 && (2 * tpc) as f64 * 32.0 <= avg {
             tpc *= 2;
         }
-        if let Some(v) = std::env::var("MOLOPT_GPU_TPC").ok().and_then(|s| s.parse::<u32>().ok())
+        if let Some(v) = std::env::var("MOLOPT_GPU_TPC")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
             && v.is_power_of_two()
             && v <= 64
         {
@@ -456,7 +549,11 @@ impl Engine {
     /// Evaluates all systems; results in [`Engine::energies`] and (if `grad`)
     /// [`Engine::r_grad`] (3 per atom, systems concatenated).
     pub fn evaluate(&mut self, sys: &[SysRef], grad: bool) {
-        let changed = self.list_ids.len() != sys.len() || sys.iter().zip(&self.list_ids).any(|(s, &id)| Arc::as_ptr(&s.list) as usize != id);
+        let changed = self.list_ids.len() != sys.len()
+            || sys
+                .iter()
+                .zip(&self.list_ids)
+                .any(|(s, &id)| Arc::as_ptr(&s.list) as usize != id);
         if changed {
             self.upload_topology(sys);
         }
@@ -466,8 +563,12 @@ impl Engine {
             let (l, pos, qs) = (&*s.list, s.pos, &s.nb.qs);
             assert!(pos.len() >= 3 * lay.natoms, "position vector too short");
             let origins = &self.origins[lay.coff..lay.coff + lay.nclusters];
-            self.h_xyzq[4 * lay.coff..4 * (lay.coff + lay.nclusters)].par_chunks_mut(4).zip(origins.par_iter()).zip(l.atoms.par_iter()).with_min_len(256).for_each(
-                |((out, o), a)| {
+            self.h_xyzq[4 * lay.coff..4 * (lay.coff + lay.nclusters)]
+                .par_chunks_mut(4)
+                .zip(origins.par_iter())
+                .zip(l.atoms.par_iter())
+                .with_min_len(256)
+                .for_each(|((out, o), a)| {
                     for k in 0..4 {
                         let i = a[k];
                         out[k] = if i == DUMMY {
@@ -483,8 +584,7 @@ impl Engine {
                             ]
                         };
                     }
-                },
-            );
+                });
         }
         self.xyzq.upload(&ctx, &self.h_xyzq);
         if let Some(p) = self.pme.as_mut() {
@@ -499,7 +599,10 @@ impl Engine {
         let total = if grad { off_grad + 12 * na } else { off_grad };
         let si = self.next_staging;
         self.next_staging ^= 1;
-        if self.staging[si].as_ref().is_none_or(|(_, cap)| *cap < total) {
+        if self.staging[si]
+            .as_ref()
+            .is_none_or(|(_, cap)| *cap < total)
+        {
             let cap = (total + total / 4).max(64).div_ceil(16) * 16;
             self.staging[si] = Some((util::readback(&ctx, "staging", cap), cap));
         }
@@ -508,9 +611,16 @@ impl Engine {
         let groups_a = na.div_ceil(WG as usize);
         self.cluster_pipe(tpc, grad);
         let cpipe = &self.cluster_pipes[&(tpc, grad)];
-        let mut enc = ctx.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("nonbonded") });
+        let mut enc = ctx
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("nonbonded"),
+            });
         {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("nonbonded"), timestamp_writes: None });
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("nonbonded"),
+                timestamp_writes: None,
+            });
             if let Some(p) = &self.pme {
                 p.encode(&mut pass, grad);
             }
@@ -526,7 +636,13 @@ impl Engine {
             enc.copy_buffer_to_buffer(&self.cener.buf, 0, staging, 0, (16 * nc) as u64);
         }
         if na > 0 {
-            enc.copy_buffer_to_buffer(&self.aener.buf, 0, staging, off_aener as u64, (8 * na) as u64);
+            enc.copy_buffer_to_buffer(
+                &self.aener.buf,
+                0,
+                staging,
+                off_aener as u64,
+                (8 * na) as u64,
+            );
         }
         if let Some(p) = &self.pme
             && npart > 0
@@ -534,21 +650,33 @@ impl Engine {
             enc.copy_buffer_to_buffer(&p.epart, 0, staging, off_epart as u64, (4 * npart) as u64);
         }
         if grad && na > 0 {
-            enc.copy_buffer_to_buffer(&self.grad.buf, 0, staging, off_grad as u64, (12 * na) as u64);
+            enc.copy_buffer_to_buffer(
+                &self.grad.buf,
+                0,
+                staging,
+                off_grad as u64,
+                (12 * na) as u64,
+            );
         }
         ctx.queue().submit([enc.finish()]);
         util::map_blocking(&ctx, staging, total);
         {
-            let view = staging.get_mapped_range(0..(total.max(4).div_ceil(4) * 4) as u64).expect("mapped readback");
+            let view = staging
+                .get_mapped_range(0..(total.max(4).div_ceil(4) * 4) as u64)
+                .expect("mapped readback");
             self.r_cener.resize(nc, [0.0; 4]);
             self.r_aener.resize(na, [0.0; 2]);
             self.r_epart.resize(npart, 0.0);
-            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_cener).copy_from_slice(&view[..off_aener]);
-            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_aener).copy_from_slice(&view[off_aener..off_epart]);
-            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_epart).copy_from_slice(&view[off_epart..off_grad]);
+            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_cener)
+                .copy_from_slice(&view[..off_aener]);
+            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_aener)
+                .copy_from_slice(&view[off_aener..off_epart]);
+            bytemuck::cast_slice_mut::<_, u8>(&mut self.r_epart)
+                .copy_from_slice(&view[off_epart..off_grad]);
             if grad {
                 self.r_grad.resize(3 * na, 0.0);
-                bytemuck::cast_slice_mut::<_, u8>(&mut self.r_grad).copy_from_slice(&view[off_grad..off_grad + 12 * na]);
+                bytemuck::cast_slice_mut::<_, u8>(&mut self.r_grad)
+                    .copy_from_slice(&view[off_grad..off_grad + 12 * na]);
             }
         }
         staging.unmap();
@@ -570,9 +698,13 @@ impl Engine {
             v *= 0.5;
             e *= 0.5;
             if k == 0 && self.pme.is_some() {
-                e += 0.5 * self.r_epart.iter().map(|&x| x as f64).sum::<f64>() + sys[0].nb.ewald_const;
+                e += 0.5 * self.r_epart.iter().map(|&x| x as f64).sum::<f64>()
+                    + sys[0].nb.ewald_const;
             }
-            self.energies.push(NonbondedEnergy { vdw: v, electrostatic: e });
+            self.energies.push(NonbondedEnergy {
+                vdw: v,
+                electrostatic: e,
+            });
         }
     }
 }

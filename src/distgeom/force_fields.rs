@@ -81,11 +81,21 @@ pub fn construct_force_field(
     ff
 }
 
-fn add_improper_terms(ff: &mut ContribForceField, scaling: f64, impropers: &[[usize; 6]], constrained: &mut [bool]) {
+fn add_improper_terms(
+    ff: &mut ContribForceField,
+    scaling: f64,
+    impropers: &[[usize; 6]],
+    constrained: &mut [bool],
+) {
     let mut inv = InversionContribs::new(3);
     for ia in impropers {
         for n in [[0, 1, 2, 3], [0, 1, 3, 2], [2, 1, 3, 0]] {
-            inv.add([ia[n[0]], ia[n[1]], ia[n[2]], ia[n[3]]], ia[4] as i32, ia[5] != 0, scaling);
+            inv.add(
+                [ia[n[0]], ia[n[1]], ia[n[2]], ia[n[3]]],
+                ia[4] as i32,
+                ia[5] != 0,
+                scaling,
+            );
             constrained[ia[n[1]]] = true;
         }
     }
@@ -94,7 +104,12 @@ fn add_improper_terms(ff: &mut ContribForceField, scaling: f64, impropers: &[[us
     }
 }
 
-fn add_exp_torsion_terms(ff: &mut ContribForceField, d: &EtkdgDetails, atom_pairs: &mut [bool], n: usize) {
+fn add_exp_torsion_terms(
+    ff: &mut ContribForceField,
+    d: &EtkdgDetails,
+    atom_pairs: &mut [bool],
+    n: usize,
+) {
     let mut done = vec![false; n * n];
     let mut tc = TorsionAngleContribs::new(3);
     for t in &d.exp_torsions {
@@ -117,7 +132,13 @@ fn p3(pos: &[f64], i: usize) -> P3 {
     P3::from_pos(pos, i, 3)
 }
 
-fn add12_terms(ff: &mut ContribForceField, d: &EtkdgDetails, atom_pairs: &mut [bool], pos: &[f64], n: usize) {
+fn add12_terms(
+    ff: &mut ContribForceField,
+    d: &EtkdgDetails,
+    atom_pairs: &mut [bool],
+    pos: &[f64],
+    n: usize,
+) {
     let mut dc = DistanceConstraintContribs::new(3);
     for &(i, j) in &d.bonds {
         if i < j {
@@ -126,7 +147,13 @@ fn add12_terms(ff: &mut ContribForceField, d: &EtkdgDetails, atom_pairs: &mut [b
             atom_pairs[j * n + i] = true;
         }
         let dist = (p3(pos, i) - p3(pos, j)).length();
-        dc.add(i, j, dist - KNOWN_DIST_TOL, dist + KNOWN_DIST_TOL, KNOWN_DIST_FORCE_CONSTANT);
+        dc.add(
+            i,
+            j,
+            dist - KNOWN_DIST_TOL,
+            dist + KNOWN_DIST_TOL,
+            KNOWN_DIST_FORCE_CONSTANT,
+        );
     }
     if !dc.is_empty() {
         ff.add_contrib(Box::new(dc));
@@ -156,10 +183,22 @@ fn add13_terms(
         if use_basic_knowledge && a[3] != 0 {
             ac.add(i, j, k, 179.0, 180.0, d.force_consts.k_term_angle);
         } else if improper_constrained[j] {
-            dc.add(i, k, mmat.lower(i, k), mmat.upper(i, k), KNOWN_DIST_FORCE_CONSTANT);
+            dc.add(
+                i,
+                k,
+                mmat.lower(i, k),
+                mmat.upper(i, k),
+                KNOWN_DIST_FORCE_CONSTANT,
+            );
         } else {
             let dist = (p3(pos, i) - p3(pos, k)).length();
-            dc.add(i, k, dist - KNOWN_DIST_TOL, dist + KNOWN_DIST_TOL, KNOWN_DIST_FORCE_CONSTANT);
+            dc.add(
+                i,
+                k,
+                dist - KNOWN_DIST_TOL,
+                dist + KNOWN_DIST_TOL,
+                KNOWN_DIST_FORCE_CONSTANT,
+            );
         }
     }
     if !ac.is_empty() {
@@ -170,7 +209,13 @@ fn add13_terms(
     }
 }
 
-fn add_long_range(ff: &mut ContribForceField, d: &EtkdgDetails, atom_pairs: &[bool], mmat: &BoundsMatrix, n: usize) {
+fn add_long_range(
+    ff: &mut ContribForceField,
+    d: &EtkdgDetails,
+    atom_pairs: &[bool],
+    mmat: &BoundsMatrix,
+    n: usize,
+) {
     let mut dc = DistanceConstraintContribs::new(3);
     for i in 1..n {
         for j in 0..i {
@@ -186,28 +231,59 @@ fn add_long_range(ff: &mut ContribForceField, d: &EtkdgDetails, atom_pairs: &[bo
 }
 
 /// RDKit `construct3DForceField` (ETKDG / KDG). `pos` is 3D.
-pub fn construct_3d_force_field(mmat: &BoundsMatrix, pos: &[f64], d: &EtkdgDetails) -> ContribForceField {
+pub fn construct_3d_force_field(
+    mmat: &BoundsMatrix,
+    pos: &[f64],
+    d: &EtkdgDetails,
+) -> ContribForceField {
     let n = mmat.num_rows();
     let mut ff = new_ff(n, 3);
     let mut atom_pairs = vec![false; n * n];
     let mut improper_constrained = vec![false; n];
     add_exp_torsion_terms(&mut ff, d, &mut atom_pairs, n);
-    add_improper_terms(&mut ff, d.force_consts.k_term_improper, &d.improper_atoms, &mut improper_constrained);
+    add_improper_terms(
+        &mut ff,
+        d.force_consts.k_term_improper,
+        &d.improper_atoms,
+        &mut improper_constrained,
+    );
     add12_terms(&mut ff, d, &mut atom_pairs, pos, n);
-    add13_terms(&mut ff, d, &mut atom_pairs, pos, &improper_constrained, true, mmat, n);
+    add13_terms(
+        &mut ff,
+        d,
+        &mut atom_pairs,
+        pos,
+        &improper_constrained,
+        true,
+        mmat,
+        n,
+    );
     add_long_range(&mut ff, d, &atom_pairs, mmat, n);
     ff
 }
 
 /// RDKit `constructPlain3DForceField` (ETDG).
-pub fn construct_plain_3d_force_field(mmat: &BoundsMatrix, pos: &[f64], d: &EtkdgDetails) -> ContribForceField {
+pub fn construct_plain_3d_force_field(
+    mmat: &BoundsMatrix,
+    pos: &[f64],
+    d: &EtkdgDetails,
+) -> ContribForceField {
     let n = mmat.num_rows();
     let mut ff = new_ff(n, 3);
     let mut atom_pairs = vec![false; n * n];
     let improper_constrained = vec![false; n];
     add_exp_torsion_terms(&mut ff, d, &mut atom_pairs, n);
     add12_terms(&mut ff, d, &mut atom_pairs, pos, n);
-    add13_terms(&mut ff, d, &mut atom_pairs, pos, &improper_constrained, false, mmat, n);
+    add13_terms(
+        &mut ff,
+        d,
+        &mut atom_pairs,
+        pos,
+        &improper_constrained,
+        false,
+        mmat,
+        n,
+    );
     add_long_range(&mut ff, d, &atom_pairs, mmat, n);
     ff
 }

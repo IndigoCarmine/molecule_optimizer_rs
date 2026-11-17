@@ -15,8 +15,8 @@
 
 use molecule_optimizer_rs::Molecule;
 use molecule_optimizer_rs::calc::assembly::{
-    AssemblyInput, AssemblyMode, AssemblySearchOptions, AssemblySearchResult, MonomerConformers, TrialStage,
-    assembly_search, combine_molecules,
+    AssemblyInput, AssemblyMode, AssemblySearchOptions, AssemblySearchResult, MonomerConformers,
+    TrialStage, assembly_search, combine_molecules,
 };
 use molecule_optimizer_rs::core::geometry::{V3, angle, dist};
 use molecule_optimizer_rs::distgeom::EmbedParams;
@@ -31,26 +31,49 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn data(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/assembly").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/assembly")
+        .join(name)
 }
 
 fn monomer(name: &str) -> Molecule {
-    io::read_file(data(&format!("{name}.sdf"))).unwrap().remove(0)
+    io::read_file(data(&format!("{name}.sdf")))
+        .unwrap()
+        .remove(0)
 }
 
 fn mmff_interfrag() -> MmffBuilder {
-    MmffBuilder { ignore_interfrag_interactions: false, ..Default::default() }
+    MmffBuilder {
+        ignore_interfrag_interactions: false,
+        ..Default::default()
+    }
 }
 
 fn water_dimer_search() -> AssemblySearchResult {
-    let opts = AssemblySearchOptions { num_trials: 24, ..Default::default() };
-    assembly_search(&AssemblyInput::Molecules(vec![(monomer("water"), 2)]), &MmffBuilder::default(), &opts).unwrap()
+    let opts = AssemblySearchOptions {
+        num_trials: 24,
+        ..Default::default()
+    };
+    assembly_search(
+        &AssemblyInput::Molecules(vec![(monomer("water"), 2)]),
+        &MmffBuilder::default(),
+        &opts,
+    )
+    .unwrap()
 }
 
 fn acetic_acid_dimer_search(mode: AssemblyMode, trials: usize) -> AssemblySearchResult {
-    let opts = AssemblySearchOptions { num_trials: trials, mode, ..Default::default() };
-    assembly_search(&AssemblyInput::Molecules(vec![(monomer("acetic_acid"), 2)]), &MmffBuilder::default(), &opts)
-        .unwrap()
+    let opts = AssemblySearchOptions {
+        num_trials: trials,
+        mode,
+        ..Default::default()
+    };
+    assembly_search(
+        &AssemblyInput::Molecules(vec![(monomer("acetic_acid"), 2)]),
+        &MmffBuilder::default(),
+        &opts,
+    )
+    .unwrap()
 }
 
 /// Water dimer atoms: O0 H1 H2 | O3 H4 H5. Returns (d(O-O), best O-H...O angle in degrees, d(H...O)).
@@ -92,15 +115,30 @@ fn water_dimer_is_the_linear_hydrogen_bonded_structure() {
     let w = monomer("water");
     let ff = MmffBuilder::default().build(&w, &[]).unwrap();
     let mut pos = w.flat_coords();
-    let e_w =
-        minimize(&ff, &mut pos, &MinimizeOptions { max_iters: 5000, ..Default::default() }, &mut NoObserver).energy;
+    let e_w = minimize(
+        &ff,
+        &mut pos,
+        &MinimizeOptions {
+            max_iters: 5000,
+            ..Default::default()
+        },
+        &mut NoObserver,
+    )
+    .energy;
     assert!((r.monomer_energies[0] - e_w).abs() < 1e-8);
     assert!((best.binding_energy - (best.energy - 2.0 * e_w)).abs() < 1e-8);
-    assert!(best.binding_energy < -4.0 && best.binding_energy > -8.0, "{}", best.binding_energy);
+    assert!(
+        best.binding_energy < -4.0 && best.binding_energy > -8.0,
+        "{}",
+        best.binding_energy
+    );
     // the final energy is the plain MMFF energy with interfragment terms
     let mut m = r.complex.clone();
     m.coords = best.coords.clone();
-    let e = mmff_interfrag().build(&m, &[]).unwrap().energy(&m.flat_coords());
+    let e = mmff_interfrag()
+        .build(&m, &[])
+        .unwrap()
+        .energy(&m.flat_coords());
     assert!((e - best.energy).abs() < 1e-9);
     assert_eq!(r.monomers.len(), 1);
     assert_eq!(r.copies.len(), 2);
@@ -124,12 +162,19 @@ fn acetic_acid_dimer_is_cyclic() {
 fn write_assembly_fixtures() {
     for (name, r) in [
         ("water_dimer", water_dimer_search()),
-        ("acetic_acid_dimer", acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32)),
+        (
+            "acetic_acid_dimer",
+            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32),
+        ),
     ] {
         let best = r.global_minimum().unwrap();
         let mut m = r.complex.clone();
         m.name = name.into();
-        let rec = write_sdf_record(&m, Some(&best.coords), &[("energy", format!("{:?}", best.energy))]);
+        let rec = write_sdf_record(
+            &m,
+            Some(&best.coords),
+            &[("energy", format!("{:?}", best.energy))],
+        );
         std::fs::write(data(&format!("{name}_found.sdf")), rec).unwrap();
     }
 }
@@ -168,28 +213,56 @@ fn read_ref(name: &str) -> RdkitRef {
 fn lowest_structures_agree_with_rdkit_reminimization() {
     for (name, r) in [
         ("water_dimer", water_dimer_search()),
-        ("acetic_acid_dimer", acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32)),
+        (
+            "acetic_acid_dimer",
+            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32),
+        ),
     ] {
         let rf = read_ref(name);
-        let found = io::read_file(data(&format!("{name}_found.sdf"))).unwrap().remove(0);
+        let found = io::read_file(data(&format!("{name}_found.sdf")))
+            .unwrap()
+            .remove(0);
         // same energy function as RDKit at the stored (4-decimal) coordinates
-        let e_ours = mmff_interfrag().build(&found, &[]).unwrap().energy(&found.flat_coords());
-        assert!((e_ours - rf.e0).abs() <= 1e-10 * rf.e0.abs().max(1.0), "{name}: {e_ours} vs RDKit {}", rf.e0);
+        let e_ours = mmff_interfrag()
+            .build(&found, &[])
+            .unwrap()
+            .energy(&found.flat_coords());
+        assert!(
+            (e_ours - rf.e0).abs() <= 1e-10 * rf.e0.abs().max(1.0),
+            "{name}: {e_ours} vs RDKit {}",
+            rf.e0
+        );
         // the search (re-run now) reaches RDKit's re-minimized energy and structure
         let best = r.global_minimum().unwrap();
         println!(
             "{name}: search E = {:.8}, RDKit E(at our coords) = {:.8}, RDKit re-minimized E = {:.8}",
             best.energy, rf.e0, rf.e1
         );
-        assert!((best.energy - rf.e1).abs() < 1e-4, "{name}: {} vs RDKit {}", best.energy, rf.e1);
-        assert!((rf.e0 - rf.e1).abs() < 1e-3, "{name}: RDKit moved the structure: {} -> {}", rf.e0, rf.e1);
+        assert!(
+            (best.energy - rf.e1).abs() < 1e-4,
+            "{name}: {} vs RDKit {}",
+            best.energy,
+            rf.e1
+        );
+        assert!(
+            (rf.e0 - rf.e1).abs() < 1e-3,
+            "{name}: RDKit moved the structure: {} -> {}",
+            rf.e0,
+            rf.e1
+        );
         let rmsd = r.rmsd(&best.coords, &rf.x, true);
-        assert!(rmsd < 0.01, "{name}: RMSD to RDKit-reminimized structure {rmsd}");
+        assert!(
+            rmsd < 0.01,
+            "{name}: RMSD to RDKit-reminimized structure {rmsd}"
+        );
     }
 }
 
 fn hits(r: &AssemblySearchResult, g: &[V3], e: f64) -> usize {
-    r.all.iter().filter(|s| (s.energy - e).abs() < 0.01 && r.rmsd(&s.coords, g, true) < 0.25).count()
+    r.all
+        .iter()
+        .filter(|s| (s.energy - e).abs() < 0.01 && r.rmsd(&s.coords, g, true) < 0.25)
+        .count()
 }
 
 /// The user's hypothesis: λ-continuation from weak, soft intermolecular
@@ -199,24 +272,51 @@ fn hits(r: &AssemblySearchResult, g: &[V3], e: f64) -> usize {
 #[test]
 fn lambda_continuation_vs_direct_minimization() {
     let systems: Vec<(&str, AssemblyInput, usize)> = vec![
-        ("(H2O)2", AssemblyInput::Molecules(vec![(monomer("water"), 2)]), 24),
-        ("(AcOH)2", AssemblyInput::Molecules(vec![(monomer("acetic_acid"), 2)]), 64),
-        ("(C6H6)2", AssemblyInput::Molecules(vec![(monomer("benzene"), 2)]), 32),
-        ("(H2O)6", AssemblyInput::Molecules(vec![(monomer("water"), 6)]), 48),
+        (
+            "(H2O)2",
+            AssemblyInput::Molecules(vec![(monomer("water"), 2)]),
+            24,
+        ),
+        (
+            "(AcOH)2",
+            AssemblyInput::Molecules(vec![(monomer("acetic_acid"), 2)]),
+            64,
+        ),
+        (
+            "(C6H6)2",
+            AssemblyInput::Molecules(vec![(monomer("benzene"), 2)]),
+            32,
+        ),
+        (
+            "(H2O)6",
+            AssemblyInput::Molecules(vec![(monomer("water"), 6)]),
+            48,
+        ),
     ];
-    println!("system   trials  E_min(MMFF94)  λ hits  direct hits  λ unique  direct unique  λ iters  direct iters");
+    println!(
+        "system   trials  E_min(MMFF94)  λ hits  direct hits  λ unique  direct unique  λ iters  direct iters"
+    );
     for (name, input, n) in systems {
-        let opts = AssemblySearchOptions { num_trials: n, ..Default::default() };
+        let opts = AssemblySearchOptions {
+            num_trials: n,
+            ..Default::default()
+        };
         let lam = assembly_search(&input, &MmffBuilder::default(), &opts).unwrap();
         let dir = assembly_search(
             &input,
             &MmffBuilder::default(),
-            &AssemblySearchOptions { mode: AssemblyMode::Direct, ..opts },
+            &AssemblySearchOptions {
+                mode: AssemblyMode::Direct,
+                ..opts
+            },
         )
         .unwrap();
         let (a, b) = (lam.global_minimum().unwrap(), dir.global_minimum().unwrap());
         let g = if a.energy <= b.energy { a } else { b };
-        let (hl, hd) = (hits(&lam, &g.coords, g.energy), hits(&dir, &g.coords, g.energy));
+        let (hl, hd) = (
+            hits(&lam, &g.coords, g.energy),
+            hits(&dir, &g.coords, g.energy),
+        );
         let it = |r: &AssemblySearchResult| r.all.iter().map(|s| s.iterations).sum::<usize>();
         println!(
             "{name:<8} {n:<7} {:<14.4} {hl:<7} {hd:<12} {:<9} {:<14} {:<8} {}",
@@ -242,9 +342,16 @@ fn lambda_continuation_vs_direct_minimization() {
 #[test]
 fn deterministic_independent_of_thread_count() {
     let input = AssemblyInput::Molecules(vec![(monomer("water"), 3)]);
-    let opts = AssemblySearchOptions { num_trials: 12, ..Default::default() };
+    let opts = AssemblySearchOptions {
+        num_trials: 12,
+        ..Default::default()
+    };
     let run = |threads: usize| {
-        let eng = Engine::new(EngineConfig { num_threads: Some(threads), ..Default::default() }).unwrap();
+        let eng = Engine::new(EngineConfig {
+            num_threads: Some(threads),
+            ..Default::default()
+        })
+        .unwrap();
         eng.install(|| assembly_search(&input, &MmffBuilder::default(), &opts).unwrap())
     };
     let (a, b) = (run(1), run(4));
@@ -257,18 +364,36 @@ fn deterministic_independent_of_thread_count() {
     }
     assert_eq!(a.structures, b.structures);
     // the asynchronous job gives the same result
-    let eng = Engine::new(EngineConfig { num_threads: Some(3), ..Default::default() }).unwrap();
-    let c = eng.assembly_search(input.clone(), MmffBuilder::default(), opts.clone()).wait_blocking().unwrap();
+    let eng = Engine::new(EngineConfig {
+        num_threads: Some(3),
+        ..Default::default()
+    })
+    .unwrap();
+    let c = eng
+        .assembly_search(input.clone(), MmffBuilder::default(), opts.clone())
+        .wait_blocking()
+        .unwrap();
     assert_eq!(a.structures, c.structures);
     assert!(!c.cancelled);
 }
 
 #[test]
 fn cancellation_returns_completed_trials() {
-    let eng = Engine::new(EngineConfig { num_threads: Some(2), ..Default::default() }).unwrap();
+    let eng = Engine::new(EngineConfig {
+        num_threads: Some(2),
+        ..Default::default()
+    })
+    .unwrap();
     let n = 400;
-    let opts = AssemblySearchOptions { num_trials: n, ..Default::default() };
-    let job = eng.assembly_search(AssemblyInput::Molecules(vec![(monomer("water"), 6)]), MmffBuilder::default(), opts);
+    let opts = AssemblySearchOptions {
+        num_trials: n,
+        ..Default::default()
+    };
+    let job = eng.assembly_search(
+        AssemblyInput::Molecules(vec![(monomer("water"), 6)]),
+        MmffBuilder::default(),
+        opts,
+    );
     let t0 = std::time::Instant::now();
     while job.snapshot().data.completed < 3 && t0.elapsed() < Duration::from_secs(60) {
         std::thread::sleep(Duration::from_millis(5));
@@ -283,10 +408,21 @@ fn cancellation_returns_completed_trials() {
 
 #[test]
 fn snapshot_shows_trials_lambda_and_found_structures() {
-    let eng = Engine::new(EngineConfig { num_threads: Some(2), publish_interval: Duration::ZERO }).unwrap();
-    let opts = AssemblySearchOptions { num_trials: 16, ..Default::default() };
+    let eng = Engine::new(EngineConfig {
+        num_threads: Some(2),
+        publish_interval: Duration::ZERO,
+    })
+    .unwrap();
+    let opts = AssemblySearchOptions {
+        num_trials: 16,
+        ..Default::default()
+    };
     let schedule = opts.lambda_schedule.clone();
-    let job = eng.assembly_search(AssemblyInput::Molecules(vec![(monomer("water"), 6)]), MmffBuilder::default(), opts);
+    let job = eng.assembly_search(
+        AssemblyInput::Molecules(vec![(monomer("water"), 6)]),
+        MmffBuilder::default(),
+        opts,
+    );
     let (mut saw_lambda, mut saw_final, mut saw_found) = (false, false, false);
     let t0 = std::time::Instant::now();
     while !job.is_finished() && t0.elapsed() < Duration::from_secs(60) {
@@ -317,23 +453,47 @@ fn snapshot_shows_trials_lambda_and_found_structures() {
     let r = job.wait_blocking().unwrap();
     // The job can finish between two snapshot requests, so individual stages
     // may be missed; at least one in-progress or found state must be seen.
-    assert!(saw_lambda || saw_final || saw_found, "{saw_lambda} {saw_final} {saw_found}");
+    assert!(
+        saw_lambda || saw_final || saw_found,
+        "{saw_lambda} {saw_final} {saw_found}"
+    );
     assert_eq!(last.data.completed, 16);
     assert!(last.data.in_flight.is_empty());
-    assert_eq!(last.data.best().unwrap().energy, r.global_minimum().unwrap().energy);
+    assert_eq!(
+        last.data.best().unwrap().energy,
+        r.global_minimum().unwrap().energy
+    );
 }
 
 #[test]
 fn complex_input_and_identical_fragments() {
     // a single two-fragment molecule (the stored water dimer)
-    let mol = io::read_file(data("water_dimer_found.sdf")).unwrap().remove(0);
-    let opts = AssemblySearchOptions { num_trials: 8, ..Default::default() };
-    let r = assembly_search(&AssemblyInput::Complex(mol.clone()), &MmffBuilder::default(), &opts).unwrap();
+    let mol = io::read_file(data("water_dimer_found.sdf"))
+        .unwrap()
+        .remove(0);
+    let opts = AssemblySearchOptions {
+        num_trials: 8,
+        ..Default::default()
+    };
+    let r = assembly_search(
+        &AssemblyInput::Complex(mol.clone()),
+        &MmffBuilder::default(),
+        &opts,
+    )
+    .unwrap();
     assert_eq!(r.monomers.len(), 1);
-    assert_eq!(r.copies.iter().map(|c| c.atoms.clone()).collect::<Vec<_>>(), vec![vec![0, 1, 2], vec![3, 4, 5]]);
+    assert_eq!(
+        r.copies.iter().map(|c| c.atoms.clone()).collect::<Vec<_>>(),
+        vec![vec![0, 1, 2], vec![3, 4, 5]]
+    );
     let best = r.global_minimum().unwrap();
     let rf = read_ref("water_dimer");
-    assert!((best.energy - rf.e1).abs() < 1e-4, "{} vs {}", best.energy, rf.e1);
+    assert!(
+        (best.energy - rf.e1).abs() < 1e-4,
+        "{} vs {}",
+        best.energy,
+        rf.e1
+    );
     // swapping the two molecules gives RMSD 0 with permutations
     let swapped: Vec<V3> = [3, 4, 5, 0, 1, 2].iter().map(|&i| best.coords[i]).collect();
     assert!(r.rmsd(&best.coords, &swapped, true) < 1e-6);
@@ -349,7 +509,10 @@ fn hetero_assembly_and_etkdg_monomers() {
     params.random_seed = 42;
     let opts = AssemblySearchOptions {
         num_trials: 12,
-        monomer_conformers: MonomerConformers::Etkdg { params, num_conformers: 4 },
+        monomer_conformers: MonomerConformers::Etkdg {
+            params,
+            num_conformers: 4,
+        },
         ..Default::default()
     };
     let input = AssemblyInput::Molecules(vec![(monomer("acetic_acid"), 1), (monomer("water"), 1)]);
@@ -367,15 +530,21 @@ fn hetero_assembly_and_etkdg_monomers() {
 #[test]
 fn uff_assembly_search_runs() {
     let input = AssemblyInput::Molecules(vec![(monomer("benzene"), 2)]);
-    let opts = AssemblySearchOptions { num_trials: 6, ..Default::default() };
+    let opts = AssemblySearchOptions {
+        num_trials: 6,
+        ..Default::default()
+    };
     let r = assembly_search(&input, &UffBuilder::default(), &opts).unwrap();
     let best = r.global_minimum().unwrap();
     assert!(best.binding_energy < -1.0, "{}", best.binding_energy);
     let mut m = combine_molecules(&[(monomer("benzene"), 2)]);
     m.coords = best.coords.clone();
-    let e = UffBuilder { ignore_interfrag_interactions: false, ..Default::default() }
-        .build(&m, &[])
-        .unwrap()
-        .energy(&m.flat_coords());
+    let e = UffBuilder {
+        ignore_interfrag_interactions: false,
+        ..Default::default()
+    }
+    .build(&m, &[])
+    .unwrap()
+    .energy(&m.flat_coords());
     assert!((e - best.energy).abs() < 1e-9);
 }

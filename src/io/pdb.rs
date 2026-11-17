@@ -50,7 +50,10 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
     let mut conects: Vec<(i32, i32)> = Vec::new();
     let mut name = String::new();
     let mut cell: Option<UnitCell> = None;
-    let finish =|mol: &mut Molecule, smap: &HashMap<i32, usize>, conects: &[(i32, i32)]| -> Result<Molecule> {
+    let finish = |mol: &mut Molecule,
+                  smap: &HashMap<i32, usize>,
+                  conects: &[(i32, i32)]|
+     -> Result<Molecule> {
         let mut m = std::mem::take(mol);
         for &(a, b) in conects {
             if let (Some(&i), Some(&j)) = (smap.get(&a), smap.get(&b)) {
@@ -80,10 +83,14 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
                     continue;
                 }
                 let atom_name = col(line, 12, 16).trim().to_string();
-                let z = element_from(line, &atom_name, het)
-                    .ok_or_else(|| Error::parse(ln + 1, format!("can't determine element for '{atom_name}'")))?;
+                let z = element_from(line, &atom_name, het).ok_or_else(|| {
+                    Error::parse(ln + 1, format!("can't determine element for '{atom_name}'"))
+                })?;
                 let p = |a, b| -> Result<f64> {
-                    col(line, a, b).trim().parse::<f64>().map_err(|_| Error::parse(ln + 1, "bad coordinate"))
+                    col(line, a, b)
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| Error::parse(ln + 1, "bad coordinate"))
                 };
                 let pos = [p(30, 38)?, p(38, 46)?, p(46, 54)?];
                 let mut atom = Atom::new(z);
@@ -94,7 +101,10 @@ pub fn read_pdb_models(text: &str) -> Result<Vec<Molecule>> {
                         atom.formal_charge = if s == "-" { -v } else { v };
                     }
                 }
-                let serial: i32 = col(line, 6, 11).trim().parse().unwrap_or(cur.num_atoms() as i32 + 1);
+                let serial: i32 = col(line, 6, 11)
+                    .trim()
+                    .parse()
+                    .unwrap_or(cur.num_atoms() as i32 + 1);
                 atom.residue = Some(ResidueInfo {
                     atom_name,
                     residue_name: col(line, 17, 20).trim().to_string(),
@@ -174,9 +184,19 @@ pub fn write_pdb_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
                 r.residue_number,
                 r.chain_id,
             ),
-            None => ("HETATM", format!("{}{}", a.symbol(), serial), "UNL".to_string(), 1, ' '),
+            None => (
+                "HETATM",
+                format!("{}{}", a.symbol(), serial),
+                "UNL".to_string(),
+                1,
+                ' ',
+            ),
         };
-        let name_fmt = if name.len() < 4 && a.symbol().len() == 1 { format!(" {:<3}", name) } else { format!("{:<4}", name) };
+        let name_fmt = if name.len() < 4 && a.symbol().len() == 1 {
+            format!(" {:<3}", name)
+        } else {
+            format!("{:<4}", name)
+        };
         let chg = match a.formal_charge {
             0 => "  ".to_string(),
             c if c > 0 => format!("{}+", c),
@@ -219,18 +239,31 @@ pub fn write_pdb_coords(mol: &Molecule, coords: &[[f64; 3]]) -> String {
 /// non-periodic structures.
 fn parse_cryst1(line: &str) -> std::result::Result<Option<UnitCell>, String> {
     let f = |a: usize, b: usize, what: &str| -> std::result::Result<f64, String> {
-        col(line, a, b).trim().parse::<f64>().map_err(|_| format!("bad CRYST1 {what}"))
+        col(line, a, b)
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("bad CRYST1 {what}"))
     };
     let (a, b, c) = (f(6, 15, "a")?, f(15, 24, "b")?, f(24, 33, "c")?);
     let angle = |a: usize, b: usize, what: &str| -> std::result::Result<f64, String> {
         // angles default to 90 degrees when the columns are blank
-        if col(line, a, b).trim().is_empty() { Ok(90.0) } else { f(a, b, what) }
+        if col(line, a, b).trim().is_empty() {
+            Ok(90.0)
+        } else {
+            f(a, b, what)
+        }
     };
-    let (al, be, ga) = (angle(33, 40, "alpha")?, angle(40, 47, "beta")?, angle(47, 54, "gamma")?);
+    let (al, be, ga) = (
+        angle(33, 40, "alpha")?,
+        angle(40, 47, "beta")?,
+        angle(47, 54, "gamma")?,
+    );
     if a == 1.0 && b == 1.0 && c == 1.0 {
         return Ok(None);
     }
-    UnitCell::from_parameters(a, b, c, al, be, ga).map(Some).map_err(|e| e.to_string())
+    UnitCell::from_parameters(a, b, c, al, be, ga)
+        .map(Some)
+        .map_err(|e| e.to_string())
 }
 
 /// `CRYST1` record (space group `P 1`) for a cell. The cell is written by
@@ -251,7 +284,10 @@ mod tests {
     fn cryst1_round_trip() {
         let cell = UnitCell::from_parameters(18.65, 20.0, 22.5, 90.0, 95.5, 90.0).unwrap();
         let rec = cryst1_record(&cell);
-        assert!(rec.starts_with("CRYST1   18.650   20.000   22.500  90.00  95.50  90.00 P 1"), "{rec}");
+        assert!(
+            rec.starts_with("CRYST1   18.650   20.000   22.500  90.00  95.50  90.00 P 1"),
+            "{rec}"
+        );
         let mut m = Molecule::new();
         m.add_atom(Atom::new(8), [1.0, 2.0, 3.0]);
         m.cell = Some(cell);

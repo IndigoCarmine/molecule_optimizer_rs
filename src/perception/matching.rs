@@ -65,7 +65,13 @@ pub fn max_matching(adj: &[Vec<usize>]) -> Vec<usize> {
                     let curbase = lca(&mate, &base, &p, v, to);
                     blossom.iter_mut().for_each(|x| *x = false);
                     // mark path
-                    let mark = |mut vv: usize, b: usize, mut child: usize, p: &mut Vec<usize>, blossom: &mut Vec<bool>, base: &Vec<usize>, mate: &Vec<usize>| {
+                    let mark = |mut vv: usize,
+                                b: usize,
+                                mut child: usize,
+                                p: &mut Vec<usize>,
+                                blossom: &mut Vec<bool>,
+                                base: &Vec<usize>,
+                                mate: &Vec<usize>| {
                         while base[vv] != b {
                             blossom[base[vv]] = true;
                             blossom[base[mate[vv]]] = true;

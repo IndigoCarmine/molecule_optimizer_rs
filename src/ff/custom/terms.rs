@@ -99,7 +99,8 @@ impl CustomExternal {
     }
     /// Applies the field to every atom in `atoms` with the same values.
     pub fn atoms(mut self, atoms: impl IntoIterator<Item = usize>, values: &[f64]) -> Self {
-        self.atoms.extend(atoms.into_iter().map(|i| (i, values.to_vec())));
+        self.atoms
+            .extend(atoms.into_iter().map(|i| (i, values.to_vec())));
         self
     }
 }
@@ -209,7 +210,10 @@ impl CustomNonbonded {
         self
     }
     pub fn cutoff(mut self, cutoff: f64, switch_from: Option<f64>) -> Self {
-        self.cutoff = Some(Cutoff { cutoff, switch_from });
+        self.cutoff = Some(Cutoff {
+            cutoff,
+            switch_from,
+        });
         self
     }
     pub fn exclude_within_bonds(mut self, n: usize) -> Self {
@@ -284,25 +288,47 @@ fn strs(v: &[String]) -> Vec<&str> {
 
 impl PreparedTerm {
     /// Parses and compiles the expressions of `spec` against `globals`.
-    pub fn new(spec: CustomTerm, globals: &Globals) -> std::result::Result<PreparedTerm, ExprError> {
+    pub fn new(
+        spec: CustomTerm,
+        globals: &Globals,
+    ) -> std::result::Result<PreparedTerm, ExprError> {
         let label = intern_label(spec.name());
         let (kernel, combine, n_combined) = match &spec {
-            CustomTerm::Bond(t) => (Kernel::compile(&t.expr, &["r"], &strs(&t.params), globals)?, None, 0),
-            CustomTerm::Angle(t) => (Kernel::compile(&t.expr, &["theta"], &strs(&t.params), globals)?, None, 0),
-            CustomTerm::Torsion(t) => (Kernel::compile(&t.expr, &["phi"], &strs(&t.params), globals)?, None, 0),
-            CustomTerm::External(t) => {
-                (Kernel::compile(&t.expr, &["x", "y", "z"], &strs(&t.params), globals)?, None, 0)
-            }
+            CustomTerm::Bond(t) => (
+                Kernel::compile(&t.expr, &["r"], &strs(&t.params), globals)?,
+                None,
+                0,
+            ),
+            CustomTerm::Angle(t) => (
+                Kernel::compile(&t.expr, &["theta"], &strs(&t.params), globals)?,
+                None,
+                0,
+            ),
+            CustomTerm::Torsion(t) => (
+                Kernel::compile(&t.expr, &["phi"], &strs(&t.params), globals)?,
+                None,
+                0,
+            ),
+            CustomTerm::External(t) => (
+                Kernel::compile(&t.expr, &["x", "y", "z"], &strs(&t.params), globals)?,
+                None,
+                0,
+            ),
             CustomTerm::Nonbonded(t) => {
-                let mut atom_vars: Vec<String> = t.per_atom_params.iter().map(|p| format!("{p}1")).collect();
+                let mut atom_vars: Vec<String> =
+                    t.per_atom_params.iter().map(|p| format!("{p}1")).collect();
                 atom_vars.extend(t.per_atom_params.iter().map(|p| format!("{p}2")));
                 let rules = parse::parse_definitions(&t.combining)?;
-                let combined: Vec<String> =
-                    rules.statements.iter().map(|s| s.name.as_ref().unwrap().0.clone()).collect();
+                let combined: Vec<String> = rules
+                    .statements
+                    .iter()
+                    .map(|s| s.name.as_ref().unwrap().0.clone())
+                    .collect();
                 let mut g = Graph::new();
                 let mut roots = Vec::new();
                 for k in 0..rules.statements.len() {
-                    let mut lookup = |n: &str| atom_vars.iter().position(|v| v == n).map(|i| i as u32);
+                    let mut lookup =
+                        |n: &str| atom_vars.iter().position(|v| v == n).map(|i| i as u32);
                     roots.push(lower_statement(&rules, k, &mut g, &mut lookup)?);
                 }
                 let combine = Program::compile(&g, &roots, atom_vars.len());
@@ -312,7 +338,13 @@ impl PreparedTerm {
                 (kernel, Some(combine), combined.len())
             }
         };
-        Ok(PreparedTerm { spec, kernel: Arc::new(kernel), combine, n_combined, label })
+        Ok(PreparedTerm {
+            spec,
+            kernel: Arc::new(kernel),
+            combine,
+            n_combined,
+            label,
+        })
     }
 
     pub fn label(&self) -> &'static str {
@@ -343,38 +375,55 @@ impl PreparedTerm {
             }
             Ok(())
         };
-        let bonded = |kind: BondedKind, terms: Vec<(&[usize], &[f64])>| -> Result<Box<dyn Contrib>> {
-            let mut atoms = Vec::with_capacity(terms.len() * kind.arity());
-            let mut hoisted = vec![0.0; terms.len() * nh];
-            for (t, (a, v)) in terms.iter().enumerate() {
-                check_atoms(a)?;
-                check_values(v)?;
-                atoms.extend_from_slice(a);
-                k.hoist(v, &mut hoisted[t * nh..(t + 1) * nh]);
-            }
-            Ok(Box::new(CustomBondedContrib {
-                label: self.label,
-                kind,
-                kernel: k.clone(),
-                globals: globals.clone(),
-                atoms,
-                hoisted,
-            }))
-        };
+        let bonded =
+            |kind: BondedKind, terms: Vec<(&[usize], &[f64])>| -> Result<Box<dyn Contrib>> {
+                let mut atoms = Vec::with_capacity(terms.len() * kind.arity());
+                let mut hoisted = vec![0.0; terms.len() * nh];
+                for (t, (a, v)) in terms.iter().enumerate() {
+                    check_atoms(a)?;
+                    check_values(v)?;
+                    atoms.extend_from_slice(a);
+                    k.hoist(v, &mut hoisted[t * nh..(t + 1) * nh]);
+                }
+                Ok(Box::new(CustomBondedContrib {
+                    label: self.label,
+                    kind,
+                    kernel: k.clone(),
+                    globals: globals.clone(),
+                    atoms,
+                    hoisted,
+                }))
+            };
         match &self.spec {
-            CustomTerm::Bond(t) => bonded(BondedKind::Bond, t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect()),
-            CustomTerm::Angle(t) => bonded(BondedKind::Angle, t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect()),
-            CustomTerm::Torsion(t) => {
-                bonded(BondedKind::Torsion, t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect())
-            }
-            CustomTerm::External(t) => {
-                bonded(BondedKind::External, t.atoms.iter().map(|(a, v)| (std::slice::from_ref(a), &v[..])).collect())
-            }
+            CustomTerm::Bond(t) => bonded(
+                BondedKind::Bond,
+                t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect(),
+            ),
+            CustomTerm::Angle(t) => bonded(
+                BondedKind::Angle,
+                t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect(),
+            ),
+            CustomTerm::Torsion(t) => bonded(
+                BondedKind::Torsion,
+                t.terms.iter().map(|(a, v)| (&a[..], &v[..])).collect(),
+            ),
+            CustomTerm::External(t) => bonded(
+                BondedKind::External,
+                t.atoms
+                    .iter()
+                    .map(|(a, v)| (std::slice::from_ref(a), &v[..]))
+                    .collect(),
+            ),
             CustomTerm::Nonbonded(t) => self.nonbonded_contrib(t, mol, globals),
         }
     }
 
-    fn nonbonded_contrib(&self, t: &CustomNonbonded, mol: &Molecule, globals: &Globals) -> Result<Box<dyn Contrib>> {
+    fn nonbonded_contrib(
+        &self,
+        t: &CustomNonbonded,
+        mol: &Molecule,
+        globals: &Globals,
+    ) -> Result<Box<dyn Contrib>> {
         let n = mol.num_atoms();
         let name = &t.name;
         let npa = t.per_atom_params.len();
@@ -384,13 +433,17 @@ impl PreparedTerm {
         for a in 0..n {
             let row: Vec<f64> = match &t.atom_params {
                 AtomParams::Uniform(v) => v.clone(),
-                AtomParams::Table(tab) => {
-                    tab.get(a).cloned().ok_or_else(|| bad(format!("no parameters for atom {a}")))?
-                }
+                AtomParams::Table(tab) => tab
+                    .get(a)
+                    .cloned()
+                    .ok_or_else(|| bad(format!("no parameters for atom {a}")))?,
                 AtomParams::Function(f) => f(mol, a),
             };
             if row.len() != npa {
-                return Err(bad(format!("atom {a} has {} parameter values, {npa} expected", row.len())));
+                return Err(bad(format!(
+                    "atom {a} has {} parameter values, {npa} expected",
+                    row.len()
+                )));
             }
             atom_vals[a * npa..(a + 1) * npa].copy_from_slice(&row);
         }
@@ -459,7 +512,9 @@ impl PreparedTerm {
             }
         };
         match &t.groups {
-            InteractionGroups::All => (0..n).for_each(|i| (i + 1..n).for_each(|j| push(i, j, &mut pairs))),
+            InteractionGroups::All => {
+                (0..n).for_each(|i| (i + 1..n).for_each(|j| push(i, j, &mut pairs)))
+            }
             InteractionGroups::InterFragment | InteractionGroups::IntraFragment => {
                 let f = frag();
                 let inter = t.groups == InteractionGroups::InterFragment;
@@ -491,7 +546,10 @@ impl PreparedTerm {
         let mut overrides = std::collections::HashMap::new();
         for ((i, j), v) in &t.pair_overrides {
             if self.n_combined == 0 {
-                return Err(bad("pair overrides require combining rules (they set the combined parameters)".into()));
+                return Err(bad(
+                    "pair overrides require combining rules (they set the combined parameters)"
+                        .into(),
+                ));
             }
             if v.len() != self.n_combined {
                 return Err(bad(format!(
@@ -602,7 +660,13 @@ fn angle_geom(pos: &[f64], i: usize, j: usize, k: usize) -> AngleGeom {
     let l0 = dot(r0, r0).max(1e-5);
     let l1 = dot(r1, r1).max(1e-5);
     let c = (dot(r0, r1) / (l0 * l1).sqrt()).clamp(-1.0, 1.0);
-    AngleGeom { r0, r1, l0, l1, theta: c.acos() }
+    AngleGeom {
+        r0,
+        r1,
+        l0,
+        l1,
+        theta: c.acos(),
+    }
 }
 
 impl CustomBondedContrib {
@@ -654,8 +718,11 @@ impl Contrib for CustomBondedContrib {
         let prog = &self.kernel.eg;
         let ar = self.kind.arity();
         let o1 = prog.output_reg(1);
-        let (o2, o3) =
-            if self.kind == BondedKind::External { (prog.output_reg(2), prog.output_reg(3)) } else { (0, 0) };
+        let (o2, o3) = if self.kind == BondedKind::External {
+            (prog.output_reg(2), prog.output_reg(3))
+        } else {
+            (0, 0)
+        };
         self.each(pos, prog, |t, r| {
             let a = &self.atoms[t * ar..(t + 1) * ar];
             let de = r[o1];
@@ -702,7 +769,9 @@ impl CustomContrib for CustomBondedContrib {
         &self.globals
     }
     fn param_derivative(&self, name: &str, pos: &[f64]) -> f64 {
-        let Some(s) = self.kernel.global_local_index(name) else { return 0.0 };
+        let Some(s) = self.kernel.global_local_index(name) else {
+            return 0.0;
+        };
         let prog = &self.kernel.dglobal;
         let o = prog.output_reg(s);
         let mut d = 0.0;
@@ -760,7 +829,13 @@ impl CustomNonbondedContrib {
 
     /// Evaluates pairs `range`; returns the energy (or the parameter
     /// derivative) and adds the gradient in `Mode::Grad`.
-    fn eval_range(&self, pos: &[f64], range: std::ops::Range<usize>, mode: Mode, mut grad: Option<&mut [f64]>) -> f64 {
+    fn eval_range(
+        &self,
+        pos: &[f64],
+        range: std::ops::Range<usize>,
+        mode: Mode,
+        mut grad: Option<&mut [f64]>,
+    ) -> f64 {
         let k = &self.kernel;
         let prog = match mode {
             Mode::Energy => &k.e,
@@ -771,7 +846,11 @@ impl CustomNonbondedContrib {
             Mode::Param(s) => s,
             _ => 0,
         });
-        let out1 = if mode == Mode::Grad { prog.output_reg(1) } else { out0 };
+        let out1 = if mode == Mode::Grad {
+            prog.output_reg(1)
+        } else {
+            out0
+        };
         let nh = k.n_hoisted();
         let hoff = k.hoist_offset();
         let mut regs = prog.init_lanes::<LANES>();
@@ -841,7 +920,14 @@ impl CustomNonbondedContrib {
         }
         (0..np.div_ceil(PAR_CHUNK))
             .into_par_iter()
-            .map(|c| self.eval_range(pos, c * PAR_CHUNK..((c + 1) * PAR_CHUNK).min(np), mode, None))
+            .map(|c| {
+                self.eval_range(
+                    pos,
+                    c * PAR_CHUNK..((c + 1) * PAR_CHUNK).min(np),
+                    mode,
+                    None,
+                )
+            })
             .sum()
     }
 }
@@ -862,7 +948,12 @@ impl Contrib for CustomNonbondedContrib {
             .fold(
                 || vec![0.0; n],
                 |mut g, c| {
-                    self.eval_range(pos, c * PAR_CHUNK..((c + 1) * PAR_CHUNK).min(np), Mode::Grad, Some(&mut g));
+                    self.eval_range(
+                        pos,
+                        c * PAR_CHUNK..((c + 1) * PAR_CHUNK).min(np),
+                        Mode::Grad,
+                        Some(&mut g),
+                    );
                     g
                 },
             )

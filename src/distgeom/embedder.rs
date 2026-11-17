@@ -14,7 +14,9 @@ use super::EmbedParams;
 use super::bounds::BoundsMatrix;
 use super::bounds_builder::{TopolOptions, collect_bonds_and_angles, set_topol_bounds};
 use super::contribs::calc_chiral_volume;
-use super::dg_utils::{SymmMatrix, compute_initial_coords, compute_random_coords, pick_random_dist_mat};
+use super::dg_utils::{
+    SymmMatrix, compute_initial_coords, compute_random_coords, pick_random_dist_mat,
+};
 use super::force_fields::*;
 use super::point::{P3, compute_dihedral_angle};
 use super::rng::{DoubleSource, unseeded_source};
@@ -49,7 +51,11 @@ pub struct FragmentSetup {
 
 /// Builds the fragment molecules (RDKit `getMolFrags`).
 pub(crate) fn split_fragments(mol: &Molecule, separately: bool) -> Vec<(Vec<usize>, Molecule)> {
-    let mut frags = if separately { mol.fragments() } else { vec![(0..mol.num_atoms()).collect()] };
+    let mut frags = if separately {
+        mol.fragments()
+    } else {
+        vec![(0..mol.num_atoms()).collect()]
+    };
     for f in frags.iter_mut() {
         f.sort_unstable();
     }
@@ -85,7 +91,10 @@ pub(crate) fn split_fragments(mol: &Molecule, separately: bool) -> Vec<(Vec<usiz
 
 /// RDKit `findChiralSets` (no coordMap, no atropisomers).
 pub fn find_chiral_sets(mol: &Molecule) -> (Vec<ChiralSet>, Vec<ChiralSet>) {
-    let ri = mol.ring_info().cloned().unwrap_or_else(|| crate::perception::rings::RingInfo::compute(mol));
+    let ri = mol
+        .ring_info()
+        .cloned()
+        .unwrap_or_else(|| crate::perception::rings::RingInfo::compute(mol));
     let mut chiral = Vec::new();
     let mut tetra = Vec::new();
     for (i, atom) in mol.atoms().iter().enumerate() {
@@ -93,7 +102,9 @@ pub fn find_chiral_sets(mol: &Molecule) -> (Vec<ChiralSet>, Vec<ChiralSet>) {
             continue;
         }
         let tag = atom.chiral_tag;
-        if !(tag != ChiralTag::Unspecified || ((atom.atomic_num == 6 || atom.atomic_num == 7) && mol.degree(i) == 4)) {
+        if !(tag != ChiralTag::Unspecified
+            || ((atom.atomic_num == 6 || atom.atomic_num == 7) && mol.degree(i) == 4))
+        {
             continue;
         }
         let mut nbrs: Vec<usize> = mol.neighbors(i).collect();
@@ -105,17 +116,39 @@ pub fn find_chiral_sets(mol: &Molecule) -> (Vec<ChiralSet>, Vec<ChiralSet>) {
             lo = 2.0;
             nbrs.push(i);
         }
-        let n_small = ri.atom_ring_ids(i).iter().filter(|&&r| ri.atom_rings[r].len() < 5).count();
+        let n_small = ri
+            .atom_ring_ids(i)
+            .iter()
+            .filter(|&&r| ri.atom_rings[r].len() < 5)
+            .count();
         let fused = n_small > 1;
         let idx = [nbrs[0], nbrs[1], nbrs[2], nbrs[3]];
         match tag {
-            ChiralTag::Ccw => chiral.push(ChiralSet { idx0: i, idx, lower: lo, upper: hi, in_fused_small_rings: fused }),
-            ChiralTag::Cw => chiral.push(ChiralSet { idx0: i, idx, lower: -hi, upper: -lo, in_fused_small_rings: fused }),
+            ChiralTag::Ccw => chiral.push(ChiralSet {
+                idx0: i,
+                idx,
+                lower: lo,
+                upper: hi,
+                in_fused_small_rings: fused,
+            }),
+            ChiralTag::Cw => chiral.push(ChiralSet {
+                idx0: i,
+                idx,
+                lower: -hi,
+                upper: -lo,
+                in_fused_small_rings: fused,
+            }),
             ChiralTag::Unspecified => {
                 if ri.num_atom_rings(i) < 2 || ri.is_atom_in_ring_of_size(i, 3) {
                     continue;
                 }
-                tetra.push(ChiralSet { idx0: i, idx, lower: 0.0, upper: 0.0, in_fused_small_rings: fused });
+                tetra.push(ChiralSet {
+                    idx0: i,
+                    idx,
+                    lower: 0.0,
+                    upper: 0.0,
+                    in_fused_small_rings: fused,
+                });
             }
         }
     }
@@ -168,7 +201,10 @@ fn topol_opts(p: &EmbedParams, set15: bool) -> TopolOptions {
 
 /// RDKit `setupInitialBoundsMatrix` (without coordMap). Returns bounds and
 /// the 1-4 path configurations.
-pub fn setup_bounds(mol: &Molecule, p: &EmbedParams) -> Result<(BoundsMatrix, Vec<super::bounds_builder::Path14>)> {
+pub fn setup_bounds(
+    mol: &Molecule,
+    p: &EmbedParams,
+) -> Result<(BoundsMatrix, Vec<super::bounds_builder::Path14>)> {
     let n = mol.num_atoms();
     let mut mmat = BoundsMatrix::new_initialized(n);
     let paths = set_topol_bounds(mol, &mut mmat, &topol_opts(p, true));
@@ -180,7 +216,9 @@ pub fn setup_bounds(mol: &Molecule, p: &EmbedParams) -> Result<(BoundsMatrix, Ve
                 mmat = BoundsMatrix::new_initialized(n);
                 set_topol_bounds(mol, &mut mmat, &topol_opts(p, false));
             } else {
-                return Err(Error::Embedding("could not triangle bounds smooth molecule".into()));
+                return Err(Error::Embedding(
+                    "could not triangle bounds smooth molecule".into(),
+                ));
             }
         }
     }
@@ -216,7 +254,17 @@ pub fn setup_fragment(atoms: Vec<usize>, mol: Molecule, p: &EmbedParams) -> Resu
     let (chiral_centers, tetrahedral_centers) = find_chiral_sets(&mol);
     let (double_bond_ends, stereo_double_bonds) = find_double_bonds(&mol);
     let four_d = p.use_random_coords || !chiral_centers.is_empty();
-    Ok(FragmentSetup { atoms, mol, bounds, chiral_centers, tetrahedral_centers, double_bond_ends, stereo_double_bonds, details, four_d })
+    Ok(FragmentSetup {
+        atoms,
+        mol,
+        bounds,
+        chiral_centers,
+        tetrahedral_centers,
+        double_bond_ends,
+        stereo_double_bonds,
+        details,
+        four_d,
+    })
 }
 
 // ------------------------------------------------------------------ checks
@@ -265,9 +313,9 @@ fn center_in_volume(cs: &ChiralSet, pos: &[f64], dim: usize, tol: f64) -> bool {
 }
 
 fn check_tetrahedral_centers(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
-    f.tetrahedral_centers
-        .iter()
-        .all(|t| volume_test(t, pos, dim) && center_in_volume(t, pos, dim, TETRAHEDRAL_CENTERINVOLUME_TOL))
+    f.tetrahedral_centers.iter().all(|t| {
+        volume_test(t, pos, dim) && center_in_volume(t, pos, dim, TETRAHEDRAL_CENTERINVOLUME_TOL)
+    })
 }
 
 fn check_chiral_centers(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
@@ -275,7 +323,9 @@ fn check_chiral_centers(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
     for cs in &f.chiral_centers {
         let vol = calc_chiral_volume(cs.idx[0], cs.idx[1], cs.idx[2], cs.idx[3], pos, dim);
         let (lb, ub) = (cs.lower, cs.upper);
-        if (lb > 0.0 && vol < lb && (vol / lb < 0.8 || opp(vol, lb))) || (ub < 0.0 && vol > ub && (vol / ub < 0.8 || opp(vol, ub))) {
+        if (lb > 0.0 && vol < lb && (vol / lb < 0.8 || opp(vol, lb)))
+            || (ub < 0.0 && vol > ub && (vol / ub < 0.8 || opp(vol, ub)))
+        {
             return false;
         }
     }
@@ -312,7 +362,9 @@ fn final_chiral_checks(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
     if !atoms.is_empty() && !bounds_fulfilled(&atoms, &f.bounds, pos, dim) {
         return false;
     }
-    f.chiral_centers.iter().all(|cs| center_in_volume(cs, pos, dim, 0.1))
+    f.chiral_centers
+        .iter()
+        .all(|cs| center_in_volume(cs, pos, dim, 0.1))
 }
 
 fn double_bond_geometry_checks(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
@@ -332,7 +384,12 @@ fn double_bond_geometry_checks(f: &FragmentSetup, pos: &[f64], dim: usize) -> bo
 
 fn double_bond_stereo_checks(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool {
     for (a, sign) in &f.stereo_double_bonds {
-        let d = compute_dihedral_angle(pt(pos, a[0], dim), pt(pos, a[1], dim), pt(pos, a[2], dim), pt(pos, a[3], dim));
+        let d = compute_dihedral_angle(
+            pt(pos, a[0], dim),
+            pt(pos, a[1], dim),
+            pt(pos, a[2], dim),
+            pt(pos, a[3], dim),
+        );
         if (d - std::f64::consts::FRAC_PI_2) * (*sign as f64) < 0.0 {
             return false;
         }
@@ -343,11 +400,21 @@ fn double_bond_stereo_checks(f: &FragmentSetup, pos: &[f64], dim: usize) -> bool
 // ------------------------------------------------------------------ minimization
 
 /// RDKit `ForceField::minimize(maxIts, forceTol)`; returns `needMore`.
-fn ff_minimize(ff: &ContribForceField, pos: &mut [f64], max_its: usize, tol: f64, obs: &mut dyn Observer) -> Result<bool> {
+fn ff_minimize(
+    ff: &ContribForceField,
+    pos: &mut [f64],
+    max_its: usize,
+    tol: f64,
+    obs: &mut dyn Observer,
+) -> Result<bool> {
     if ff.num_contribs() == 0 {
         return Ok(false);
     }
-    let opts = MinimizeOptions { max_iters: max_its, force_tol: tol, ..Default::default() };
+    let opts = MinimizeOptions {
+        max_iters: max_its,
+        force_tol: tol,
+        ..Default::default()
+    };
     let r = minimize_bfgs_impl(ff, pos, &opts, false, obs);
     match r.status {
         MinimizeStatus::Cancelled => Err(Error::Cancelled),
@@ -356,9 +423,24 @@ fn ff_minimize(ff: &ContribForceField, pos: &mut [f64], max_its: usize, tol: f64
     }
 }
 
-fn first_minimization(f: &FragmentSetup, pos: &mut [f64], dim: usize, p: &EmbedParams, basin: f64, obs: &mut dyn Observer) -> Result<bool> {
+fn first_minimization(
+    f: &FragmentSetup,
+    pos: &mut [f64],
+    dim: usize,
+    p: &EmbedParams,
+    basin: f64,
+    obs: &mut dyn Observer,
+) -> Result<bool> {
     let fc = &f.details.force_consts;
-    let ff = construct_force_field(&f.bounds, dim, &f.chiral_centers, fc.distance, fc.chiral, 0.1, basin);
+    let ff = construct_force_field(
+        &f.bounds,
+        dim,
+        &f.chiral_centers,
+        fc.distance,
+        fc.chiral,
+        0.1,
+        basin,
+    );
     if ff.energy(pos) > ERROR_TOL {
         while ff_minimize(&ff, pos, 400, p.optimizer_force_tol, obs)? {}
     }
@@ -366,18 +448,41 @@ fn first_minimization(f: &FragmentSetup, pos: &mut [f64], dim: usize, p: &EmbedP
     Ok(e / (f.mol.num_atoms() as f64) < MAX_MINIMIZED_E_PER_ATOM)
 }
 
-fn minimize_fourth_dimension(f: &FragmentSetup, pos: &mut [f64], dim: usize, p: &EmbedParams, basin: f64, obs: &mut dyn Observer) -> Result<bool> {
+fn minimize_fourth_dimension(
+    f: &FragmentSetup,
+    pos: &mut [f64],
+    dim: usize,
+    p: &EmbedParams,
+    basin: f64,
+    obs: &mut dyn Observer,
+) -> Result<bool> {
     let fc = &f.details.force_consts;
-    let ff = construct_force_field(&f.bounds, dim, &f.chiral_centers, fc.distance, 0.2, fc.fourth_dim, basin);
+    let ff = construct_force_field(
+        &f.bounds,
+        dim,
+        &f.chiral_centers,
+        fc.distance,
+        0.2,
+        fc.fourth_dim,
+        basin,
+    );
     if ff.energy(pos) > ERROR_TOL {
         while ff_minimize(&ff, pos, 200, p.optimizer_force_tol, obs)? {}
     }
     Ok(true)
 }
 
-fn minimize_with_exp_torsions(f: &FragmentSetup, pos: &mut [f64], dim: usize, p: &EmbedParams, obs: &mut dyn Observer) -> Result<bool> {
+fn minimize_with_exp_torsions(
+    f: &FragmentSetup,
+    pos: &mut [f64],
+    dim: usize,
+    p: &EmbedParams,
+    obs: &mut dyn Observer,
+) -> Result<bool> {
     let n = f.mol.num_atoms();
-    let mut p3: Vec<f64> = (0..n).flat_map(|i| [pos[i * dim], pos[i * dim + 1], pos[i * dim + 2]]).collect();
+    let mut p3: Vec<f64> = (0..n)
+        .flat_map(|i| [pos[i * dim], pos[i * dim + 1], pos[i * dim + 2]])
+        .collect();
     let ff = if p.use_basic_knowledge {
         construct_3d_force_field(&f.bounds, &p3, &f.details)
     } else {
@@ -409,21 +514,50 @@ pub struct StopAfter {
 
 /// RDKit `embedPoints` for one fragment. Returns flat coordinates of
 /// dimension `dim` (3 or 4) on success.
-pub fn embed_points(f: &FragmentSetup, p: &EmbedParams, seed: i32, stop: StopAfter, obs: &mut dyn Observer) -> Result<Option<(Vec<f64>, usize)>> {
+pub fn embed_points(
+    f: &FragmentSetup,
+    p: &EmbedParams,
+    seed: i32,
+    stop: StopAfter,
+    obs: &mut dyn Observer,
+) -> Result<Option<(Vec<f64>, usize)>> {
     let n = f.mol.num_atoms();
     let dim = if f.four_d { 4 } else { 3 };
-    let max_iters = if p.max_iterations == 0 { 10 * n } else { p.max_iterations };
-    let basin = if p.use_random_coords { 1e8 } else { p.basin_thresh };
-    let mut rng = if seed > -1 { DoubleSource::new(seed as u32) } else { unseeded_source() };
+    let max_iters = if p.max_iterations == 0 {
+        10 * n
+    } else {
+        p.max_iterations
+    };
+    let basin = if p.use_random_coords {
+        1e8
+    } else {
+        p.basin_thresh
+    };
+    let mut rng = if seed > -1 {
+        DoubleSource::new(seed as u32)
+    } else {
+        unseeded_source()
+    };
     let mut pos = vec![0.0; n * dim];
     let mut dist_mat = SymmMatrix::new(n, 0.0);
     for _ in 0..max_iters {
         let got = if p.use_random_coords {
-            let bs = if p.box_size_mult > 0.0 { 5.0 * p.box_size_mult } else { -p.box_size_mult };
+            let bs = if p.box_size_mult > 0.0 {
+                5.0 * p.box_size_mult
+            } else {
+                -p.box_size_mult
+            };
             compute_random_coords(&mut pos, bs, &mut rng)
         } else {
             pick_random_dist_mat(&f.bounds, &mut dist_mat, &mut rng);
-            compute_initial_coords(&dist_mat, &mut pos, dim, &mut rng, p.rand_neg_eig, p.num_zero_fail)
+            compute_initial_coords(
+                &dist_mat,
+                &mut pos,
+                dim,
+                &mut rng,
+                p.rand_neg_eig,
+                p.num_zero_fail,
+            )
         };
         if !got {
             continue;

@@ -105,20 +105,35 @@ impl Default for MmffBuilder {
 impl MmffBuilder {
     /// Default settings for the given variant.
     pub fn new(variant: MmffVariant) -> Self {
-        MmffBuilder { variant, ..Default::default() }
+        MmffBuilder {
+            variant,
+            ..Default::default()
+        }
     }
 
     /// Builds the force field from precomputed molecule properties (which
     /// must have been computed for `mol` with `self.variant`).
-    pub fn build_with_properties(&self, mol: &Molecule, props: &MmffMolProperties, constraints: &[Constraint]) -> Result<ContribForceField> {
+    pub fn build_with_properties(
+        &self,
+        mol: &Molecule,
+        props: &MmffMolProperties,
+        constraints: &[Constraint],
+    ) -> Result<ContribForceField> {
         if !props.is_valid() {
-            return Err(Error::MissingParameters(format!("{}: missing MMFF atom types", self.variant.name())));
+            return Err(Error::MissingParameters(format!(
+                "{}: missing MMFF atom types",
+                self.variant.name()
+            )));
         }
         if props.atom_types().len() != mol.num_atoms() {
-            return Err(Error::InvalidArgument("MMFF properties do not belong to this molecule".into()));
+            return Err(Error::InvalidArgument(
+                "MMFF properties do not belong to this molecule".into(),
+            ));
         }
         if props.variant() != self.variant {
-            return Err(Error::InvalidArgument("MMFF properties were computed for another variant".into()));
+            return Err(Error::InvalidArgument(
+                "MMFF properties were computed for another variant".into(),
+            ));
         }
         let mut ff = ContribForceField::new(mol.num_atoms(), 3);
         builder::add_mmff_terms(&mut ff, props, &mol.coords, self);
@@ -140,7 +155,9 @@ impl ForceFieldBuilder for MmffBuilder {
 /// `true` if every atom of `mol` can be given an MMFF atom type (RDKit
 /// `MMFFHasAllMoleculeParams`).
 pub fn mmff_has_all_params(mol: &Molecule) -> bool {
-    MmffMolProperties::new(mol, MmffVariant::Mmff94).map(|p| p.is_valid()).unwrap_or(false)
+    MmffMolProperties::new(mol, MmffVariant::Mmff94)
+        .map(|p| p.is_valid())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

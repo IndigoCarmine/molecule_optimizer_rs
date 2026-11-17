@@ -87,7 +87,9 @@
 //! It is translation invariant and keeps an assembly together while the
 //! intermolecular interactions are weak.
 
-use super::mmff::{DielectricModel, MmffBuilder, MmffMolProperties, terms::calc_ele_energy, terms::calc_vdw_energy};
+use super::mmff::{
+    DielectricModel, MmffBuilder, MmffMolProperties, terms::calc_ele_energy, terms::calc_vdw_energy,
+};
 use super::uff::nonbonded::{calc_nonbonded_depth, calc_nonbonded_minimum};
 use super::uff::{UffBuilder, atom_typer};
 use super::{Constraint, Contrib, ContribForceField, ForceFieldBuilder};
@@ -132,7 +134,13 @@ pub struct SoftCoreParams {
 
 impl Default for SoftCoreParams {
     fn default() -> Self {
-        SoftCoreParams { alpha_vdw: 0.5, alpha_ele: 1.0, p: 1.0, n: 1.0, include_all_pairs: false }
+        SoftCoreParams {
+            alpha_vdw: 0.5,
+            alpha_ele: 1.0,
+            p: 1.0,
+            n: 1.0,
+            include_all_pairs: false,
+        }
     }
 }
 
@@ -273,7 +281,9 @@ fn mmff_vdw_de_dr(dist: f64, r: f64, well_depth: f64) -> f64 {
     let tt = VDW1 / (q + VDW1 - 1.0);
     let t2 = tt * tt;
     let t7 = t2 * t2 * t2 * tt;
-    well_depth / r * t7 * (-VDW2T7 * q6 / (q7pvdw2m1 * q7pvdw2m1) + ((-VDW2T7 / q7pvdw2m1 + 14.0) / (q + VDW1M1)))
+    well_depth / r
+        * t7
+        * (-VDW2T7 * q6 / (q7pvdw2m1 * q7pvdw2m1) + ((-VDW2T7 / q7pvdw2m1 + 14.0) / (q + VDW1M1)))
 }
 
 /// UFF LJ energy (RDKit `vdWContrib::getEnergy` operations).
@@ -302,7 +312,11 @@ pub struct SoftCoreInterContrib {
 
 impl SoftCoreInterContrib {
     pub fn new(pairs: Arc<InterPairs>, params: SoftCoreParams, state: Arc<SoftCoreState>) -> Self {
-        SoftCoreInterContrib { pairs, params, state }
+        SoftCoreInterContrib {
+            pairs,
+            params,
+            state,
+        }
     }
     pub fn pairs(&self) -> &InterPairs {
         &self.pairs
@@ -331,14 +345,26 @@ impl SoftCoreInterContrib {
             };
             let scale = if lv == 1.0 { 1.0 } else { lv.powf(sp.n) };
             let (e0, de0) = match pr.form {
-                VdwForm::Buffered14_7 => {
-                    (calc_vdw_energy(rs, r_star, eps), if deriv { mmff_vdw_de_dr(rs, r_star, eps) } else { 0.0 })
-                }
+                VdwForm::Buffered14_7 => (
+                    calc_vdw_energy(rs, r_star, eps),
+                    if deriv {
+                        mmff_vdw_de_dr(rs, r_star, eps)
+                    } else {
+                        0.0
+                    },
+                ),
                 VdwForm::Lj12_6 => {
                     if rs <= 0.0 {
                         (0.0, 0.0)
                     } else {
-                        (uff_vdw_energy(rs, r_star, eps), if deriv { uff_vdw_de_dr(rs, r_star, eps) } else { 0.0 })
+                        (
+                            uff_vdw_energy(rs, r_star, eps),
+                            if deriv {
+                                uff_vdw_de_dr(rs, r_star, eps)
+                            } else {
+                                0.0
+                            },
+                        )
                     }
                 }
             };
@@ -355,12 +381,20 @@ impl SoftCoreInterContrib {
                     let d2 = dist * dist;
                     out.g += scale * de0 * (d2 * d2) / rs5;
                 }
-                let dscale = if sp.n == 1.0 { 1.0 } else { sp.n * lv.powf(sp.n - 1.0) };
+                let dscale = if sp.n == 1.0 {
+                    1.0
+                } else {
+                    sp.n * lv.powf(sp.n - 1.0)
+                };
                 let mut d = dscale * e0;
                 if one_m != 0.0 || sp.p == 1.0 {
                     let r2 = r_star * r_star;
                     let sig6 = 0.5 * (r2 * r2 * r2);
-                    let dpow = if sp.p == 1.0 { 1.0 } else { sp.p * one_m.powf(sp.p - 1.0) };
+                    let dpow = if sp.p == 1.0 {
+                        1.0
+                    } else {
+                        sp.p * one_m.powf(sp.p - 1.0)
+                    };
                     let rs2 = rs * rs;
                     let rs5 = rs2 * rs2 * rs;
                     if rs5 > 0.0 {
@@ -372,15 +406,27 @@ impl SoftCoreInterContrib {
         }
         if let Some(ct) = pr.charge_term[t] {
             let one_m = 1.0 - le;
-            let shift = if one_m == 0.0 { 0.0 } else { sp.alpha_ele * one_m.powf(sp.p) };
-            let re = if shift == 0.0 { dist } else { (shift + dist * dist).sqrt() };
+            let shift = if one_m == 0.0 {
+                0.0
+            } else {
+                sp.alpha_ele * one_m.powf(sp.p)
+            };
+            let re = if shift == 0.0 {
+                dist
+            } else {
+                (shift + dist * dist).sqrt()
+            };
             let scale = if le == 1.0 { 1.0 } else { le.powf(sp.n) };
             let model = pr.dielectric;
             let e0 = calc_ele_energy(re, ct, model, false);
             out.e_ele = scale * e0;
             if deriv {
                 let mut corr = re + 0.05;
-                corr *= if model == DielectricModel::Distance { corr * corr } else { corr };
+                corr *= if model == DielectricModel::Distance {
+                    corr * corr
+                } else {
+                    corr
+                };
                 let de0 = -ELE_PREFACTOR * model.as_f64() * ct / corr;
                 if shift == 0.0 {
                     if dist > 0.0 {
@@ -390,10 +436,18 @@ impl SoftCoreInterContrib {
                     // dr_ele/dr = r / r_ele  →  (dE/dr)/r = E'(r_ele) / r_ele
                     out.g += scale * de0 / re;
                 }
-                let dscale = if sp.n == 1.0 { 1.0 } else { sp.n * le.powf(sp.n - 1.0) };
+                let dscale = if sp.n == 1.0 {
+                    1.0
+                } else {
+                    sp.n * le.powf(sp.n - 1.0)
+                };
                 let mut d = dscale * e0;
                 if one_m != 0.0 || sp.p == 1.0 {
-                    let dpow = if sp.p == 1.0 { 1.0 } else { sp.p * one_m.powf(sp.p - 1.0) };
+                    let dpow = if sp.p == 1.0 {
+                        1.0
+                    } else {
+                        sp.p * one_m.powf(sp.p - 1.0)
+                    };
                     if re > 0.0 {
                         d += scale * de0 * (-sp.alpha_ele * dpow / (2.0 * re));
                     }
@@ -406,7 +460,11 @@ impl SoftCoreInterContrib {
 
     #[inline]
     fn dist(pos: &[f64], i: usize, j: usize) -> (f64, [f64; 3]) {
-        let d = [pos[3 * i] - pos[3 * j], pos[3 * i + 1] - pos[3 * j + 1], pos[3 * i + 2] - pos[3 * j + 2]];
+        let d = [
+            pos[3 * i] - pos[3 * j],
+            pos[3 * i + 1] - pos[3 * j + 1],
+            pos[3 * i + 2] - pos[3 * j + 2],
+        ];
         ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt(), d)
     }
 
@@ -482,8 +540,16 @@ pub struct CentroidWallContrib {
 }
 
 impl CentroidWallContrib {
-    pub fn new(fragments: Arc<Vec<Vec<usize>>>, force_constant: f64, state: Arc<SoftCoreState>) -> Self {
-        CentroidWallContrib { fragments, force_constant, state }
+    pub fn new(
+        fragments: Arc<Vec<Vec<usize>>>,
+        force_constant: f64,
+        state: Arc<SoftCoreState>,
+    ) -> Self {
+        CentroidWallContrib {
+            fragments,
+            force_constant,
+            state,
+        }
     }
 
     fn centroids(&self, pos: &[f64]) -> (Vec<[f64; 3]>, [f64; 3]) {
@@ -596,7 +662,10 @@ fn coord_dist(c: &[[f64; 3]], i: usize, j: usize) -> f64 {
 
 impl SoftCoreInner for MmffBuilder {
     fn with_interfrag(&self, on: bool) -> Self {
-        MmffBuilder { ignore_interfrag_interactions: !on, ..self.clone() }
+        MmffBuilder {
+            ignore_interfrag_interactions: !on,
+            ..self.clone()
+        }
     }
     fn build_parts(
         &self,
@@ -606,7 +675,9 @@ impl SoftCoreInner for MmffBuilder {
         include_all_pairs: bool,
     ) -> Result<(ContribForceField, InterPairs)> {
         let props = MmffMolProperties::new(mol, self.variant)?;
-        let intra = self.with_interfrag(false).build_with_properties(mol, &props, constraints)?;
+        let intra = self
+            .with_interfrag(false)
+            .build_with_properties(mol, &props, constraints)?;
         let n = mol.num_atoms();
         let frag = fragment_index(n, &fragments);
         let q = props.partial_charges();
@@ -621,8 +692,11 @@ impl SoftCoreInner for MmffBuilder {
                     continue;
                 }
                 let vdw = props.vdw_params(i, j).map(|v| (v.r_ij_star, v.epsilon));
-                let ele =
-                    if !is_zero(q[i]) && !is_zero(q[j]) { Some(q[i] * q[j] / self.dielectric_constant) } else { None };
+                let ele = if !is_zero(q[i]) && !is_zero(q[j]) {
+                    Some(q[i] * q[j] / self.dielectric_constant)
+                } else {
+                    None
+                };
                 pairs.push(i, j, vdw, ele, f64::INFINITY);
             }
         }
@@ -632,7 +706,10 @@ impl SoftCoreInner for MmffBuilder {
 
 impl SoftCoreInner for UffBuilder {
     fn with_interfrag(&self, on: bool) -> Self {
-        UffBuilder { ignore_interfrag_interactions: !on, ..self.clone() }
+        UffBuilder {
+            ignore_interfrag_interactions: !on,
+            ..self.clone()
+        }
     }
     fn build_parts(
         &self,
@@ -645,7 +722,8 @@ impl SoftCoreInner for UffBuilder {
             return Err(Error::InvalidArgument("molecule has no coordinates".into()));
         }
         let (_, params, _) = atom_typer::atom_types_and_params(mol);
-        let mut intra = super::uff::builder::construct_force_field(mol, &params, self.vdw_thresh, true)?;
+        let mut intra =
+            super::uff::builder::construct_force_field(mol, &params, self.vdw_thresh, true)?;
         intra.add_constraints(&mol.coords, constraints);
         let n = mol.num_atoms();
         let frag = fragment_index(n, &fragments);
@@ -662,7 +740,13 @@ impl SoftCoreInner for UffBuilder {
                     continue;
                 }
                 // RDKit vdWContrib uses a fixed evaluation cutoff of 10 x_ij.
-                pairs.push(i, j, Some((xij, calc_nonbonded_depth(pi, pj))), None, 10.0 * xij);
+                pairs.push(
+                    i,
+                    j,
+                    Some((xij, calc_nonbonded_depth(pi, pj))),
+                    None,
+                    10.0 * xij,
+                );
             }
         }
         Ok((intra, pairs))
@@ -745,7 +829,8 @@ impl<B: SoftCoreInner> SoftCoreBuilder<B> {
     }
     pub fn with_confinement(mut self, c: Option<Confinement>) -> Self {
         self.confinement = c;
-        self.state.set_confinement_radius(c.map(|c| c.radius).unwrap_or(f64::INFINITY));
+        self.state
+            .set_confinement_radius(c.map(|c| c.radius).unwrap_or(f64::INFINITY));
         self
     }
     /// Sets λ in the state shared by all force fields built through the
@@ -770,13 +855,17 @@ impl<B: SoftCoreInner> SoftCoreBuilder<B> {
         state: Arc<SoftCoreState>,
     ) -> Result<(ContribForceField, SoftCoreHandle)> {
         if !(self.params.n >= 1.0 && self.params.p >= 1.0) {
-            return Err(Error::InvalidArgument("soft-core: n and p must be >= 1".into()));
+            return Err(Error::InvalidArgument(
+                "soft-core: n and p must be >= 1".into(),
+            ));
         }
         let mut frags = mol.fragments();
         for f in &mut frags {
             f.sort_unstable();
         }
-        let (mut ff, pairs) = self.inner.build_parts(mol, constraints, frags, self.params.include_all_pairs)?;
+        let (mut ff, pairs) =
+            self.inner
+                .build_parts(mol, constraints, frags, self.params.include_all_pairs)?;
         let pairs = Arc::new(pairs);
         let inter = SoftCoreInterContrib::new(pairs.clone(), self.params, state.clone());
         if !pairs.is_empty() {
@@ -784,7 +873,11 @@ impl<B: SoftCoreInner> SoftCoreBuilder<B> {
         }
         if let Some(c) = self.confinement {
             let frags = Arc::new(pairs.fragments.clone());
-            ff.add_contrib(Box::new(CentroidWallContrib::new(frags, c.force_constant, state.clone())));
+            ff.add_contrib(Box::new(CentroidWallContrib::new(
+                frags,
+                c.force_constant,
+                state.clone(),
+            )));
         }
         Ok((ff, SoftCoreHandle { state, inter }))
     }
@@ -808,7 +901,9 @@ impl<B: SoftCoreInner> ForceFieldBuilder for SoftCoreBuilder<B> {
     }
     /// Builds a force field that shares the builder's λ state.
     fn build(&self, mol: &Molecule, constraints: &[Constraint]) -> Result<ContribForceField> {
-        Ok(self.build_with_state(mol, constraints, self.state.clone())?.0)
+        Ok(self
+            .build_with_state(mol, constraints, self.state.clone())?
+            .0)
     }
 }
 
@@ -829,8 +924,18 @@ mod tests {
             m.add_bond(a, b, BondOrder::Single);
             m.add_bond(a, c, BondOrder::Single);
         };
-        w(&mut m, [0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]);
-        w(&mut m, [2.9, 0.1, 0.05], [3.25, -0.4, 0.75], [3.2, -0.3, -0.7]);
+        w(
+            &mut m,
+            [0.0, 0.0, 0.0],
+            [0.96, 0.0, 0.0],
+            [-0.24, 0.93, 0.0],
+        );
+        w(
+            &mut m,
+            [2.9, 0.1, 0.05],
+            [3.25, -0.4, 0.75],
+            [3.2, -0.3, -0.7],
+        );
         sanitize(&mut m).unwrap();
         m
     }
@@ -838,8 +943,12 @@ mod tests {
     #[test]
     fn lambda_one_matches_mmff_interfrag() {
         let m = water_dimer();
-        let reference =
-            MmffBuilder { ignore_interfrag_interactions: false, ..Default::default() }.build(&m, &[]).unwrap();
+        let reference = MmffBuilder {
+            ignore_interfrag_interactions: false,
+            ..Default::default()
+        }
+        .build(&m, &[])
+        .unwrap();
         let sc = SoftCoreBuilder::new(MmffBuilder::default());
         let ff = sc.build(&m, &[]).unwrap();
         let pos = m.flat_coords();
@@ -855,8 +964,10 @@ mod tests {
     #[test]
     fn wall_gradient() {
         let m = water_dimer();
-        let sc = SoftCoreBuilder::new(MmffBuilder::default())
-            .with_confinement(Some(Confinement { radius: 0.5, force_constant: 3.0 }));
+        let sc = SoftCoreBuilder::new(MmffBuilder::default()).with_confinement(Some(Confinement {
+            radius: 0.5,
+            force_constant: 3.0,
+        }));
         let (ff, h) = sc.build_with_handle(&m, &[]).unwrap();
         h.set_lambda(0.3, 0.2);
         let pos = m.flat_coords();

@@ -177,7 +177,11 @@ pub fn find_next_ring_to_embed(done_rings: &[usize], fused: &[Vec<usize>]) -> (u
         if done_rings.contains(&rid) {
             continue;
         }
-        let common: Vec<usize> = ring.iter().copied().filter(|a| done_atoms.contains(a)).collect();
+        let common: Vec<usize> = ring
+            .iter()
+            .copied()
+            .filter(|a| done_atoms.contains(a))
+            .collect();
         if common.len() == 2 {
             return (rid, common);
         }
@@ -205,7 +209,9 @@ pub fn find_next_ring_to_embed(done_rings: &[usize], fused: &[Vec<usize>]) -> (u
 
 /// `getAllRotatableBonds`.
 pub fn all_rotatable_bonds(ctx: &Ctx) -> Vec<usize> {
-    (0..ctx.mol.num_bonds()).filter(|&b| !has_stereo(ctx.mol, b) && ctx.num_bond_rings(b) == 0).collect()
+    (0..ctx.mol.num_bonds())
+        .filter(|&b| !has_stereo(ctx.mol, b) && ctx.num_bond_rings(b) == 0)
+        .collect()
 }
 
 /// Bond stereo above `STEREOANY`.
@@ -235,7 +241,12 @@ pub fn is_spiro_center(ctx: &Ctx, aid: usize) -> bool {
     if ctx.degree(aid) != 4 || ctx.num_atom_rings(aid) != 2 {
         return false;
     }
-    let rings: Vec<&Vec<usize>> = ctx.ri.atom_rings.iter().filter(|r| r.contains(&aid)).collect();
+    let rings: Vec<&Vec<usize>> = ctx
+        .ri
+        .atom_rings
+        .iter()
+        .filter(|r| r.contains(&aid))
+        .collect();
     if rings.len() != 2 {
         return false;
     }
@@ -259,7 +270,11 @@ pub fn is_spiro_center(ctx: &Ctx, aid: usize) -> bool {
 }
 
 /// `findBondsPairsToPermuteDeg4`.
-pub fn bond_pairs_to_permute_deg4(center: Point2D, nbr_bids: &[usize], nbr_locs: &[Point2D]) -> [(usize, usize); 2] {
+pub fn bond_pairs_to_permute_deg4(
+    center: Point2D,
+    nbr_bids: &[usize],
+    nbr_locs: &[Point2D],
+) -> [(usize, usize); 2] {
     let pts: Vec<Point2D> = nbr_locs.iter().map(|&l| l - center).collect();
     let dp1 = pts[0].dot(pts[1]);
     if dp1.abs() < 1.0e-3 {

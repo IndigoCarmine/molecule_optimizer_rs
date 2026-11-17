@@ -19,7 +19,10 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(n_chunks: usize, len: usize) -> Self {
-        Workspace { bufs: vec![0.0; n_chunks * len], energies: vec![[0.0; 3]; n_chunks] }
+        Workspace {
+            bufs: vec![0.0; n_chunks * len],
+            energies: vec![[0.0; 3]; n_chunks],
+        }
     }
     /// Gradient buffers (chunk-major, `len` values each) and energy slots.
     pub fn split(&mut self) -> (&mut [f64], &mut [[f64; 3]]) {
@@ -42,7 +45,11 @@ impl WorkspacePool {
         if n_chunks > 0 {
             v.push(Workspace::new(n_chunks, len));
         }
-        WorkspacePool { n_chunks, len, pool: Mutex::new(v) }
+        WorkspacePool {
+            n_chunks,
+            len,
+            pool: Mutex::new(v),
+        }
     }
 
     /// Runs `f` with a workspace from the pool.
@@ -67,9 +74,11 @@ pub fn reduce_into(out: &mut [f64], len: usize, f: impl Fn(usize, usize, &mut [f
     if len <= REDUCE_BLOCK {
         f(0, len, out);
     } else {
-        out.par_chunks_mut(REDUCE_BLOCK).enumerate().for_each(|(b, o)| {
-            let k0 = b * REDUCE_BLOCK;
-            f(k0, k0 + o.len(), o);
-        });
+        out.par_chunks_mut(REDUCE_BLOCK)
+            .enumerate()
+            .for_each(|(b, o)| {
+                let k0 = b * REDUCE_BLOCK;
+                f(k0, k0 + o.len(), o);
+            });
     }
 }

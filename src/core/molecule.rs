@@ -116,7 +116,10 @@ pub struct Atom {
 
 impl Atom {
     pub fn new(atomic_num: u8) -> Self {
-        Atom { atomic_num, ..Default::default() }
+        Atom {
+            atomic_num,
+            ..Default::default()
+        }
     }
     pub fn symbol(&self) -> &'static str {
         element(self.atomic_num).symbol
@@ -159,7 +162,11 @@ impl Bond {
         }
     }
     pub fn other(&self, idx: usize) -> usize {
-        if self.begin == idx { self.end } else { self.begin }
+        if self.begin == idx {
+            self.end
+        } else {
+            self.begin
+        }
     }
     pub fn contains(&self, idx: usize) -> bool {
         self.begin == idx || self.end == idx
@@ -168,7 +175,11 @@ impl Bond {
     pub fn valence_contrib(&self, atom: usize) -> f64 {
         match self.order {
             BondOrder::Dative => {
-                if atom == self.end { 1.0 } else { 0.0 }
+                if atom == self.end {
+                    1.0
+                } else {
+                    0.0
+                }
             }
             o => o.as_f64(),
         }
@@ -196,7 +207,11 @@ impl Adjacency {
         self.cap.push(0);
     }
     fn push(&mut self, i: usize, entry: (usize, usize)) {
-        let (s, l, c) = (self.start[i] as usize, self.len[i] as usize, self.cap[i] as usize);
+        let (s, l, c) = (
+            self.start[i] as usize,
+            self.len[i] as usize,
+            self.cap[i] as usize,
+        );
         if l == c {
             let new_cap = (2 * c).max(4);
             if s + c == self.slots.len() {
@@ -330,12 +345,18 @@ impl Molecule {
     /// Total number of hydrogens: hydrogen neighbors + hidden hydrogens
     /// (RDKit `getTotalNumHs(true)`).
     pub fn total_num_hs(&self, i: usize) -> usize {
-        self.neighbors(i).filter(|&n| self.atoms[n].atomic_num == 1).count()
+        self.neighbors(i)
+            .filter(|&n| self.atoms[n].atomic_num == 1)
+            .count()
             + self.atoms[i].total_hidden_hs() as usize
     }
 
     pub fn bond_between(&self, a: usize, b: usize) -> Option<usize> {
-        self.adj.get(a).iter().find(|&&(n, _)| n == b).map(|&(_, bi)| bi)
+        self.adj
+            .get(a)
+            .iter()
+            .find(|&&(n, _)| n == b)
+            .map(|&(_, bi)| bi)
     }
 
     /// Explicit valence (RDKit `getValence(EXPLICIT)`, port of
@@ -359,8 +380,8 @@ impl Molecule {
         }
         let ovalens = &element(atom.atomic_num).valences;
         let eff = if ovalens.len() > 1 || ovalens.first().is_some_and(|&v| v != -1) {
-            (atom.atomic_num as i32 - atom.formal_charge as i32).clamp(0, super::element::num_elements() as i32 - 1)
-                as u8
+            (atom.atomic_num as i32 - atom.formal_charge as i32)
+                .clamp(0, super::element::num_elements() as i32 - 1) as u8
         } else {
             atom.atomic_num
         };
@@ -408,7 +429,9 @@ impl Molecule {
 
     /// Heavy (non-hydrogen) atom indices.
     pub fn heavy_atoms(&self) -> Vec<usize> {
-        (0..self.atoms.len()).filter(|&i| self.atoms[i].atomic_num > 1).collect()
+        (0..self.atoms.len())
+            .filter(|&i| self.atoms[i].atomic_num > 1)
+            .collect()
     }
 
     /// `true` if any atom carries hidden hydrogens.

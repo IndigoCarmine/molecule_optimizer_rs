@@ -16,7 +16,11 @@ use crate::perception::{self, hydrogens, stereo};
 /// coordinates; it is not minimized under a force field. A molecule that
 /// already has 3D coordinates keeps the stereo they show instead of its
 /// wedges. `observer` sees the embedder's minimizer and can cancel it.
-pub fn build_3d(drawing: &Molecule, params: &EmbedParams, observer: &mut dyn Observer) -> Result<Molecule> {
+pub fn build_3d(
+    drawing: &Molecule,
+    params: &EmbedParams,
+    observer: &mut dyn Observer,
+) -> Result<Molecule> {
     let mut mol = drawing.clone();
     let flat = !perception::has_3d_coords(&mol);
     hydrogens::add_hydrogens(&mut mol);
@@ -30,7 +34,10 @@ pub fn build_3d(drawing: &Molecule, params: &EmbedParams, observer: &mut dyn Obs
     }
     // The embedder must enforce these tags, not re-read the input's
     // (planar, or hydrogen-added) coordinates.
-    let params = EmbedParams { rdkit_stereo_from_3d: false, ..params.clone() };
+    let params = EmbedParams {
+        rdkit_stereo_from_3d: false,
+        ..params.clone()
+    };
     mol.coords = distgeom::embed_molecule(&mol, &params, observer)?;
     Ok(mol)
 }
@@ -54,7 +61,10 @@ mod tests {
     }
 
     fn params() -> EmbedParams {
-        EmbedParams { random_seed: 7, ..EmbedParams::etkdg_v3() }
+        EmbedParams {
+            random_seed: 7,
+            ..EmbedParams::etkdg_v3()
+        }
     }
 
     #[test]
@@ -87,7 +97,9 @@ mod tests {
         let drawing = crate::io::read_molfile(text).unwrap();
         let built = build_3d(&drawing, &params(), &mut NoObserver).unwrap();
         assert_eq!(built.num_atoms(), 12);
-        let d = crate::core::geometry::dihedral(built.pos(0), built.pos(1), built.pos(2), built.pos(3)).to_degrees();
+        let d =
+            crate::core::geometry::dihedral(built.pos(0), built.pos(1), built.pos(2), built.pos(3))
+                .to_degrees();
         assert!(d.abs() < 30.0, "dihedral {d}");
         assert_eq!(built.bond(1).stereo, BondStereo::Cis);
     }

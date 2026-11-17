@@ -307,7 +307,11 @@ impl Graph {
 
     pub fn mul(&mut self, a: Id, b: Id) -> Id {
         // Constants first.
-        let (a, b) = if self.const_value(b).is_some() && self.const_value(a).is_none() { (b, a) } else { (a, b) };
+        let (a, b) = if self.const_value(b).is_some() && self.const_value(a).is_none() {
+            (b, a)
+        } else {
+            (a, b)
+        };
         if let Some(ca) = self.const_value(a) {
             if ca == 0.0 {
                 return a;
@@ -391,7 +395,9 @@ impl Graph {
             return self.constant(math::powi(v, n));
         }
         match self.node(a) {
-            Node::Powi(x, m) if (m as i64 * n as i64).abs() <= i32::MAX as i64 => self.powi(x, m * n),
+            Node::Powi(x, m) if (m as i64 * n as i64).abs() <= i32::MAX as i64 => {
+                self.powi(x, m * n)
+            }
             Node::Un(F1::Neg, x) if n % 2 == 0 => self.powi(x, n),
             Node::Un(F1::Neg, x) => {
                 let p = self.powi(x, n);
@@ -449,7 +455,11 @@ impl Graph {
         if let (Some(x), Some(y)) = (self.const_value(a), self.const_value(b)) {
             return self.constant(f.apply(x, y));
         }
-        let (a, b) = if f.commutative() && self.order_key(b) < self.order_key(a) { (b, a) } else { (a, b) };
+        let (a, b) = if f.commutative() && self.order_key(b) < self.order_key(a) {
+            (b, a)
+        } else {
+            (a, b)
+        };
         self.intern(Node::Bin(f, a, b))
     }
 
@@ -548,7 +558,11 @@ impl Graph {
                 _ => {
                     let h = chain(g, x, n / 2);
                     let sq = g.intern(Node::Powi(h, 2));
-                    if n % 2 == 1 { g.intern(Node::Bin(F2::Mul, sq, x)) } else { sq }
+                    if n % 2 == 1 {
+                        g.intern(Node::Bin(F2::Mul, sq, x))
+                    } else {
+                        sq
+                    }
                 }
             }
         }
@@ -675,7 +689,9 @@ impl Graph {
                 let a2 = self.powi(a, 2);
                 let na2 = self.neg(a2);
                 let e = self.f1(F1::Exp, na2);
-                let c = self.constant(if f == F1::Erf { 1.0 } else { -1.0 } * std::f64::consts::FRAC_2_SQRT_PI);
+                let c = self.constant(
+                    if f == F1::Erf { 1.0 } else { -1.0 } * std::f64::consts::FRAC_2_SQRT_PI,
+                );
                 self.mul(c, e)
             }
             F1::Cosh => self.f1(F1::Sinh, a),
@@ -734,7 +750,11 @@ impl Graph {
             }
             F2::Min | F2::Max => {
                 // min: da where a <= b; max: da where a >= b.
-                let diff = if f == F2::Min { self.sub(b, a) } else { self.sub(a, b) };
+                let diff = if f == F2::Min {
+                    self.sub(b, a)
+                } else {
+                    self.sub(a, b)
+                };
                 let c = self.f1(F1::Step, diff);
                 self.select(c, da, db)
             }
@@ -781,7 +801,10 @@ impl Graph {
     /// Number of operation (non-leaf) nodes reachable from `roots`.
     pub fn op_count(&self, roots: &[Id]) -> usize {
         let live = self.reachable(roots);
-        live.iter().enumerate().filter(|(i, l)| **l && !matches!(self.nodes[*i], Node::Const(_) | Node::Var(_))).count()
+        live.iter()
+            .enumerate()
+            .filter(|(i, l)| **l && !matches!(self.nodes[*i], Node::Const(_) | Node::Var(_)))
+            .count()
     }
 
     /// Prints `root` as an expression in the input language (the DAG is

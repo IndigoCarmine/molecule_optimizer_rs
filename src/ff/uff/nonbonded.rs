@@ -31,10 +31,22 @@ pub struct VdwContrib {
 }
 
 impl VdwContrib {
-    pub fn new(idx1: usize, idx2: usize, at1: &AtomicParams, at2: &AtomicParams, thresh_multiplier: f64) -> Self {
+    pub fn new(
+        idx1: usize,
+        idx2: usize,
+        at1: &AtomicParams,
+        at2: &AtomicParams,
+        thresh_multiplier: f64,
+    ) -> Self {
         let xij = calc_nonbonded_minimum(at1, at2);
         let well_depth = calc_nonbonded_depth(at1, at2);
-        VdwContrib { idx1, idx2, xij, well_depth, thresh: thresh_multiplier * xij }
+        VdwContrib {
+            idx1,
+            idx2,
+            xij,
+            well_depth,
+            thresh: thresh_multiplier * xij,
+        }
     }
 }
 

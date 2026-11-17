@@ -46,23 +46,43 @@ pub fn literal(v: f64) -> String {
         return "(0.0 / 0.0)".to_string();
     }
     if f.is_infinite() {
-        return if f > 0.0 { "3.4028235e38".to_string() } else { "(-3.4028235e38)".to_string() };
+        return if f > 0.0 {
+            "3.4028235e38".to_string()
+        } else {
+            "(-3.4028235e38)".to_string()
+        };
     }
     let s = format!("{:?}", f.abs());
-    let s = if s.contains('.') || s.contains('e') { s } else { format!("{s}.0") };
+    let s = if s.contains('.') || s.contains('e') {
+        s
+    } else {
+        format!("{s}.0")
+    };
     if f < 0.0 { format!("(-{s})") } else { s }
 }
 
 /// Emits `fn name(inputs...: f32) -> ret { ... }` computing `roots` of `g`.
 /// `inputs[k]` is the WGSL name of variable `k`.
-pub fn emit_function(g: &Graph, roots: &[Id], name: &str, inputs: &[String]) -> Result<String, String> {
+pub fn emit_function(
+    g: &Graph,
+    roots: &[Id],
+    name: &str,
+    inputs: &[String],
+) -> Result<String, String> {
     if roots.is_empty() || roots.len() > 4 {
-        return Err(format!("WGSL functions return 1 to 4 values ({} requested)", roots.len()));
+        return Err(format!(
+            "WGSL functions return 1 to 4 values ({} requested)",
+            roots.len()
+        ));
     }
     let live = g.reachable(roots);
     let mut out = String::new();
     let params: Vec<String> = inputs.iter().map(|n| format!("{n}: f32")).collect();
-    let ret = if roots.len() == 1 { "f32".to_string() } else { format!("vec{}<f32>", roots.len()) };
+    let ret = if roots.len() == 1 {
+        "f32".to_string()
+    } else {
+        format!("vec{}<f32>", roots.len())
+    };
     let _ = writeln!(out, "fn {name}({}) -> {ret} {{", params.join(", "));
     let operand = |id: Id| -> String {
         match g.node(id) {
@@ -107,7 +127,12 @@ pub fn emit_function(g: &Graph, roots: &[Id], name: &str, inputs: &[String]) -> 
                     n => format!("mo_powi({a}, {n})"),
                 }
             }
-            Node::Select(c, a, b) => format!("select({}, {}, {} != 0.0)", operand(b), operand(a), operand(c)),
+            Node::Select(c, a, b) => format!(
+                "select({}, {}, {} != 0.0)",
+                operand(b),
+                operand(a),
+                operand(c)
+            ),
         };
         let _ = writeln!(out, "    let t{i}: f32 = {e};");
     }

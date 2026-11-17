@@ -5,7 +5,9 @@
 use molecule_optimizer_rs::Molecule;
 use molecule_optimizer_rs::calc::assembly::combine_molecules;
 use molecule_optimizer_rs::ff::mmff::{DielectricModel, MmffBuilder, MmffVariant};
-use molecule_optimizer_rs::ff::softcore::{Confinement, SoftCoreBuilder, SoftCoreInner, SoftCoreParams};
+use molecule_optimizer_rs::ff::softcore::{
+    Confinement, SoftCoreBuilder, SoftCoreInner, SoftCoreParams,
+};
 use molecule_optimizer_rs::ff::uff::UffBuilder;
 use molecule_optimizer_rs::ff::{ForceField, ForceFieldBuilder, numerical_gradient};
 use molecule_optimizer_rs::io;
@@ -13,7 +15,10 @@ use molecule_optimizer_rs::io;
 const LAMBDAS: [f64; 5] = [0.0, 0.1, 0.5, 0.9, 1.0];
 
 fn monomer(name: &str) -> Molecule {
-    let p = format!("{}/tests/data/assembly/{name}.sdf", env!("CARGO_MANIFEST_DIR"));
+    let p = format!(
+        "{}/tests/data/assembly/{name}.sdf",
+        env!("CARGO_MANIFEST_DIR")
+    );
     io::read_file(p).unwrap().remove(0)
 }
 
@@ -22,19 +27,35 @@ fn dimer(m: &Molecule, angle: f64, shift: [f64; 3]) -> Molecule {
     let mut b = m.clone();
     let (s, c) = angle.sin_cos();
     for p in &mut b.coords {
-        *p = [c * p[0] - s * p[1] + shift[0], s * p[0] + c * p[1] + shift[1], p[2] + shift[2]];
+        *p = [
+            c * p[0] - s * p[1] + shift[0],
+            s * p[0] + c * p[1] + shift[1],
+            p[2] + shift[2],
+        ];
     }
     combine_molecules(&[(m.clone(), 1), (b, 1)])
 }
 
 fn systems() -> Vec<(&'static str, Molecule)> {
     vec![
-        ("water dimer", dimer(&monomer("water"), 1.9, [2.1, 1.3, 0.8])),
-        ("acetic acid dimer", dimer(&monomer("acetic_acid"), 3.0, [0.5, 0.3, 3.0])),
-        ("benzene dimer", dimer(&monomer("benzene"), 0.4, [0.6, 0.3, 3.6])),
+        (
+            "water dimer",
+            dimer(&monomer("water"), 1.9, [2.1, 1.3, 0.8]),
+        ),
+        (
+            "acetic acid dimer",
+            dimer(&monomer("acetic_acid"), 3.0, [0.5, 0.3, 3.0]),
+        ),
+        (
+            "benzene dimer",
+            dimer(&monomer("benzene"), 0.4, [0.6, 0.3, 3.6]),
+        ),
         (
             "benzene/water",
-            combine_molecules(&[(monomer("benzene"), 1), (shifted(&monomer("water"), [0.2, -0.1, 3.1]), 1)]),
+            combine_molecules(&[
+                (monomer("benzene"), 1),
+                (shifted(&monomer("water"), [0.2, -0.1, 3.1]), 1),
+            ]),
         ),
     ]
 }
@@ -63,7 +84,10 @@ fn check_exact<B: SoftCoreInner>(inner: B, reference: B, mol: &Molecule, what: &
     assert!(rel_close(e1, ff.energy(&pos), 1e-12), "{what}");
     let gmax = g1.iter().fold(0.0f64, |m, x| m.max(x.abs()));
     for (k, (a, b)) in g1.iter().zip(&g2).enumerate() {
-        assert!((a - b).abs() <= 1e-12 * gmax.max(1.0), "{what}: grad {k}: {a} vs {b}");
+        assert!(
+            (a - b).abs() <= 1e-12 * gmax.max(1.0),
+            "{what}: grad {k}: {a} vs {b}"
+        );
     }
     // the breakdown labels merge with the inner force field's
     let mut b1 = refff.energy_breakdown(&pos);
@@ -73,15 +97,28 @@ fn check_exact<B: SoftCoreInner>(inner: B, reference: B, mol: &Molecule, what: &
     assert_eq!(b1.len(), b2.len(), "{what}: {b1:?} vs {b2:?}");
     for (x, y) in b1.iter().zip(&b2) {
         assert_eq!(x.0, y.0);
-        assert!(rel_close(x.1, y.1, 1e-11), "{what}: {} {} vs {}", x.0, x.1, y.1);
+        assert!(
+            rel_close(x.1, y.1, 1e-11),
+            "{what}: {} {} vs {}",
+            x.0,
+            x.1,
+            y.1
+        );
     }
     // and it is a genuine intermolecular contribution
     let intra = inner_only(&sc, mol);
-    assert!((intra - e1).abs() > 1e-6, "{what}: no intermolecular energy");
+    assert!(
+        (intra - e1).abs() > 1e-6,
+        "{what}: no intermolecular energy"
+    );
 }
 
 fn inner_only<B: SoftCoreInner>(sc: &SoftCoreBuilder<B>, mol: &Molecule) -> f64 {
-    sc.inner.with_interfrag(false).build(mol, &[]).unwrap().energy(&mol.flat_coords())
+    sc.inner
+        .with_interfrag(false)
+        .build(mol, &[])
+        .unwrap()
+        .energy(&mol.flat_coords())
 }
 
 #[test]
@@ -92,8 +129,16 @@ fn lambda_one_equals_mmff_with_interfragment_terms() {
             (MmffVariant::Mmff94s, DielectricModel::Constant, 1.0),
             (MmffVariant::Mmff94, DielectricModel::Distance, 4.0),
         ] {
-            let b = MmffBuilder { variant, dielectric_model: model, dielectric_constant: d, ..Default::default() };
-            let r = MmffBuilder { ignore_interfrag_interactions: false, ..b.clone() };
+            let b = MmffBuilder {
+                variant,
+                dielectric_model: model,
+                dielectric_constant: d,
+                ..Default::default()
+            };
+            let r = MmffBuilder {
+                ignore_interfrag_interactions: false,
+                ..b.clone()
+            };
             check_exact(b, r, &mol, &format!("MMFF {name} {variant:?} {model:?}"));
         }
     }
@@ -103,7 +148,10 @@ fn lambda_one_equals_mmff_with_interfragment_terms() {
 fn lambda_one_equals_uff_with_interfragment_terms() {
     for (name, mol) in systems() {
         let b = UffBuilder::default();
-        let r = UffBuilder { ignore_interfrag_interactions: false, ..b.clone() };
+        let r = UffBuilder {
+            ignore_interfrag_interactions: false,
+            ..b.clone()
+        };
         check_exact(b, r, &mol, &format!("UFF {name}"));
     }
 }
@@ -112,17 +160,51 @@ fn lambda_one_equals_uff_with_interfragment_terms() {
 #[test]
 fn lambda_one_respects_build_time_cutoffs() {
     let mol = dimer(&monomer("acetic_acid"), 0.7, [5.0, 0.5, 0.0]);
-    let m = MmffBuilder { nonbonded_thresh: 5.0, ..Default::default() };
-    check_exact(m.clone(), MmffBuilder { ignore_interfrag_interactions: false, ..m }, &mol, "MMFF thresh 5");
-    let u = UffBuilder { vdw_thresh: 1.6, ..Default::default() };
-    check_exact(u.clone(), UffBuilder { ignore_interfrag_interactions: false, ..u }, &mol, "UFF thresh 1.6");
+    let m = MmffBuilder {
+        nonbonded_thresh: 5.0,
+        ..Default::default()
+    };
+    check_exact(
+        m.clone(),
+        MmffBuilder {
+            ignore_interfrag_interactions: false,
+            ..m
+        },
+        &mol,
+        "MMFF thresh 5",
+    );
+    let u = UffBuilder {
+        vdw_thresh: 1.6,
+        ..Default::default()
+    };
+    check_exact(
+        u.clone(),
+        UffBuilder {
+            ignore_interfrag_interactions: false,
+            ..u
+        },
+        &mol,
+        "UFF thresh 1.6",
+    );
 }
 
 fn params_set() -> Vec<SoftCoreParams> {
     vec![
         SoftCoreParams::default(),
-        SoftCoreParams { alpha_vdw: 0.3, alpha_ele: 2.5, p: 2.0, n: 2.0, include_all_pairs: true },
-        SoftCoreParams { alpha_vdw: 1.0, alpha_ele: 0.5, p: 1.0, n: 3.0, include_all_pairs: false },
+        SoftCoreParams {
+            alpha_vdw: 0.3,
+            alpha_ele: 2.5,
+            p: 2.0,
+            n: 2.0,
+            include_all_pairs: true,
+        },
+        SoftCoreParams {
+            alpha_vdw: 1.0,
+            alpha_ele: 0.5,
+            p: 1.0,
+            n: 3.0,
+            include_all_pairs: false,
+        },
     ]
 }
 
@@ -130,7 +212,10 @@ fn check_derivatives<B: SoftCoreInner>(inner: B, mol: &Molecule, what: &str, lam
     for params in params_set() {
         let sc = SoftCoreBuilder::new(inner.clone())
             .with_params(params)
-            .with_confinement(Some(Confinement { radius: 0.4, force_constant: 5.0 }));
+            .with_confinement(Some(Confinement {
+                radius: 0.4,
+                force_constant: 5.0,
+            }));
         let (ff, h) = sc.build_with_handle(mol, &[]).unwrap();
         let pos = mol.flat_coords();
         for &lv in lambdas {
@@ -188,14 +273,34 @@ fn check_derivatives<B: SoftCoreInner>(inner: B, mol: &Molecule, what: &str, lam
 #[test]
 fn gradients_and_lambda_derivatives_match_finite_differences() {
     for (name, mol) in systems() {
-        check_derivatives(MmffBuilder::default(), &mol, &format!("MMFF {name}"), &LAMBDAS);
-        check_derivatives(UffBuilder::default(), &mol, &format!("UFF {name}"), &LAMBDAS);
+        check_derivatives(
+            MmffBuilder::default(),
+            &mol,
+            &format!("MMFF {name}"),
+            &LAMBDAS,
+        );
+        check_derivatives(
+            UffBuilder::default(),
+            &mol,
+            &format!("UFF {name}"),
+            &LAMBDAS,
+        );
     }
     // overlapping fragments (soft-core regime; at λ_vdw = 1 the hard core
     // makes ∂E/∂λ ~ 1e7 and too stiff for finite differences)
     let close = dimer(&monomer("water"), 2.5, [0.9, 0.4, 0.3]);
-    check_derivatives(MmffBuilder::default(), &close, "MMFF overlapping waters", &LAMBDAS[..4]);
-    check_derivatives(UffBuilder::default(), &close, "UFF overlapping waters", &LAMBDAS[..4]);
+    check_derivatives(
+        MmffBuilder::default(),
+        &close,
+        "MMFF overlapping waters",
+        &LAMBDAS[..4],
+    );
+    check_derivatives(
+        UffBuilder::default(),
+        &close,
+        "UFF overlapping waters",
+        &LAMBDAS[..4],
+    );
 }
 
 #[test]
@@ -207,23 +312,36 @@ fn finite_at_zero_distance_below_lambda_one() {
     let (s, c) = (1.3f64).sin_cos();
     for p in &mut b.coords {
         let d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
-        *p = [o[0] + c * d[0] - s * d[2], o[1] + d[1], o[2] + s * d[0] + c * d[2]];
+        *p = [
+            o[0] + c * d[0] - s * d[2],
+            o[1] + d[1],
+            o[2] + s * d[0] + c * d[2],
+        ];
     }
     let mol = combine_molecules(&[(w, 1), (b, 1)]);
     let pos = mol.flat_coords();
     for params in params_set() {
         for inner in [0, 1] {
             let (ff, h) = if inner == 0 {
-                SoftCoreBuilder::new(MmffBuilder::default()).with_params(params).build_with_handle(&mol, &[]).unwrap()
+                SoftCoreBuilder::new(MmffBuilder::default())
+                    .with_params(params)
+                    .build_with_handle(&mol, &[])
+                    .unwrap()
             } else {
-                SoftCoreBuilder::new(UffBuilder::default()).with_params(params).build_with_handle(&mol, &[]).unwrap()
+                SoftCoreBuilder::new(UffBuilder::default())
+                    .with_params(params)
+                    .build_with_handle(&mol, &[])
+                    .unwrap()
             };
             for &l in &[0.0, 0.1, 0.5, 0.9, 0.99] {
                 h.set_lambda(l, l);
                 let mut g = vec![0.0; pos.len()];
                 let e = ff.energy_grad(&pos, &mut g);
                 let (dv, de) = h.de_dlambda(&pos);
-                assert!(e.is_finite() && g.iter().all(|x| x.is_finite()), "inner {inner} λ={l}: E={e}");
+                assert!(
+                    e.is_finite() && g.iter().all(|x| x.is_finite()),
+                    "inner {inner} λ={l}: E={e}"
+                );
                 assert!(dv.is_finite() && de.is_finite());
                 let (ev, ee) = h.inter_energy(&pos);
                 assert!(ev.is_finite() && ee.is_finite());

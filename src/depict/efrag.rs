@@ -50,7 +50,10 @@ impl Default for EAtom {
 
 impl EAtom {
     fn at(loc: Point2D) -> Self {
-        EAtom { loc, ..Default::default() }
+        EAtom {
+            loc,
+            ..Default::default()
+        }
     }
     fn transform(&mut self, t: &Transform2D) {
         let temp = t.apply(self.loc + self.normal);
@@ -134,11 +137,21 @@ fn segments_intersect(a: Point2D, b: Point2D, c: Point2D, d: Point2D) -> bool {
     if first && second {
         return true;
     }
-    point_on_segment(a, b, c) || point_on_segment(a, b, d) || point_on_segment(c, d, a) || point_on_segment(c, d, b)
+    point_on_segment(a, b, c)
+        || point_on_segment(a, b, d)
+        || point_on_segment(c, d, a)
+        || point_on_segment(c, d, b)
 }
 
 /// `_findFarthestPair`.
-fn farthest_pair(n: usize, beg1: usize, end1: usize, beg2: usize, end2: usize, dmat: &[f64]) -> (usize, usize) {
+fn farthest_pair(
+    n: usize,
+    beg1: usize,
+    end1: usize,
+    beg2: usize,
+    end2: usize,
+    dmat: &[f64],
+) -> (usize, usize) {
     let cands = [
         (dmat[beg1 * n + beg2], (beg1, beg2)),
         (dmat[beg1 * n + end2], (beg1, end2)),
@@ -175,9 +188,19 @@ fn closest_neighbor(ctx: &Ctx, dmat: &[f64], aid1: usize, aid2: usize) -> usize 
 }
 
 /// `_recurseDegTwoRingAtoms`.
-fn deg_two_ring_atoms(ctx: &Ctx, aid: usize, path: &mut Vec<usize>, nbr_map: &mut HashMap<usize, Vec<usize>>) {
-    let nbrs: Vec<usize> =
-        ctx.mol.atom_bonds(aid).iter().filter(|&&(_, b)| ctx.num_bond_rings(b) > 0).map(|&(o, _)| o).collect();
+fn deg_two_ring_atoms(
+    ctx: &Ctx,
+    aid: usize,
+    path: &mut Vec<usize>,
+    nbr_map: &mut HashMap<usize, Vec<usize>>,
+) {
+    let nbrs: Vec<usize> = ctx
+        .mol
+        .atom_bonds(aid)
+        .iter()
+        .filter(|&&(_, b)| ctx.num_bond_rings(b) > 0)
+        .map(|&(o, _)| o)
+        .collect();
     if nbrs.len() != 2 {
         return;
     }
@@ -211,15 +234,23 @@ fn mirror_trans_ring_atoms(ctx: &Ctx, ring: &[usize], coords: &mut BTreeMap<usiz
     for i in 0..n {
         let atom1 = ring[i];
         let atom2 = ring[(i + 1) % n];
-        let Some(b) = ctx.mol.bond_between(atom1, atom2) else { continue };
+        let Some(b) = ctx.mol.bond_between(atom1, atom2) else {
+            continue;
+        };
         let bond = ctx.mol.bond(b);
         if bond.order != BondOrder::Double || bond.stereo == BondStereo::None {
             continue;
         }
-        let Some((n0, n1)) = bond.stereo_atoms else { continue };
+        let Some((n0, n1)) = bond.stereo_atoms else {
+            continue;
+        };
         let left_in = ring.contains(&n0);
         let right_in = ring.contains(&n1);
-        let is_trans = if bond.stereo == BondStereo::Trans { left_in == right_in } else { left_in != right_in };
+        let is_trans = if bond.stereo == BondStereo::Trans {
+            left_in == right_in
+        } else {
+            left_in != right_in
+        };
         if !is_trans {
             continue;
         }
@@ -245,7 +276,10 @@ impl EmbeddedFrag {
     /// A single atom at the origin.
     pub fn single(ctx: &Ctx, aid: usize) -> Self {
         let mut f = EmbeddedFrag::default();
-        let e = EAtom { normal: Point2D::new(1.0, 0.0), ..Default::default() };
+        let e = EAtom {
+            normal: Point2D::new(1.0, 0.0),
+            ..Default::default()
+        };
         f.eatoms.insert(aid, e);
         f.update_new_neighs(ctx, aid);
         f
@@ -290,7 +324,11 @@ impl EmbeddedFrag {
             loc: Point2D::new(ctx.bond_len, 0.0),
             nbr1: b.begin as isize,
             cis_trans_nbr: s1 as isize,
-            normal: if cis { Point2D::new(0.0, -1.0) } else { Point2D::new(0.0, 1.0) },
+            normal: if cis {
+                Point2D::new(0.0, -1.0)
+            } else {
+                Point2D::new(0.0, 1.0)
+            },
             ccw: cis,
             ..Default::default()
         };
@@ -303,7 +341,10 @@ impl EmbeddedFrag {
     }
 
     fn loc(&self, aid: isize) -> Point2D {
-        self.eatoms.get(&(aid as usize)).map(|e| e.loc).unwrap_or_default()
+        self.eatoms
+            .get(&(aid as usize))
+            .map(|e| e.loc)
+            .unwrap_or_default()
     }
 
     // ------------------------------------------------------------------
@@ -312,7 +353,10 @@ impl EmbeddedFrag {
 
     /// `findNumNeigh`.
     fn num_neigh(&self, pt: Point2D, radius: f64) -> usize {
-        self.eatoms.values().filter(|e| (e.loc - pt).length() < radius).count()
+        self.eatoms
+            .values()
+            .filter(|e| (e.loc - pt).length() < radius)
+            .count()
     }
 
     /// `updateNewNeighs`.
@@ -359,7 +403,11 @@ impl EmbeddedFrag {
         let attach: Vec<usize> = self.attach.iter().copied().collect();
         for dai in attach {
             let enbrs = &self.eatoms[&dai].neighs;
-            let done: Vec<usize> = ctx.mol.neighbors(dai).filter(|n| !enbrs.contains(n)).collect();
+            let done: Vec<usize> = ctx
+                .mol
+                .neighbors(dai)
+                .filter(|n| !enbrs.contains(n))
+                .collect();
             match done.len() {
                 0 => {
                     let e = self.eatoms.get_mut(&dai).unwrap();
@@ -430,7 +478,8 @@ impl EmbeddedFrag {
         let coords: Vec<BTreeMap<usize, Point2D>> = rings
             .iter()
             .map(|ring| {
-                let mut c: BTreeMap<usize, Point2D> = embed_ring(ring, ctx.bond_len).into_iter().collect();
+                let mut c: BTreeMap<usize, Point2D> =
+                    embed_ring(ring, ctx.bond_len).into_iter().collect();
                 mirror_trans_ring_atoms(ctx, ring, &mut c);
                 c
             })
@@ -472,7 +521,12 @@ impl EmbeddedFrag {
         let largest = PI * (1.0 - 2.0 / ring.len() as f64);
         let mut prev = *ring.last().unwrap();
         for (cnt, &ai) in ring.iter().enumerate() {
-            let e = EAtom { loc: map[&ai], angle: largest, nbr1: prev as isize, ..Default::default() };
+            let e = EAtom {
+                loc: map[&ai],
+                angle: largest,
+                nbr1: prev as isize,
+                ..Default::default()
+            };
             if cnt > 0 {
                 self.eatoms.get_mut(&prev).unwrap().nbr2 = ai as isize;
             }
@@ -499,8 +553,18 @@ impl EmbeddedFrag {
     }
 
     /// `computeTwoAtomTrans`.
-    fn compute_two_atom_trans(&self, aid1: usize, aid2: usize, cor: &BTreeMap<usize, Point2D>) -> Transform2D {
-        Transform2D::align(self.eatoms[&aid1].loc, self.eatoms[&aid2].loc, cor[&aid1], cor[&aid2])
+    fn compute_two_atom_trans(
+        &self,
+        aid1: usize,
+        aid2: usize,
+        cor: &BTreeMap<usize, Point2D>,
+    ) -> Transform2D {
+        Transform2D::align(
+            self.eatoms[&aid1].loc,
+            self.eatoms[&aid2].loc,
+            cor[&aid1],
+            cor[&aid2],
+        )
     }
 
     /// `mergeRing`.
@@ -575,7 +639,13 @@ impl EmbeddedFrag {
     }
 
     /// `reflectIfNecessaryCisTrans`.
-    fn reflect_if_necessary_cis_trans(&self, emb: &mut EmbeddedFrag, ct_case: u32, aid1: usize, aid2: usize) {
+    fn reflect_if_necessary_cis_trans(
+        &self,
+        emb: &mut EmbeddedFrag,
+        ct_case: u32,
+        aid1: usize,
+        aid2: usize,
+    ) {
         let p1 = self.eatoms[&aid1].loc;
         let (p1norm, mut ratm);
         if ct_case == 1 {
@@ -601,7 +671,13 @@ impl EmbeddedFrag {
     }
 
     /// `reflectIfNecessaryThirdPt`.
-    fn reflect_if_necessary_third_pt(&self, emb: &mut EmbeddedFrag, aid1: usize, aid2: usize, aid3: usize) {
+    fn reflect_if_necessary_third_pt(
+        &self,
+        emb: &mut EmbeddedFrag,
+        aid1: usize,
+        aid2: usize,
+        aid3: usize,
+    ) {
         let pt1 = self.eatoms[&aid1].loc;
         let pt2 = self.eatoms[&aid2].loc;
         let mut normal = pt2;
@@ -662,8 +738,19 @@ impl EmbeddedFrag {
         let nccw = self.num_neigh(curr_loc + norm, NEIGH_RADIUS);
         let ncw = self.num_neigh(curr_loc - norm, NEIGH_RADIUS);
         norm.normalize();
-        let (normal, ccw) = if nccw < ncw { (norm, false) } else { (-norm, true) };
-        let e = EAtom { loc: curr_loc, nbr1: to as isize, angle: -1.0, normal, ccw, ..Default::default() };
+        let (normal, ccw) = if nccw < ncw {
+            (norm, false)
+        } else {
+            (-norm, true)
+        };
+        let e = EAtom {
+            loc: curr_loc,
+            nbr1: to as isize,
+            angle: -1.0,
+            normal,
+            ccw,
+            ..Default::default()
+        };
         self.eatoms.insert(aid, e);
     }
 
@@ -718,7 +805,11 @@ impl EmbeddedFrag {
 
     /// `findCommonAtoms`.
     fn common_atoms(&self, other: &EmbeddedFrag) -> Vec<usize> {
-        self.eatoms.keys().copied().filter(|k| other.eatoms.contains_key(k)).collect()
+        self.eatoms
+            .keys()
+            .copied()
+            .filter(|k| other.eatoms.contains_key(k))
+            .collect()
     }
 
     /// `mergeNoCommon`.
@@ -757,7 +848,12 @@ impl EmbeddedFrag {
             self.compute_one_atom_trans(comm[0], emb)
         } else {
             let (c1, c2) = (comm[0], comm[1]);
-            Transform2D::align(self.eatoms[&c1].loc, self.eatoms[&c2].loc, emb.eatoms[&c1].loc, emb.eatoms[&c2].loc)
+            Transform2D::align(
+                self.eatoms[&c1].loc,
+                self.eatoms[&c2].loc,
+                emb.eatoms[&c1].loc,
+                emb.eatoms[&c2].loc,
+            )
         };
         emb.transform(&t);
         if comm.len() >= 2 {
@@ -836,9 +932,10 @@ impl EmbeddedFrag {
                     self.add_non_ring_atom(ctx, nbri, aid);
                     nratms.remove(p);
                 } else {
-                    let idx = efrags
-                        .iter()
-                        .position(|f| f.as_ref().is_some_and(|f| !f.done && f.eatoms.contains_key(&nbri)));
+                    let idx = efrags.iter().position(|f| {
+                        f.as_ref()
+                            .is_some_and(|f| !f.done && f.eatoms.contains_key(&nbri))
+                    });
                     if let Some(i) = idx {
                         let mut other = efrags[i].take().unwrap();
                         self.merge_no_common(ctx, &mut other, aid, nbri);
@@ -908,7 +1005,9 @@ impl EmbeddedFrag {
                 std::mem::swap(&mut eig1, &mut eig2);
             }
         }
-        let t = Transform2D { d: [eig1.x, eig1.y, 0.0, -eig1.y, eig1.x, 0.0, 0.0, 0.0, 1.0] };
+        let t = Transform2D {
+            d: [eig1.x, eig1.y, 0.0, -eig1.y, eig1.x, 0.0, 0.0, 0.0, 1.0],
+        };
         self.transform(&t);
     }
 
@@ -929,7 +1028,11 @@ impl EmbeddedFrag {
             in_end[a] = true;
         }
         let n_fixed = self.eatoms.values().filter(|e| e.fixed).count();
-        if n_fixed > 0 && end_side.iter().any(|a| self.eatoms.get(a).is_some_and(|e| e.fixed)) {
+        if n_fixed > 0
+            && end_side
+                .iter()
+                .any(|a| self.eatoms.get(a).is_some_and(|e| e.fixed))
+        {
             return;
         }
         let end_side_flip = (self.eatoms.len() - end_side.len()) >= end_side.len();
@@ -945,15 +1048,27 @@ impl EmbeddedFrag {
 
     /// `flipAboutSpiroCenter`.
     fn flip_about_spiro_center(&mut self, ctx: &Ctx, spiro: usize) {
-        let target = ctx.ri.atom_rings.iter().find(|r| r.contains(&spiro)).expect("spiro ring");
-        let ring_nbrs: Vec<usize> = ctx.mol.neighbors(spiro).filter(|n| target.contains(n)).collect();
+        let target = ctx
+            .ri
+            .atom_rings
+            .iter()
+            .find(|r| r.contains(&spiro))
+            .expect("spiro ring");
+        let ring_nbrs: Vec<usize> = ctx
+            .mol
+            .neighbors(spiro)
+            .filter(|n| target.contains(n))
+            .collect();
         if ring_nbrs.len() != 2 {
             return;
         }
         let to_flip = atoms_one_side(ctx, ring_nbrs[0], spiro);
         let spiro_loc = self.eatoms[&spiro].loc;
         let mid = (self.eatoms[&ring_nbrs[0]].loc + self.eatoms[&ring_nbrs[1]].loc) * 0.5;
-        if to_flip.iter().any(|a| self.eatoms.get(a).is_none_or(|e| e.fixed)) {
+        if to_flip
+            .iter()
+            .any(|a| self.eatoms.get(a).is_none_or(|e| e.fixed))
+        {
             return;
         }
         for a in to_flip {
@@ -980,16 +1095,30 @@ impl EmbeddedFrag {
     // ------------------------------------------------------------------
 
     /// `findCollisions`; also sets the per-atom densities.
-    fn find_collisions(&mut self, ctx: &Ctx, dmat: &[f64], include_bonds: bool, include_bonded: bool) -> Vec<(usize, usize)> {
+    fn find_collisions(
+        &mut self,
+        ctx: &Ctx,
+        dmat: &[f64],
+        include_bonds: bool,
+        include_bonded: bool,
+    ) -> Vec<(usize, usize)> {
         let keys: Vec<usize> = self.eatoms.keys().copied().collect();
         let locs: Vec<Point2D> = self.eatoms.values().map(|e| e.loc).collect();
         let mut dens = vec![0.0f64; keys.len()];
         let mut res = Vec::new();
         let thr2 = COLLISION_THRES * COLLISION_THRES;
         for i in 0..keys.len() {
-            let f1 = if ctx.anum(keys[i]) != 6 { HETEROATOM_COLL_SCALE } else { 1.0 };
+            let f1 = if ctx.anum(keys[i]) != 6 {
+                HETEROATOM_COLL_SCALE
+            } else {
+                1.0
+            };
             for j in 0..i {
-                let f2 = if ctx.anum(keys[j]) != 6 { HETEROATOM_COLL_SCALE } else { 1.0 };
+                let f2 = if ctx.anum(keys[j]) != 6 {
+                    HETEROATOM_COLL_SCALE
+                } else {
+                    1.0
+                };
                 let mut d2 = (locs[j] - locs[i]).length_sq();
                 if d2 > 1.0e-3 {
                     dens[i] += 1.0 / d2;
@@ -999,7 +1128,8 @@ impl EmbeddedFrag {
                     dens[j] += 1000.0;
                 }
                 d2 /= f1 * f2;
-                if d2 < thr2 && (include_bonded || ctx.mol.bond_between(keys[i], keys[j]).is_none()) {
+                if d2 < thr2 && (include_bonded || ctx.mol.bond_between(keys[i], keys[j]).is_none())
+                {
                     res.push((keys[i], keys[j]));
                 }
             }
@@ -1011,14 +1141,19 @@ impl EmbeddedFrag {
             let bonds = ctx.mol.bonds();
             for (b1, bd1) in bonds.iter().enumerate() {
                 let (beg1, end1) = (bd1.begin, bd1.end);
-                let (Some(l1), Some(l2)) = (self.eatoms.get(&beg1), self.eatoms.get(&end1)) else { continue };
+                let (Some(l1), Some(l2)) = (self.eatoms.get(&beg1), self.eatoms.get(&end1)) else {
+                    continue;
+                };
                 let (l1, l2) = (l1.loc, l2.loc);
                 for bd2 in &bonds[b1 + 1..] {
                     let (beg2, end2) = (bd2.begin, bd2.end);
                     if beg1 == beg2 || beg1 == end2 || end1 == beg2 || end1 == end2 {
                         continue;
                     }
-                    let (Some(l3), Some(l4)) = (self.eatoms.get(&beg2), self.eatoms.get(&end2)) else { continue };
+                    let (Some(l3), Some(l4)) = (self.eatoms.get(&beg2), self.eatoms.get(&end2))
+                    else {
+                        continue;
+                    };
                     if segments_intersect(l1, l2, l3.loc, l4.loc) {
                         res.push(farthest_pair(ctx.n(), beg1, end1, beg2, end2, dmat));
                     }
@@ -1261,7 +1396,13 @@ impl EmbeddedFrag {
 
     /// `getAtomsOnSide`: BFS from `side_start` not crossing `center` or
     /// `exclude`.
-    fn atoms_on_side(&self, ctx: &Ctx, center: usize, side_start: usize, exclude: usize) -> Vec<usize> {
+    fn atoms_on_side(
+        &self,
+        ctx: &Ctx,
+        center: usize,
+        side_start: usize,
+        exclude: usize,
+    ) -> Vec<usize> {
         let mut res = Vec::new();
         let mut visited = vec![false; ctx.n()];
         visited[center] = true;
@@ -1285,7 +1426,14 @@ impl EmbeddedFrag {
     }
 
     /// `openAngleByIncrement`.
-    fn open_angle_by_increment(&mut self, ctx: &Ctx, prev: usize, center: usize, next: usize, inc: f64) -> bool {
+    fn open_angle_by_increment(
+        &mut self,
+        ctx: &Ctx,
+        prev: usize,
+        center: usize,
+        next: usize,
+        inc: f64,
+    ) -> bool {
         let cl = self.eatoms[&center].loc;
         let v1 = self.eatoms[&prev].loc - cl;
         let v2 = self.eatoms[&next].loc - cl;
@@ -1343,12 +1491,20 @@ impl EmbeddedFrag {
         let canon = |c: (usize, usize)| (c.0.min(c.1), c.0.max(c.1));
         let find = |s: &mut Self| {
             let c = s.find_collisions(ctx, dmat, false, false);
-            if c.is_empty() { s.find_collisions(ctx, dmat, true, false) } else { c }
+            if c.is_empty() {
+                s.find_collisions(ctx, dmat, true, false)
+            } else {
+                c
+            }
         };
         let mut skipped: HashSet<(usize, usize)> = HashSet::new();
-        let filter = |cs: &[(usize, usize)], skipped: &HashSet<(usize, usize)>| -> Vec<(usize, usize)> {
-            cs.iter().copied().filter(|&c| !skipped.contains(&canon(c))).collect()
-        };
+        let filter =
+            |cs: &[(usize, usize)], skipped: &HashSet<(usize, usize)>| -> Vec<(usize, usize)> {
+                cs.iter()
+                    .copied()
+                    .filter(|&c| !skipped.contains(&canon(c)))
+                    .collect()
+            };
         let mut all = find(self);
         let mut colls = filter(&all, &skipped);
         let mut totals: HashMap<(usize, usize), HashMap<usize, f64>> = HashMap::new();
@@ -1365,8 +1521,11 @@ impl EmbeddedFrag {
             let mut positions = Vec::new();
             for i in 1..path.len() - 1 {
                 let (p, ce, nx) = (path[i - 1], path[i], path[i + 1]);
-                let same_ring = match (atom_rings.get(&p), atom_rings.get(&ce), atom_rings.get(&nx)) {
-                    (Some(pr), Some(cr), Some(nr)) => pr.iter().any(|r| cr.contains(r) && nr.contains(r)),
+                let same_ring = match (atom_rings.get(&p), atom_rings.get(&ce), atom_rings.get(&nx))
+                {
+                    (Some(pr), Some(cr), Some(nr)) => {
+                        pr.iter().any(|r| cr.contains(r) && nr.contains(r))
+                    }
                     _ => false,
                 };
                 if !same_ring {
@@ -1380,16 +1539,28 @@ impl EmbeddedFrag {
                 continue;
             }
             let prev_count = all.len();
-            let saved: Vec<(usize, Point2D)> = self.eatoms.iter().map(|(&k, e)| (k, e.loc)).collect();
+            let saved: Vec<(usize, Point2D)> =
+                self.eatoms.iter().map(|(&k, e)| (k, e.loc)).collect();
             let mut any = false;
             for pos in positions {
                 let center = path[pos];
-                let tot = totals.entry(canon(c)).or_default().entry(center).or_insert(0.0);
+                let tot = totals
+                    .entry(canon(c))
+                    .or_default()
+                    .entry(center)
+                    .or_insert(0.0);
                 if *tot >= MAX_ANGLE_EXPANSION {
                     continue;
                 }
-                if self.open_angle_by_increment(ctx, path[pos - 1], center, path[pos + 1], ANGLE_EXPANSION_INCREMENT) {
-                    *totals.get_mut(&canon(c)).unwrap().get_mut(&center).unwrap() += ANGLE_EXPANSION_INCREMENT;
+                if self.open_angle_by_increment(
+                    ctx,
+                    path[pos - 1],
+                    center,
+                    path[pos + 1],
+                    ANGLE_EXPANSION_INCREMENT,
+                ) {
+                    *totals.get_mut(&canon(c)).unwrap().get_mut(&center).unwrap() +=
+                        ANGLE_EXPANSION_INCREMENT;
                     any = true;
                 }
             }
@@ -1468,8 +1639,12 @@ impl EmbeddedFrag {
         if permute_deg4 {
             for a in 0..ctx.n() {
                 if ctx.degree(a) == 4 && ctx.num_atom_rings(a) == 0 {
-                    let (aids, bids): (Vec<usize>, Vec<usize>) = ctx.mol.atom_bonds(a).iter().copied().unzip();
-                    if aids.iter().all(|x| self.eatoms.get(x).is_some_and(|e| !e.fixed)) {
+                    let (aids, bids): (Vec<usize>, Vec<usize>) =
+                        ctx.mol.atom_bonds(a).iter().copied().unzip();
+                    if aids
+                        .iter()
+                        .all(|x| self.eatoms.get(x).is_some_and(|e| !e.fixed))
+                    {
                         deg4.push((a, bids, aids));
                     }
                 }
@@ -1484,7 +1659,8 @@ impl EmbeddedFrag {
             *rng = MinStd::new(seed as u64);
         }
         let mut best = self.density_cost(ctx);
-        let mut best_crd: Vec<(usize, Point2D)> = self.eatoms.iter().map(|(&k, e)| (k, e.loc)).collect();
+        let mut best_crd: Vec<(usize, Point2D)> =
+            self.eatoms.iter().map(|(&k, e)| (k, e.loc)).collect();
         for _ in 0..n_samples {
             for _ in 0..per_sample {
                 let ri = rng.uniform_int(0, nt as u32 - 1) as usize;

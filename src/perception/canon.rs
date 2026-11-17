@@ -62,7 +62,11 @@ impl BondHolder {
             return if x.bond_stereo < y.bond_stereo { -1 } else { 1 };
         }
         if x.nbr_sym_class != y.nbr_sym_class {
-            return if x.nbr_sym_class < y.nbr_sym_class { -1 } else { 1 };
+            return if x.nbr_sym_class < y.nbr_sym_class {
+                -1
+            } else {
+                1
+            };
         }
         0
     }
@@ -88,7 +92,9 @@ fn count_swaps_to_interconvert(reference: &[usize], probe: &[usize]) -> u32 {
     let mut n = 0;
     for i in 0..reference.len() {
         if probe[i] != reference[i] {
-            let j = (i..probe.len()).find(|&j| probe[j] == reference[i]).expect("probe element");
+            let j = (i..probe.len())
+                .find(|&j| probe[j] == reference[i])
+                .expect("probe element");
             probe.swap(i, j);
             n += 1;
         }
@@ -203,7 +209,10 @@ impl Ranker<'_> {
         }
         // RDKit stores the charge in an `unsigned int` before comparing, so
         // negative charges sort above positive ones
-        let c = cmp(mi.formal_charge as i32 as u32, mj.formal_charge as i32 as u32);
+        let c = cmp(
+            mi.formal_charge as i32 as u32,
+            mj.formal_charge as i32 as u32,
+        );
         if c != 0 {
             return c;
         }
@@ -320,10 +329,18 @@ impl Ranker<'_> {
             Functor::SpecialSymmetry => {
                 let (ai, aj) = (&self.atoms[i], &self.atoms[j]);
                 if ai.neighbor_num != aj.neighbor_num {
-                    return if ai.neighbor_num < aj.neighbor_num { -1 } else { 1 };
+                    return if ai.neighbor_num < aj.neighbor_num {
+                        -1
+                    } else {
+                        1
+                    };
                 }
                 if ai.revisited_neighbors != aj.revisited_neighbors {
-                    return if ai.revisited_neighbors < aj.revisited_neighbors { -1 } else { 1 };
+                    return if ai.revisited_neighbors < aj.revisited_neighbors {
+                        -1
+                    } else {
+                        1
+                    };
                 }
                 self.refresh_bonds(i);
                 self.refresh_bonds(j);
@@ -352,7 +369,11 @@ impl Ranker<'_> {
         } else if nel == 2 {
             let n1 = mem[base];
             let n2 = mem[base + 1];
-            let stat = if changed[n1] != 0 || changed[n2] != 0 { self.compare(f, n1, n2) } else { 0 };
+            let stat = if changed[n1] != 0 || changed[n2] != 0 {
+                self.compare(f, n1, n2)
+            } else {
+                0
+            };
             if stat == 0 {
                 count[n1] = 2;
                 count[n2] = 0;
@@ -375,12 +396,20 @@ impl Ranker<'_> {
         let t2 = temp + n1;
         let (mut s1, mut s2, mut ptr, result);
         if self.hanoi(f, mem, b1, n1, t1, count, changed) {
-            s2 = if self.hanoi(f, mem, b2, n2, t2, count, changed) { t2 } else { b2 };
+            s2 = if self.hanoi(f, mem, b2, n2, t2, count, changed) {
+                t2
+            } else {
+                b2
+            };
             result = false;
             ptr = base;
             s1 = t1;
         } else {
-            s2 = if self.hanoi(f, mem, b2, n2, t2, count, changed) { t2 } else { b2 };
+            s2 = if self.hanoi(f, mem, b2, n2, t2, count, changed) {
+                t2
+            } else {
+                b2
+            };
             result = true;
             ptr = temp;
             s1 = b1;
@@ -395,7 +424,11 @@ impl Ranker<'_> {
         }
         loop {
             let (a, b) = (mem[s1], mem[s2]);
-            let stat = if changed[a] != 0 || changed[b] != 0 { self.compare(f, a, b) } else { 0 };
+            let stat = if changed[a] != 0 || changed[b] != 0 {
+                self.compare(f, a, b)
+            } else {
+                0
+            };
             let len1 = count[a] as usize;
             let len2 = count[b] as usize;
             if stat == 0 {
@@ -657,7 +690,11 @@ pub fn rank_fragment_atoms(mol: &Molecule, ri: &RingInfo) -> Vec<usize> {
     }
     // initFragmentCanonAtoms
     let mut atoms: Vec<CanonAtom> = (0..n)
-        .map(|i| CanonAtom { index: i as i32, total_num_hs: mol.atom(i).total_hidden_hs(), ..Default::default() })
+        .map(|i| CanonAtom {
+            index: i as i32,
+            total_num_hs: mol.atom(i).total_hidden_hs(),
+            ..Default::default()
+        })
         .collect();
     for b in 0..mol.num_bonds() {
         let bond = mol.bond(b);
@@ -668,8 +705,18 @@ pub fn rank_fragment_atoms(mol: &Molecule, ri: &RingInfo) -> Vec<usize> {
         atoms[s].degree += 1;
         atoms[e].nbr_ids.push(s);
         atoms[e].degree += 1;
-        atoms[s].bonds.push(BondHolder { bond_type: bt, bond_stereo: st, nbr_sym_class: 0, nbr_idx: e });
-        atoms[e].bonds.push(BondHolder { bond_type: bt, bond_stereo: st, nbr_sym_class: 0, nbr_idx: s });
+        atoms[s].bonds.push(BondHolder {
+            bond_type: bt,
+            bond_stereo: st,
+            nbr_sym_class: 0,
+            nbr_idx: e,
+        });
+        atoms[e].bonds.push(BondHolder {
+            bond_type: bt,
+            bond_stereo: st,
+            nbr_sym_class: 0,
+            nbr_idx: s,
+        });
     }
     for a in atoms.iter_mut() {
         a.bonds.sort_by(|x, y| BondHolder::compare(y, x).cmp(&0));
@@ -718,7 +765,11 @@ pub fn rank_fragment_atoms(mol: &Molecule, ri: &RingInfo) -> Vec<usize> {
             ties = true;
         }
     }
-    if ties && ring_atoms > 0 && (sym_ring_atoms as f32) / (ring_atoms as f32) > 0.5 && branching_ring_atom {
+    if ties
+        && ring_atoms > 0
+        && (sym_ring_atoms as f32) / (ring_atoms as f32) > 0.5
+        && branching_ring_atom
+    {
         compare_ring_atoms_concerning_num_neighbors(&mut r);
         p.activate();
         refine(&mut r, Functor::SpecialSymmetry, &mut p);

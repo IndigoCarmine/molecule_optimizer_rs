@@ -20,7 +20,11 @@
 // The ported numerical / graph code deliberately mirrors RDKit's C++ control
 // flow (index loops, nested conditions) to keep the port reviewable against
 // the original and floating-point operation order identical.
-#![allow(clippy::needless_range_loop, clippy::collapsible_if, clippy::collapsible_match)]
+#![allow(
+    clippy::needless_range_loop,
+    clippy::collapsible_if,
+    clippy::collapsible_match
+)]
 
 pub mod calc;
 pub mod core;

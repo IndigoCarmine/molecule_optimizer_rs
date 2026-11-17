@@ -63,14 +63,32 @@ pub(crate) struct FftKernels {
 
 impl FftKernels {
     pub fn new(ctx: &GpuContext) -> FftKernels {
-        let layout = util::seq_layout(ctx, "fft", &[Bind::Uniform, Bind::Read, Bind::ReadWrite, Bind::Read]);
+        let layout = util::seq_layout(
+            ctx,
+            "fft",
+            &[Bind::Uniform, Bind::Read, Bind::ReadWrite, Bind::Read],
+        );
         let mut pipes = HashMap::new();
         for r in RADICES {
             let mut h = util::header(&[("R", Const::U(r as u32))]);
-            let cs: Vec<String> = (0..r).map(|m| util::f32_literal((2.0 * std::f64::consts::PI * m as f64 / r as f64).cos())).collect();
-            let sn: Vec<String> = (0..r).map(|m| util::f32_literal((2.0 * std::f64::consts::PI * m as f64 / r as f64).sin())).collect();
-            h.push_str(&format!("var<private> CR: array<f32, {r}> = array<f32, {r}>({});\n", cs.join(", ")));
-            h.push_str(&format!("var<private> SR: array<f32, {r}> = array<f32, {r}>({});\n", sn.join(", ")));
+            let cs: Vec<String> = (0..r)
+                .map(|m| {
+                    util::f32_literal((2.0 * std::f64::consts::PI * m as f64 / r as f64).cos())
+                })
+                .collect();
+            let sn: Vec<String> = (0..r)
+                .map(|m| {
+                    util::f32_literal((2.0 * std::f64::consts::PI * m as f64 / r as f64).sin())
+                })
+                .collect();
+            h.push_str(&format!(
+                "var<private> CR: array<f32, {r}> = array<f32, {r}>({});\n",
+                cs.join(", ")
+            ));
+            h.push_str(&format!(
+                "var<private> SR: array<f32, {r}> = array<f32, {r}>({});\n",
+                sn.join(", ")
+            ));
             let m = util::module(ctx, "fft", &[&h, FFT_WGSL]);
             pipes.insert(r, util::pipeline(ctx, "fft", &m, "main", &layout));
         }
@@ -93,11 +111,21 @@ pub(crate) struct FftPlan {
 }
 
 impl FftPlan {
-    pub fn new(ctx: &GpuContext, k: &FftKernels, dims: [usize; 3], a: &wgpu::Buffer, b: &wgpu::Buffer) -> Result<FftPlan> {
+    pub fn new(
+        ctx: &GpuContext,
+        k: &FftKernels,
+        dims: [usize; 3],
+        a: &wgpu::Buffer,
+        b: &wgpu::Buffer,
+    ) -> Result<FftPlan> {
         let total: usize = dims.iter().product();
         let mut factors = Vec::new();
         for &n in &dims {
-            factors.push(factorize(n).ok_or_else(|| Error::InvalidArgument(format!("GPU FFT: unsupported length {n} (factors 2, 3, 5, 7 only)")))?);
+            factors.push(factorize(n).ok_or_else(|| {
+                Error::InvalidArgument(format!(
+                    "GPU FFT: unsupported length {n} (factors 2, 3, 5, 7 only)"
+                ))
+            })?);
         }
         // twiddle tables exp(-2 pi i m / n)
         let mut tw: Vec<[f32; 2]> = Vec::new();
@@ -133,8 +161,14 @@ impl FftPlan {
                     let u = util::uniform(ctx, "fft pass", std::mem::size_of::<FftParams>());
                     ctx.queue().write_buffer(&u, 0, bytemuck::bytes_of(&p));
                     let (src, dst) = if *in_b { (b, a) } else { (a, b) };
-                    let bind = util::seq_bind_group(ctx, "fft pass", &k.layout, &[&u, src, dst, &twb]);
-                    passes.push(Pass { radix: r, bind, groups: (total / r).div_ceil(64), _uniform: u });
+                    let bind =
+                        util::seq_bind_group(ctx, "fft pass", &k.layout, &[&u, src, dst, &twb]);
+                    passes.push(Pass {
+                        radix: r,
+                        bind,
+                        groups: (total / r).div_ceil(64),
+                        _uniform: u,
+                    });
                     *in_b = !*in_b;
                     ns *= r;
                 }
@@ -145,7 +179,14 @@ impl FftPlan {
         let fwd_out_b = in_b;
         let inv = make(true, &mut in_b);
         let inv_out_b = in_b;
-        Ok(FftPlan { dims, fwd, inv, fwd_out_b, inv_out_b, _tw: twb })
+        Ok(FftPlan {
+            dims,
+            fwd,
+            inv,
+            fwd_out_b,
+            inv_out_b,
+            _tw: twb,
+        })
     }
 
     fn encode(k: &FftKernels, passes: &[Pass], pass: &mut wgpu::ComputePass) {
@@ -199,7 +240,14 @@ impl GpuFft3d {
         let b = util::storage(ctx, "fft b", total * 8);
         let plan = FftPlan::new(ctx, &kernels, dims, &a, &b)?;
         let staging = util::readback(ctx, "fft staging", total * 8);
-        Ok(GpuFft3d { ctx: ctx.clone(), kernels, plan, a, b, staging })
+        Ok(GpuFft3d {
+            ctx: ctx.clone(),
+            kernels,
+            plan,
+            a,
+            b,
+            staging,
+        })
     }
 
     /// Number of radix passes per transform.
@@ -212,19 +260,41 @@ impl GpuFft3d {
     pub fn transform(&self, data: &mut [[f32; 2]], inverse: bool) {
         let total: usize = self.plan.dims.iter().product();
         assert_eq!(data.len(), total, "FFT data length");
-        let input = if inverse && self.plan.forward_output() { &self.b } else { &self.a };
-        self.ctx.queue().write_buffer(input, 0, bytemuck::cast_slice(data));
-        let mut enc = self.ctx.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fft") });
+        let input = if inverse && self.plan.forward_output() {
+            &self.b
+        } else {
+            &self.a
+        };
+        self.ctx
+            .queue()
+            .write_buffer(input, 0, bytemuck::cast_slice(data));
+        let mut enc = self
+            .ctx
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fft") });
         {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("fft"), timestamp_writes: None });
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("fft"),
+                timestamp_writes: None,
+            });
             if inverse {
                 self.plan.encode_inverse(&self.kernels, &mut pass);
             } else {
                 self.plan.encode_forward(&self.kernels, &mut pass);
             }
         }
-        let out_b = if inverse { self.plan.inverse_output() } else { self.plan.forward_output() };
-        enc.copy_buffer_to_buffer(if out_b { &self.b } else { &self.a }, 0, &self.staging, 0, (total * 8) as u64);
+        let out_b = if inverse {
+            self.plan.inverse_output()
+        } else {
+            self.plan.forward_output()
+        };
+        enc.copy_buffer_to_buffer(
+            if out_b { &self.b } else { &self.a },
+            0,
+            &self.staging,
+            0,
+            (total * 8) as u64,
+        );
         self.ctx.queue().submit([enc.finish()]);
         util::map_blocking(&self.ctx, &self.staging, total * 8);
         util::read_mapped(&self.staging, 0, data);

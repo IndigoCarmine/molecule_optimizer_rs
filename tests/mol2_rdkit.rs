@@ -28,17 +28,25 @@ fn write_fixture() {
 #[test]
 fn mol2_energies_match_rdkit() {
     let dir = root().join("tests/data/mol2");
-    let mols = io::read_mol2_str(&std::fs::read_to_string(dir.join("bench_initial.mol2")).unwrap()).unwrap();
+    let mols = io::read_mol2_str(&std::fs::read_to_string(dir.join("bench_initial.mol2")).unwrap())
+        .unwrap();
     let refs = std::fs::read_to_string(dir.join("rdkit_energies.tsv")).unwrap();
     let mut checked = 0;
     let mut bad = Vec::new();
     for line in refs.lines().skip(1) {
         let f: Vec<&str> = line.split('\t').collect();
-        let (idx, name, kind, e_ref): (usize, &str, &str, &str) = (f[0].parse().unwrap(), f[1], f[2], f[3]);
+        let (idx, name, kind, e_ref): (usize, &str, &str, &str) =
+            (f[0].parse().unwrap(), f[1], f[2], f[3]);
         let m = &mols[idx];
         assert_eq!(m.name, name);
-        let Ok(e_ref) = e_ref.parse::<f64>() else { continue };
-        let b: Box<dyn ForceFieldBuilder> = if kind == "MMFF" { Box::new(MmffBuilder::default()) } else { Box::new(UffBuilder::default()) };
+        let Ok(e_ref) = e_ref.parse::<f64>() else {
+            continue;
+        };
+        let b: Box<dyn ForceFieldBuilder> = if kind == "MMFF" {
+            Box::new(MmffBuilder::default())
+        } else {
+            Box::new(UffBuilder::default())
+        };
         let e = match b.build_dyn(m, &[]) {
             Ok(ff) => ff.energy(&m.flat_coords()),
             Err(err) => {

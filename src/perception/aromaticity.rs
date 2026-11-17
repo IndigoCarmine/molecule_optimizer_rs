@@ -3,8 +3,8 @@
 //! Copyright (C) 2003-2021 Greg Landrum and other RDKit contributors).
 
 use super::rings::RingInfo;
-use crate::core::{BondOrder, Molecule, element};
 use crate::core::element::more_electronegative;
+use crate::core::{BondOrder, Molecule, element};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 const MAX_FUSED_AROMATIC_RING_SIZE: usize = 24;
@@ -77,7 +77,11 @@ fn incident_multiple_bond(mol: &Molecule, i: usize) -> bool {
 fn donor_type(mol: &Molecule, ri: &RingInfo, i: usize) -> Donor {
     let at = mol.atom(i);
     if at.atomic_num == 0 {
-        return if incident_cyclic_multiple_bond(mol, ri, i) { Donor::One } else { Donor::Any };
+        return if incident_cyclic_multiple_bond(mol, ri, i) {
+            Donor::One
+        } else {
+            Donor::Any
+        };
     }
     let mut nelec = count_atom_elec(mol, i);
     if nelec < 0 {
@@ -110,7 +114,11 @@ fn donor_type(mol: &Molecule, ri: &RingInfo, i: usize) -> Donor {
                 nelec -= 1;
             }
         }
-        if nelec % 2 == 1 { Donor::One } else { Donor::Two }
+        if nelec % 2 == 1 {
+            Donor::One
+        } else {
+            Donor::Two
+        }
     }
 }
 
@@ -189,7 +197,12 @@ fn apply_huckel(ring: &[usize], edon: &[Donor], min_ring_size: usize) -> bool {
     }
 }
 
-fn pick_fused_rings(curr: usize, neigh: &BTreeMap<usize, Vec<usize>>, res: &mut Vec<usize>, done: &mut [bool]) {
+fn pick_fused_rings(
+    curr: usize,
+    neigh: &BTreeMap<usize, Vec<usize>>,
+    res: &mut Vec<usize>,
+    done: &mut [bool],
+) {
     done[curr] = true;
     res.push(curr);
     let mut stack = vec![(curr, 0usize)];
@@ -223,7 +236,11 @@ fn check_fused(rids: &[usize], neigh: &BTreeMap<usize, Vec<usize>>) -> bool {
     fused.len() == rids.len()
 }
 
-fn make_ring_neighbor_map(brings: &[Vec<usize>], max_size: usize, max_overlap: usize) -> BTreeMap<usize, Vec<usize>> {
+fn make_ring_neighbor_map(
+    brings: &[Vec<usize>],
+    max_size: usize,
+    max_overlap: usize,
+) -> BTreeMap<usize, Vec<usize>> {
     let mut m: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for i in 0..brings.len() {
         m.entry(i).or_default();
@@ -313,7 +330,9 @@ fn apply_huckel_to_fused(
                     ats[a] += 1;
                 }
             }
-            let unon: Vec<usize> = (0..natoms).filter(|&i| ats[i] == 1 || ats[i] == 2).collect();
+            let unon: Vec<usize> = (0..natoms)
+                .filter(|&i| ats[i] == 1 || ats[i] == 2)
+                .collect();
             if apply_huckel(&unon, edon, min_ring_size) {
                 to_mark.push(cur_rs);
             }
@@ -324,7 +343,12 @@ fn apply_huckel_to_fused(
     }
 }
 
-fn mark_atoms_bonds_arom(mol: &mut Molecule, brings: &[Vec<usize>], ring_ids: &[usize], done: &mut BTreeSet<usize>) {
+fn mark_atoms_bonds_arom(
+    mol: &mut Molecule,
+    brings: &[Vec<usize>],
+    ring_ids: &[usize],
+    done: &mut BTreeSet<usize>,
+) {
     let mut cnt: BTreeMap<usize, usize> = BTreeMap::new();
     for &r in ring_ids {
         for &b in &brings[r] {
@@ -376,11 +400,13 @@ pub fn set_aromaticity(mol: &mut Molecule) {
             let mut d = donor_type(mol, &ri, a);
             if d == Donor::Two && ring_sz >= 9 {
                 let at = mol.atom(a);
-                if (at.atomic_num == 8 || at.atomic_num == 16) && mol.degree(a) == 2 && at.formal_charge == 0 {
-                    let has_mult = mol
-                        .atom_bonds(a)
-                        .iter()
-                        .any(|&(_, b)| matches!(mol.bond(b).order, BondOrder::Double | BondOrder::Triple));
+                if (at.atomic_num == 8 || at.atomic_num == 16)
+                    && mol.degree(a) == 2
+                    && at.formal_charge == 0
+                {
+                    let has_mult = mol.atom_bonds(a).iter().any(|&(_, b)| {
+                        matches!(mol.bond(b).order, BondOrder::Double | BondOrder::Triple)
+                    });
                     if !has_mult {
                         d = Donor::No;
                     }

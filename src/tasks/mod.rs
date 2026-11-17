@@ -35,7 +35,11 @@ pub struct Progress {
 
 impl Progress {
     pub fn fraction(&self) -> f64 {
-        if self.total == 0 { if self.finished { 1.0 } else { 0.0 } } else { self.done as f64 / self.total as f64 }
+        if self.total == 0 {
+            if self.finished { 1.0 } else { 0.0 }
+        } else {
+            self.done as f64 / self.total as f64
+        }
     }
 }
 
@@ -71,7 +75,9 @@ pub struct JobContext<S> {
 
 impl<S> Clone for JobContext<S> {
     fn clone(&self) -> Self {
-        JobContext { shared: self.shared.clone() }
+        JobContext {
+            shared: self.shared.clone(),
+        }
     }
 }
 
@@ -126,7 +132,11 @@ impl<S: Clone + Send + Sync + 'static> JobContext<S> {
     }
     fn publish_locked(&self, d: &S) {
         let v = self.shared.version.fetch_add(1, Ordering::AcqRel) + 1;
-        self.shared.published.store(Arc::new(Snapshot { version: v, elapsed: self.shared.start.elapsed(), data: d.clone() }));
+        self.shared.published.store(Arc::new(Snapshot {
+            version: v,
+            elapsed: self.shared.start.elapsed(),
+            data: d.clone(),
+        }));
         if let Ok(mut t) = self.shared.last_publish.lock() {
             *t = Instant::now();
         }
@@ -139,7 +149,11 @@ impl<S: Clone + Send + Sync + 'static> JobContext<S> {
     }
     /// Reports progress.
     pub fn set_progress(&self, done: usize, total: usize) {
-        self.shared.progress.send_replace(Progress { done, total, finished: false });
+        self.shared.progress.send_replace(Progress {
+            done,
+            total,
+            finished: false,
+        });
     }
     /// Increments the `done` counter.
     pub fn inc_progress(&self) {
@@ -173,7 +187,9 @@ impl<R, S: Clone + Send + Sync + 'static> JobHandle<R, S> {
             tokio::pin!(notified);
             notified.as_mut().enable();
             self.shared.request_epoch.fetch_add(1, Ordering::AcqRel);
-            if self.shared.version.load(Ordering::Acquire) > v0 || self.shared.finished.load(Ordering::Acquire) {
+            if self.shared.version.load(Ordering::Acquire) > v0
+                || self.shared.finished.load(Ordering::Acquire)
+            {
                 return self.snapshot();
             }
             match tokio::time::timeout_at(deadline, notified).await {
@@ -320,7 +336,9 @@ impl<R, S: Clone + Send + Sync + 'static> JobHandle<R, S> {
 
     /// Blocks the current thread until the job finishes.
     pub fn wait_blocking(self) -> Result<R> {
-        self.rx.blocking_recv().unwrap_or_else(|_| Err(Error::Job("worker dropped".into())))
+        self.rx
+            .blocking_recv()
+            .unwrap_or_else(|_| Err(Error::Job("worker dropped".into())))
     }
 }
 
@@ -331,7 +349,9 @@ impl<R: Send + 'static, S: Send + Sync + 'static> IntoFuture for JobHandle<R, S>
         let rx = self.rx;
         let _keep = self.shared;
         Box::pin(async move {
-            let r = rx.await.unwrap_or_else(|_| Err(Error::Job("worker dropped".into())));
+            let r = rx
+                .await
+                .unwrap_or_else(|_| Err(Error::Job("worker dropped".into())));
             drop(_keep);
             r
         })
@@ -349,7 +369,10 @@ pub struct EngineConfig {
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        EngineConfig { num_threads: None, publish_interval: Duration::from_millis(50) }
+        EngineConfig {
+            num_threads: None,
+            publish_interval: Duration::from_millis(50),
+        }
     }
 }
 
@@ -361,7 +384,10 @@ pub struct Engine {
 
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Engine").field("threads", &self.pool.current_num_threads()).field("config", &self.config).finish()
+        f.debug_struct("Engine")
+            .field("threads", &self.pool.current_num_threads())
+            .field("config", &self.config)
+            .finish()
     }
 }
 
@@ -397,9 +423,17 @@ impl Engine {
         S: Clone + Send + Sync + 'static,
         F: FnOnce(JobContext<S>) -> Result<R> + Send + 'static,
     {
-        let (ptx, _prx) = watch::channel(Progress { done: 0, total, finished: false });
+        let (ptx, _prx) = watch::channel(Progress {
+            done: 0,
+            total,
+            finished: false,
+        });
         let shared = Arc::new(Shared {
-            published: ArcSwap::from_pointee(Snapshot { version: 0, elapsed: Duration::ZERO, data: initial.clone() }),
+            published: ArcSwap::from_pointee(Snapshot {
+                version: 0,
+                elapsed: Duration::ZERO,
+                data: initial.clone(),
+            }),
             data: Mutex::new(initial),
             version: AtomicU64::new(0),
             request_epoch: AtomicU64::new(0),
@@ -412,7 +446,9 @@ impl Engine {
             progress: ptx,
         });
         let (tx, rx) = oneshot::channel();
-        let ctx = JobContext { shared: shared.clone() };
+        let ctx = JobContext {
+            shared: shared.clone(),
+        };
         self.pool.spawn(move || {
             let shared = ctx.shared.clone();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(ctx.clone())))
@@ -457,7 +493,11 @@ where
     F: FnMut(&JobContext<S>, &crate::optim::IterationInfo<'_>),
 {
     pub fn new(ctx: &'a JobContext<S>, on_publish: F) -> Self {
-        CtxObserver { ctx, served_epoch: 0, on_publish }
+        CtxObserver {
+            ctx,
+            served_epoch: 0,
+            on_publish,
+        }
     }
 }
 
@@ -466,7 +506,10 @@ where
     S: Clone + Send + Sync + 'static,
     F: FnMut(&JobContext<S>, &crate::optim::IterationInfo<'_>),
 {
-    fn on_iteration(&mut self, info: &crate::optim::IterationInfo<'_>) -> std::ops::ControlFlow<()> {
+    fn on_iteration(
+        &mut self,
+        info: &crate::optim::IterationInfo<'_>,
+    ) -> std::ops::ControlFlow<()> {
         if self.ctx.is_cancelled() {
             return std::ops::ControlFlow::Break(());
         }
@@ -484,7 +527,11 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_and_cancel() {
-        let eng = Engine::new(EngineConfig { num_threads: Some(2), publish_interval: Duration::ZERO }).unwrap();
+        let eng = Engine::new(EngineConfig {
+            num_threads: Some(2),
+            publish_interval: Duration::ZERO,
+        })
+        .unwrap();
         let h = eng.spawn(0u64, 0, |ctx: JobContext<u64>| {
             let mut i = 0u64;
             let mut served = 0;
@@ -514,7 +561,11 @@ mod tests {
 
     #[test]
     fn panic_becomes_error() {
-        let eng = Engine::new(EngineConfig { num_threads: Some(1), ..Default::default() }).unwrap();
+        let eng = Engine::new(EngineConfig {
+            num_threads: Some(1),
+            ..Default::default()
+        })
+        .unwrap();
         let h = eng.spawn((), 0, |_ctx| -> Result<()> { panic!("boom") });
         assert!(matches!(h.wait_blocking(), Err(Error::Job(m)) if m.contains("boom")));
     }

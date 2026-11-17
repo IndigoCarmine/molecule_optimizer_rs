@@ -63,11 +63,25 @@ impl RingInfo {
     fn from_atom_rings(mol: &Molecule, atom_rings: Vec<Vec<usize>>) -> RingInfo {
         let bond_rings: Vec<Vec<usize>> = atom_rings
             .iter()
-            .map(|ring| (0..ring.len()).map(|k| mol.bond_between(ring[k], ring[(k + 1) % ring.len()]).expect("ring bond")).collect())
+            .map(|ring| {
+                (0..ring.len())
+                    .map(|k| {
+                        mol.bond_between(ring[k], ring[(k + 1) % ring.len()])
+                            .expect("ring bond")
+                    })
+                    .collect()
+            })
             .collect();
         let (atom_start, atom_membership) = membership(mol.num_atoms(), &atom_rings);
         let (bond_start, bond_membership) = membership(mol.num_bonds(), &bond_rings);
-        RingInfo { atom_rings, bond_rings, atom_start, atom_membership, bond_start, bond_membership }
+        RingInfo {
+            atom_rings,
+            bond_rings,
+            atom_start,
+            atom_membership,
+            bond_start,
+            bond_membership,
+        }
     }
 
     pub fn num_rings(&self) -> usize {
@@ -92,17 +106,29 @@ impl RingInfo {
         self.num_bond_rings(b) > 0
     }
     pub fn is_atom_in_ring_of_size(&self, a: usize, size: usize) -> bool {
-        self.atom_ring_ids(a).iter().any(|&r| self.atom_rings[r].len() == size)
+        self.atom_ring_ids(a)
+            .iter()
+            .any(|&r| self.atom_rings[r].len() == size)
     }
     pub fn is_bond_in_ring_of_size(&self, b: usize, size: usize) -> bool {
-        self.bond_ring_ids(b).iter().any(|&r| self.bond_rings[r].len() == size)
+        self.bond_ring_ids(b)
+            .iter()
+            .any(|&r| self.bond_rings[r].len() == size)
     }
     /// Size of the smallest ring containing atom `a` (0 if acyclic).
     pub fn min_atom_ring_size(&self, a: usize) -> usize {
-        self.atom_ring_ids(a).iter().map(|&r| self.atom_rings[r].len()).min().unwrap_or(0)
+        self.atom_ring_ids(a)
+            .iter()
+            .map(|&r| self.atom_rings[r].len())
+            .min()
+            .unwrap_or(0)
     }
     pub fn min_bond_ring_size(&self, b: usize) -> usize {
-        self.bond_ring_ids(b).iter().map(|&r| self.bond_rings[r].len()).min().unwrap_or(0)
+        self.bond_ring_ids(b)
+            .iter()
+            .map(|&r| self.bond_rings[r].len())
+            .min()
+            .unwrap_or(0)
     }
     /// `true` if atoms `a` and `b` share a ring.
     pub fn are_atoms_in_same_ring(&self, a: usize, b: usize) -> bool {
@@ -130,7 +156,19 @@ mod tests {
     #[test]
     fn naphthalene_rings() {
         // two fused 6-rings sharing bond 0-5
-        let bonds = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0), (5, 6), (6, 7), (7, 8), (8, 9), (9, 0)];
+        let bonds = [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 0),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+            (8, 9),
+            (9, 0),
+        ];
         let m = ring_mol(&bonds, 10);
         let ri = RingInfo::compute(&m);
         assert_eq!(ri.num_rings(), 2);
@@ -141,7 +179,18 @@ mod tests {
     #[test]
     fn cubane_rings() {
         let bonds = [
-            (0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7),
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
         ];
         let m = ring_mol(&bonds, 8);
         let ri = RingInfo::compute(&m);

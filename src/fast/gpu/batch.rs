@@ -36,7 +36,10 @@ pub struct GpuBatch {
 
 impl std::fmt::Debug for GpuBatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GpuBatch").field("templates", &self.templates.len()).field("systems", &self.sys_tmpl.len()).finish()
+        f.debug_struct("GpuBatch")
+            .field("templates", &self.templates.len())
+            .field("systems", &self.sys_tmpl.len())
+            .finish()
     }
 }
 
@@ -44,9 +47,16 @@ impl GpuBatch {
     /// `systems`: `(molecule, number of systems)` pairs; the systems are
     /// numbered in this order. The molecules' own coordinates only seed the
     /// initial pair lists.
-    pub fn new(ctx: &GpuContext, systems: &[(&Molecule, usize)], inner_builder: &dyn std::any::Any, opts: &ApproxOptions) -> Result<GpuBatch> {
+    pub fn new(
+        ctx: &GpuContext,
+        systems: &[(&Molecule, usize)],
+        inner_builder: &dyn std::any::Any,
+        opts: &ApproxOptions,
+    ) -> Result<GpuBatch> {
         if matches!(opts.electrostatics, Electrostatics::Pme { .. }) {
-            return Err(Error::InvalidArgument("GpuBatch does not support PME (use WgpuNonbonded per system)".into()));
+            return Err(Error::InvalidArgument(
+                "GpuBatch does not support PME (use WgpuNonbonded per system)".into(),
+            ));
         }
         let mut templates = Vec::new();
         let mut sys_tmpl = Vec::new();
@@ -58,12 +68,23 @@ impl GpuBatch {
             sys_tmpl.extend(std::iter::repeat_n(t, count));
         }
         if sys_tmpl.is_empty() {
-            return Err(Error::InvalidArgument("GpuBatch needs at least one system".into()));
+            return Err(Error::InvalidArgument(
+                "GpuBatch needs at least one system".into(),
+            ));
         }
         let refs: Vec<&ApproxNonbonded> = templates.iter().collect();
         let engine = Engine::new(ctx, &refs, false)?;
         let lists = sys_tmpl.iter().map(|&t| initial[t].clone()).collect();
-        Ok(GpuBatch { half_buffer2: 0.25 * opts.buffer * opts.buffer, templates, sys_tmpl, state: Mutex::new(State { engine, lists, builds: 0 }) })
+        Ok(GpuBatch {
+            half_buffer2: 0.25 * opts.buffer * opts.buffer,
+            templates,
+            sys_tmpl,
+            state: Mutex::new(State {
+                engine,
+                lists,
+                builds: 0,
+            }),
+        })
     }
 
     /// Number of systems.
@@ -90,24 +111,46 @@ impl GpuBatch {
     /// Energies of all systems (`pos[s]` = coordinates of system `s`) into
     /// `energies`; if `grads` is given, the gradient of system `s` is *added*
     /// to `grads[s]`.
-    pub fn evaluate(&self, pos: &[&[f64]], energies: &mut [NonbondedEnergy], grads: Option<&mut [&mut [f64]]>) {
+    pub fn evaluate(
+        &self,
+        pos: &[&[f64]],
+        energies: &mut [NonbondedEnergy],
+        grads: Option<&mut [&mut [f64]]>,
+    ) {
         let ns = self.num_systems();
-        assert!(pos.len() == ns && energies.len() == ns, "one position vector and energy slot per system");
+        assert!(
+            pos.len() == ns && energies.len() == ns,
+            "one position vector and energy slot per system"
+        );
         let mut st = self.lock();
         let st = &mut *st;
         for s in 0..ns {
             let t = &self.templates[self.sys_tmpl[s]];
-            assert!(pos[s].len() >= 3 * t.num_atoms(), "position vector of system {s} too short");
+            assert!(
+                pos[s].len() >= 3 * t.num_atoms(),
+                "position vector of system {s} too short"
+            );
             let l = &st.lists[s];
             if !l.all_pairs && l.max_displacement2(pos[s]) > self.half_buffer2 {
-                st.lists[s] = Arc::new(pairlist::build(&t.p, pos[s], t.cell.as_ref(), t.rlist, t.all_pairs));
+                st.lists[s] = Arc::new(pairlist::build(
+                    &t.p,
+                    pos[s],
+                    t.cell.as_ref(),
+                    t.rlist,
+                    t.all_pairs,
+                ));
                 st.builds += 1;
             }
         }
         let sys: Vec<SysRef> = (0..ns)
             .map(|s| {
                 let t = self.sys_tmpl[s];
-                SysRef { nb: &self.templates[t], tmpl: t, list: st.lists[s].clone(), pos: pos[s] }
+                SysRef {
+                    nb: &self.templates[t],
+                    tmpl: t,
+                    list: st.lists[s].clone(),
+                    pos: pos[s],
+                }
             })
             .collect();
         let want_grad = grads.is_some();
@@ -118,7 +161,10 @@ impl GpuBatch {
             for (s, g) in gs.iter_mut().enumerate() {
                 let n = self.num_atoms(s);
                 let off = 3 * st.engine.atom_offset(s);
-                for (o, &v) in g[..3 * n].iter_mut().zip(&st.engine.r_grad[off..off + 3 * n]) {
+                for (o, &v) in g[..3 * n]
+                    .iter_mut()
+                    .zip(&st.engine.r_grad[off..off + 3 * n])
+                {
                     *o += v as f64;
                 }
             }

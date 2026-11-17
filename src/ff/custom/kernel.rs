@@ -40,8 +40,12 @@ impl Globals {
     /// store does not share values with `self`.
     pub fn with(&self, name: &str, value: f64) -> Globals {
         let mut names = self.inner.names.clone();
-        let mut values: Vec<AtomicU64> =
-            self.inner.values.iter().map(|v| AtomicU64::new(v.load(Ordering::Relaxed))).collect();
+        let mut values: Vec<AtomicU64> = self
+            .inner
+            .values
+            .iter()
+            .map(|v| AtomicU64::new(v.load(Ordering::Relaxed)))
+            .collect();
         match names.iter().position(|n| n == name) {
             Some(i) => values[i] = AtomicU64::new(value.to_bits()),
             None => {
@@ -49,7 +53,9 @@ impl Globals {
                 values.push(AtomicU64::new(value.to_bits()));
             }
         }
-        Globals { inner: Arc::new(GlobalsInner { names, values }) }
+        Globals {
+            inner: Arc::new(GlobalsInner { names, values }),
+        }
     }
     pub fn index(&self, name: &str) -> Option<usize> {
         self.inner.names.iter().position(|n| n == name)
@@ -73,9 +79,9 @@ impl Globals {
     }
     /// Sets an existing global. Errors if `name` was not declared.
     pub fn set(&self, name: &str, value: f64) -> crate::Result<()> {
-        let i = self
-            .index(name)
-            .ok_or_else(|| crate::Error::InvalidArgument(format!("unknown global parameter '{name}'")))?;
+        let i = self.index(name).ok_or_else(|| {
+            crate::Error::InvalidArgument(format!("unknown global parameter '{name}'"))
+        })?;
         self.inner.values[i].store(value.to_bits(), Ordering::Relaxed);
         Ok(())
     }
@@ -120,14 +126,22 @@ pub(crate) fn lower_statement(
             continue;
         };
         if defs.contains_key(name.as_str()) {
-            return Err(ExprError::new(*pos, format!("'{name}' is defined twice"), src));
+            return Err(ExprError::new(
+                *pos,
+                format!("'{name}' is defined twice"),
+                src,
+            ));
         }
         if BUILTIN_CONSTANTS.iter().any(|(c, _)| c == name)
             || F1::from_name(name).is_some()
             || F2::from_name(name).is_some()
             || name == "select"
         {
-            return Err(ExprError::new(*pos, format!("'{name}' is a built-in name and cannot be redefined"), src));
+            return Err(ExprError::new(
+                *pos,
+                format!("'{name}' is a built-in name and cannot be redefined"),
+                src,
+            ));
         }
         if lookup(name).is_some() {
             return Err(ExprError::new(
@@ -138,7 +152,12 @@ pub(crate) fn lower_statement(
         }
         defs.insert(name.as_str(), (k, DefState::Todo));
     }
-    let mut cx = Lower { script, g, lookup, defs };
+    let mut cx = Lower {
+        script,
+        g,
+        lookup,
+        defs,
+    };
     // The result statement itself is lowered directly (its name, if any, is
     // only a label).
     if let Some((name, _)) = &script.statements[stmt].name {
@@ -164,7 +183,12 @@ impl<'a> Lower<'a, '_> {
             let k = *k;
             match st {
                 DefState::Done(id) => return Ok(*id),
-                DefState::Busy => return Err(self.err(pos, format!("cyclic definition: '{name}' depends on itself"))),
+                DefState::Busy => {
+                    return Err(self.err(
+                        pos,
+                        format!("cyclic definition: '{name}' depends on itself"),
+                    ));
+                }
                 DefState::Todo => {}
             }
             self.defs.get_mut(name).unwrap().1 = DefState::Busy;
@@ -222,9 +246,13 @@ impl<'a> Lower<'a, '_> {
                     ));
                 };
                 if args.len() != arity {
-                    return Err(
-                        self.err(e.pos, format!("function '{name}' takes {arity} argument(s), {} given", args.len()))
-                    );
+                    return Err(self.err(
+                        e.pos,
+                        format!(
+                            "function '{name}' takes {arity} argument(s), {} given",
+                            args.len()
+                        ),
+                    ));
                 }
                 let mut ids = Vec::with_capacity(arity);
                 for a in args {
@@ -295,7 +323,12 @@ impl Kernel {
     /// Compiles `source` as a function of the geometric variables `geom`,
     /// the per-term parameters `params` and any globals declared in
     /// `globals`. Other free names are errors.
-    pub fn compile(source: &str, geom: &[&str], params: &[&str], globals: &Globals) -> Result<Kernel, ExprError> {
+    pub fn compile(
+        source: &str,
+        geom: &[&str],
+        params: &[&str],
+        globals: &Globals,
+    ) -> Result<Kernel, ExprError> {
         let script = parse::parse(source)?;
         Self::compile_script(&script, geom, params, globals)
     }
@@ -312,7 +345,9 @@ impl Kernel {
             if geom.contains(p) || params[..k].contains(p) {
                 return Err(ExprError::new(
                     0,
-                    format!("parameter name '{p}' is used twice or clashes with a geometric variable"),
+                    format!(
+                        "parameter name '{p}' is used twice or clashes with a geometric variable"
+                    ),
                     &script.source,
                 ));
             }
@@ -340,7 +375,9 @@ impl Kernel {
         };
         // Drop globals that only appeared in unused definitions.
         let used = g.variables(e);
-        let keep: Vec<usize> = (0..global_names.len()).filter(|&i| used.contains(&((ng + np + i) as u32))).collect();
+        let keep: Vec<usize> = (0..global_names.len())
+            .filter(|&i| used.contains(&((ng + np + i) as u32)))
+            .collect();
         let remap_globals = keep.len() != global_names.len();
         let global_names: Vec<String> = keep.iter().map(|&i| global_names[i].clone()).collect();
         let global_index: Vec<usize> = keep.iter().map(|&i| global_index[i]).collect();
@@ -399,7 +436,10 @@ impl Kernel {
                 }
             }
         }
-        let hoisted: Vec<Id> = (0..g.len()).filter(|&i| frontier[i]).map(|i| i as Id).collect();
+        let hoisted: Vec<Id> = (0..g.len())
+            .filter(|&i| frontier[i])
+            .map(|i| i as Id)
+            .collect();
         let nh = hoisted.len();
         let slot: HashMap<Id, usize> = hoisted.iter().enumerate().map(|(s, &id)| (id, s)).collect();
 
@@ -418,7 +458,9 @@ impl Kernel {
             }
             match n {
                 Node::Var(k) if (k as usize) < ng => Some(g2.var(k)),
-                Node::Var(k) if (k as usize) >= ng + np => Some(g2.var((k as usize - np + nh) as u32)),
+                Node::Var(k) if (k as usize) >= ng + np => {
+                    Some(g2.var((k as usize - np + nh) as u32))
+                }
                 Node::Var(k) => unreachable!("parameter {k} outside the hoisted frontier"),
                 _ => None,
             }
@@ -489,7 +531,11 @@ impl Kernel {
     }
     /// Computes the hoisted values for one term from its parameters.
     pub fn hoist(&self, params: &[f64], out: &mut [f64]) {
-        assert_eq!(params.len(), self.params.len(), "wrong number of parameters");
+        assert_eq!(
+            params.len(),
+            self.params.len(),
+            "wrong number of parameters"
+        );
         self.hoist.eval(params, out);
     }
     /// Programs: energy+geometric gradient, energy only, global derivatives.
@@ -529,11 +575,13 @@ impl Kernel {
     }
     /// The (simplified) energy expression.
     pub fn energy_source(&self) -> String {
-        self.full.to_source(self.full_roots[0], &|k| self.full_name(k))
+        self.full
+            .to_source(self.full_roots[0], &|k| self.full_name(k))
     }
     /// The (simplified) derivative with respect to geometric variable `i`.
     pub fn derivative_source(&self, i: usize) -> String {
-        self.full.to_source(self.full_roots[1 + i], &|k| self.full_name(k))
+        self.full
+            .to_source(self.full_roots[1 + i], &|k| self.full_name(k))
     }
     /// Evaluates energy and geometric derivatives directly from parameters
     /// (slow reference path; used in tests).
@@ -541,6 +589,9 @@ impl Kernel {
         let mut vars = geom.to_vec();
         vars.extend_from_slice(params);
         vars.extend_from_slice(globals);
-        self.full_roots[..1 + self.geom.len()].iter().map(|&r| self.full.eval(r, &vars)).collect()
+        self.full_roots[..1 + self.geom.len()]
+            .iter()
+            .map(|&r| self.full.eval(r, &vars))
+            .collect()
     }
 }

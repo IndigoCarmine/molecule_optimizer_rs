@@ -95,12 +95,22 @@ pub(crate) struct Pme {
 const LINES_PER_TASK: usize = 16;
 
 impl Pme {
-    pub fn new(cell: &UnitCell, beta: f64, grid_spacing: f64, order: usize, q_scaled: &[f64]) -> Result<Pme> {
+    pub fn new(
+        cell: &UnitCell,
+        beta: f64,
+        grid_spacing: f64,
+        order: usize,
+        q_scaled: &[f64],
+    ) -> Result<Pme> {
         if !(3..=16).contains(&order) {
-            return Err(Error::InvalidArgument(format!("PME spline order must be in 3..=16 (got {order})")));
+            return Err(Error::InvalidArgument(format!(
+                "PME spline order must be in 3..=16 (got {order})"
+            )));
         }
         if grid_spacing.is_nan() || grid_spacing <= 0.0 {
-            return Err(Error::InvalidArgument(format!("PME grid spacing must be positive (got {grid_spacing})")));
+            return Err(Error::InvalidArgument(format!(
+                "PME grid spacing must be positive (got {grid_spacing})"
+            )));
         }
         let len = cell.lengths();
         let k = len.map(|l| fft_friendly_size(((l / grid_spacing).ceil() as usize).max(order + 1)));
@@ -136,28 +146,52 @@ impl Pme {
         let [k1, k2, k3] = k;
         let fac = PI * PI / (beta * beta);
         let mut infl = vec![0.0; k1 * k2 * k3];
-        infl.par_chunks_mut(k3 * k1).enumerate().for_each(|(y, ch)| {
-            let my = if y <= k2 / 2 { y as f64 } else { y as f64 - k2 as f64 };
-            for z in 0..k3 {
-                let mz = if z <= k3 / 2 { z as f64 } else { z as f64 - k3 as f64 };
-                for x in 0..k1 {
-                    let mx = if x <= k1 / 2 { x as f64 } else { x as f64 - k1 as f64 };
-                    if x == 0 && y == 0 && z == 0 {
-                        ch[z * k1 + x] = 0.0;
-                        continue;
+        infl.par_chunks_mut(k3 * k1)
+            .enumerate()
+            .for_each(|(y, ch)| {
+                let my = if y <= k2 / 2 {
+                    y as f64
+                } else {
+                    y as f64 - k2 as f64
+                };
+                for z in 0..k3 {
+                    let mz = if z <= k3 / 2 {
+                        z as f64
+                    } else {
+                        z as f64 - k3 as f64
+                    };
+                    for x in 0..k1 {
+                        let mx = if x <= k1 / 2 {
+                            x as f64
+                        } else {
+                            x as f64 - k1 as f64
+                        };
+                        if x == 0 && y == 0 && z == 0 {
+                            ch[z * k1 + x] = 0.0;
+                            continue;
+                        }
+                        let mut m = [0.0; 3];
+                        for d in 0..3 {
+                            m[d] = mx * recip[0][d] + my * recip[1][d] + mz * recip[2][d];
+                        }
+                        let m2 = m[0] * m[0] + m[1] * m[1] + m[2] * m[2];
+                        ch[z * k1 + x] = (-fac * m2).exp()
+                            / (PI * volume * m2)
+                            / (bm[0][x] * bm[1][y] * bm[2][z]);
                     }
-                    let mut m = [0.0; 3];
-                    for d in 0..3 {
-                        m[d] = mx * recip[0][d] + my * recip[1][d] + mz * recip[2][d];
-                    }
-                    let m2 = m[0] * m[0] + m[1] * m[1] + m[2] * m[2];
-                    ch[z * k1 + x] = (-fac * m2).exp() / (PI * volume * m2) / (bm[0][x] * bm[1][y] * bm[2][z]);
                 }
-            }
-        });
+            });
         let mut planner = FftPlanner::<f64>::new();
-        let fwd = [planner.plan_fft_forward(k1), planner.plan_fft_forward(k2), planner.plan_fft_forward(k3)];
-        let inv = [planner.plan_fft_inverse(k1), planner.plan_fft_inverse(k2), planner.plan_fft_inverse(k3)];
+        let fwd = [
+            planner.plan_fft_forward(k1),
+            planner.plan_fft_forward(k2),
+            planner.plan_fft_forward(k3),
+        ];
+        let inv = [
+            planner.plan_fft_inverse(k1),
+            planner.plan_fft_inverse(k2),
+            planner.plan_fft_inverse(k3),
+        ];
         let mut atoms = Vec::new();
         let mut q = Vec::new();
         for (i, &qi) in q_scaled.iter().enumerate() {
@@ -166,7 +200,18 @@ impl Pme {
                 q.push(qi);
             }
         }
-        Ok(Pme { order, k, beta, recip, infl, fwd, inv, atoms, q, work: Mutex::new(None) })
+        Ok(Pme {
+            order,
+            k,
+            beta,
+            recip,
+            infl,
+            fwd,
+            inv,
+            atoms,
+            q,
+            work: Mutex::new(None),
+        })
     }
 
     /// Reciprocal-space energy; adds the gradient to `grad` if given.
@@ -190,7 +235,8 @@ impl Pme {
                 let i = self.atoms[a] as usize;
                 let r = [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
                 for d in 0..3 {
-                    let s = self.recip[d][0] * r[0] + self.recip[d][1] * r[1] + self.recip[d][2] * r[2];
+                    let s =
+                        self.recip[d][0] * r[0] + self.recip[d][1] * r[1] + self.recip[d][2] * r[2];
                     let u = s * kk[d] as f64;
                     let fl = u.floor();
                     let mut w = u - fl;
@@ -198,7 +244,12 @@ impl Pme {
                         w = 0.0;
                     }
                     b[d] = (fl as i64).rem_euclid(kk[d] as i64) as u32;
-                    bspline(w, p, &mut t[d * p..(d + 1) * p], &mut dt[d * p..(d + 1) * p]);
+                    bspline(
+                        w,
+                        p,
+                        &mut t[d * p..(d + 1) * p],
+                        &mut dt[d * p..(d + 1) * p],
+                    );
                 }
             });
         // atoms bucketed by their first grid index (fixed order: atom index)
@@ -216,32 +267,42 @@ impl Pme {
             fill[b[0] as usize] += 1;
         }
         let n = k1 * k2 * k3;
-        let mut work = self.work.lock().ok().and_then(|mut g| g.take()).unwrap_or_else(|| {
-            (vec![Complex64::new(0.0, 0.0); n], vec![Complex64::new(0.0, 0.0); n])
-        });
+        let mut work = self
+            .work
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take())
+            .unwrap_or_else(|| {
+                (
+                    vec![Complex64::new(0.0, 0.0); n],
+                    vec![Complex64::new(0.0, 0.0); n],
+                )
+            });
         let (ga, gb) = (&mut work.0, &mut work.1);
         // spread
-        ga.par_chunks_mut(k2 * k3).enumerate().for_each(|(x, plane)| {
-            plane.iter_mut().for_each(|c| *c = Complex64::new(0.0, 0.0));
-            for j1 in 0..p {
-                let b = (x + j1) % k1;
-                for &a in &bucket[start[b]..start[b + 1]] {
-                    let a = a as usize;
-                    let t = &th[a * 3 * p..(a + 1) * 3 * p];
-                    let w1 = self.q[a] * t[j1];
-                    let (b2, b3) = (base[a][1] as usize, base[a][2] as usize);
-                    for j2 in 0..p {
-                        let y = (b2 + k2 * p - j2) % k2;
-                        let w12 = w1 * t[p + j2];
-                        let row = &mut plane[y * k3..(y + 1) * k3];
-                        for j3 in 0..p {
-                            let z = (b3 + k3 * p - j3) % k3;
-                            row[z].re += w12 * t[2 * p + j3];
+        ga.par_chunks_mut(k2 * k3)
+            .enumerate()
+            .for_each(|(x, plane)| {
+                plane.iter_mut().for_each(|c| *c = Complex64::new(0.0, 0.0));
+                for j1 in 0..p {
+                    let b = (x + j1) % k1;
+                    for &a in &bucket[start[b]..start[b + 1]] {
+                        let a = a as usize;
+                        let t = &th[a * 3 * p..(a + 1) * 3 * p];
+                        let w1 = self.q[a] * t[j1];
+                        let (b2, b3) = (base[a][1] as usize, base[a][2] as usize);
+                        for j2 in 0..p {
+                            let y = (b2 + k2 * p - j2) % k2;
+                            let w12 = w1 * t[p + j2];
+                            let row = &mut plane[y * k3..(y + 1) * k3];
+                            for j3 in 0..p {
+                                let z = (b3 + k3 * p - j3) % k3;
+                                row[z].re += w12 * t[2 * p + j3];
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
         self.forward(ga, gb);
         // energy and D·F(Q)
         let do_grad = grad.is_some();
@@ -269,7 +330,11 @@ impl Pme {
                 .map(|a| {
                     let t = &th[a * 3 * p..(a + 1) * 3 * p];
                     let dt = &dth[a * 3 * p..(a + 1) * 3 * p];
-                    let (b1, b2, b3) = (base[a][0] as usize, base[a][1] as usize, base[a][2] as usize);
+                    let (b1, b2, b3) = (
+                        base[a][0] as usize,
+                        base[a][1] as usize,
+                        base[a][2] as usize,
+                    );
                     let (mut s1, mut s2, mut s3) = (0.0, 0.0, 0.0);
                     for j1 in 0..p {
                         let x = (b1 + k1 * p - j1) % k1;
@@ -292,7 +357,9 @@ impl Pme {
                     let s = [s1 * k1 as f64 * q, s2 * k2 as f64 * q, s3 * k3 as f64 * q];
                     let mut g = [0.0; 3];
                     for d in 0..3 {
-                        g[d] = s[0] * self.recip[0][d] + s[1] * self.recip[1][d] + s[2] * self.recip[2][d];
+                        g[d] = s[0] * self.recip[0][d]
+                            + s[1] * self.recip[1][d]
+                            + s[2] * self.recip[2][d];
                     }
                     g
                 })
@@ -346,13 +413,15 @@ impl Pme {
         b.par_chunks_mut(k1 * LINES_PER_TASK)
             .for_each_init(|| scratch(ix), |s, ch| ix.process_with_scratch(ch, s));
         let bb: &[Complex64] = b;
-        a.par_chunks_mut(k2 * k3).enumerate().for_each(|(x, plane)| {
-            for y in 0..k2 {
-                for z in 0..k3 {
-                    plane[y * k3 + z] = bb[(y * k3 + z) * k1 + x];
+        a.par_chunks_mut(k2 * k3)
+            .enumerate()
+            .for_each(|(x, plane)| {
+                for y in 0..k2 {
+                    for z in 0..k3 {
+                        plane[y * k3 + z] = bb[(y * k3 + z) * k1 + x];
+                    }
                 }
-            }
-        });
+            });
         a.par_chunks_mut(k2 * k3).for_each_init(
             || (vec![Complex64::new(0.0, 0.0); k2 * k3], scratch(iy)),
             |(tmp, s), plane| {
@@ -413,7 +482,11 @@ mod tests {
                     bspline(w - h, p, &mut tm, &mut scratch);
                     for j in 0..p {
                         let fd = (tp[j] - tm[j]) / (2.0 * h);
-                        assert!((fd - dth[j]).abs() < 1e-7, "p={p} j={j}: {fd} vs {}", dth[j]);
+                        assert!(
+                            (fd - dth[j]).abs() < 1e-7,
+                            "p={p} j={j}: {fd} vs {}",
+                            dth[j]
+                        );
                     }
                 }
             }

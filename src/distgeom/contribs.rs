@@ -60,10 +60,19 @@ pub struct DistViolationContribs {
 
 impl DistViolationContribs {
     pub fn new(dim: usize) -> Self {
-        DistViolationContribs { dim, terms: Vec::new() }
+        DistViolationContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
     pub fn add(&mut self, i: usize, j: usize, ub: f64, lb: f64, weight: f64) {
-        self.terms.push(DistViolationTerm { i, j, ub2: ub * ub, lb2: lb * lb, weight });
+        self.terms.push(DistViolationTerm {
+            i,
+            j,
+            ub2: ub * ub,
+            lb2: lb * lb,
+            weight,
+        });
     }
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
@@ -100,14 +109,21 @@ impl Contrib for DistViolationContribs {
             } else if d2 < c.lb2 {
                 let d = d2.sqrt();
                 let l2d2 = d2 + c.lb2;
-                (d, 8. * c.lb2 * d * (1. - 2.0 * c.lb2 / l2d2) / (l2d2 * l2d2))
+                (
+                    d,
+                    8. * c.lb2 * d * (1. - 2.0 * c.lb2 / l2d2) / (l2d2 * l2d2),
+                )
             } else {
                 continue;
             };
             for k in 0..dim {
                 let p1 = dim * c.i + k;
                 let p2 = dim * c.j + k;
-                let g = if d > 0.0 { c.weight * pre * (pos[p1] - pos[p2]) / d } else { c.weight * pre * (pos[p1] - pos[p2]) };
+                let g = if d > 0.0 {
+                    c.weight * pre * (pos[p1] - pos[p2]) / d
+                } else {
+                    c.weight * pre * (pos[p1] - pos[p2])
+                };
                 grad[p1] += g;
                 grad[p2] -= g;
             }
@@ -121,7 +137,14 @@ impl Contrib for DistViolationContribs {
 // ---------------------------------------------------------------- Chiral
 
 /// RDKit `DistGeom::calcChiralVolume` on a flat coordinate array.
-pub fn calc_chiral_volume(i1: usize, i2: usize, i3: usize, i4: usize, pos: &[f64], dim: usize) -> f64 {
+pub fn calc_chiral_volume(
+    i1: usize,
+    i2: usize,
+    i3: usize,
+    i4: usize,
+    pos: &[f64],
+    dim: usize,
+) -> f64 {
     let p4 = P3::from_pos(pos, i4, dim);
     let v1 = P3::from_pos(pos, i1, dim) - p4;
     let v2 = P3::from_pos(pos, i2, dim) - p4;
@@ -147,10 +170,18 @@ pub struct ChiralViolationContribs {
 
 impl ChiralViolationContribs {
     pub fn new(dim: usize) -> Self {
-        ChiralViolationContribs { dim, terms: Vec::new() }
+        ChiralViolationContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
     pub fn add(&mut self, idx: [usize; 4], vol_lower: f64, vol_upper: f64, weight: f64) {
-        self.terms.push(ChiralTerm { idx, vol_upper, vol_lower, weight });
+        self.terms.push(ChiralTerm {
+            idx,
+            vol_upper,
+            vol_lower,
+            weight,
+        });
     }
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
@@ -201,11 +232,17 @@ impl Contrib for ChiralViolationContribs {
 
             let p = |i: usize, k: usize| pos[i * dim + k];
             grad[dim * i4] += pre
-                * (p(i1, 2) * (p(i2, 1) - p(i3, 1)) + p(i2, 2) * (p(i3, 1) - p(i1, 1)) + p(i3, 2) * (p(i1, 1) - p(i2, 1)));
+                * (p(i1, 2) * (p(i2, 1) - p(i3, 1))
+                    + p(i2, 2) * (p(i3, 1) - p(i1, 1))
+                    + p(i3, 2) * (p(i1, 1) - p(i2, 1)));
             grad[dim * i4 + 1] += pre
-                * (p(i1, 0) * (p(i2, 2) - p(i3, 2)) + p(i2, 0) * (p(i3, 2) - p(i1, 2)) + p(i3, 0) * (p(i1, 2) - p(i2, 2)));
+                * (p(i1, 0) * (p(i2, 2) - p(i3, 2))
+                    + p(i2, 0) * (p(i3, 2) - p(i1, 2))
+                    + p(i3, 0) * (p(i1, 2) - p(i2, 2)));
             grad[dim * i4 + 2] += pre
-                * (p(i1, 1) * (p(i2, 0) - p(i3, 0)) + p(i2, 1) * (p(i3, 0) - p(i1, 0)) + p(i3, 1) * (p(i1, 0) - p(i2, 0)));
+                * (p(i1, 1) * (p(i2, 0) - p(i3, 0))
+                    + p(i2, 1) * (p(i3, 0) - p(i1, 0))
+                    + p(i3, 1) * (p(i1, 0) - p(i2, 0)));
         }
     }
     fn label(&self) -> &'static str {
@@ -274,10 +311,19 @@ pub struct DistanceConstraintContribs {
 
 impl DistanceConstraintContribs {
     pub fn new(dim: usize) -> Self {
-        DistanceConstraintContribs { dim, terms: Vec::new() }
+        DistanceConstraintContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
     pub fn add(&mut self, i: usize, j: usize, min_len: f64, max_len: f64, k: f64) {
-        self.terms.push(DistConstraintTerm { i, j, min_len, max_len, k });
+        self.terms.push(DistConstraintTerm {
+            i,
+            j,
+            min_len,
+            max_len,
+            k,
+        });
     }
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
@@ -349,17 +395,28 @@ pub struct AngleConstraintContribs {
 
 impl AngleConstraintContribs {
     pub fn new(dim: usize) -> Self {
-        AngleConstraintContribs { dim, terms: Vec::new() }
+        AngleConstraintContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
     pub fn add(&mut self, i: usize, j: usize, k: usize, min_deg: f64, max_deg: f64, force: f64) {
-        self.terms.push(AngleTerm { idx: [i, j, k], min_deg, max_deg, k: force });
+        self.terms.push(AngleTerm {
+            idx: [i, j, k],
+            min_deg,
+            max_deg,
+            k: force,
+        });
     }
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
     /// Per-term energies (RDKit `getEnergy(positions, energies)`).
     pub fn term_energies(&self, pos: &[f64]) -> Vec<f64> {
-        self.terms.iter().map(|c| self.term_energy(pos, c)).collect()
+        self.terms
+            .iter()
+            .map(|c| self.term_energy(pos, c))
+            .collect()
     }
     fn angle_of(&self, pos: &[f64], c: &AngleTerm) -> (P3, P3, [f64; 2], f64) {
         let p1 = P3::from_pos(pos, c.idx[0], self.dim);
@@ -487,11 +544,26 @@ pub struct InversionContribs {
 
 impl InversionContribs {
     pub fn new(dim: usize) -> Self {
-        InversionContribs { dim, terms: Vec::new() }
+        InversionContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
-    pub fn add(&mut self, idx: [usize; 4], at2_atomic_num: i32, is_c_bound_to_o: bool, scaling: f64) {
+    pub fn add(
+        &mut self,
+        idx: [usize; 4],
+        at2_atomic_num: i32,
+        is_c_bound_to_o: bool,
+        scaling: f64,
+    ) {
         let (k, c0, c1, c2) = inversion_coefficients(at2_atomic_num, is_c_bound_to_o);
-        self.terms.push(InversionTerm { idx, c0, c1, c2, k: k * scaling });
+        self.terms.push(InversionTerm {
+            idx,
+            c0,
+            c1,
+            c2,
+            k: k * scaling,
+        });
     }
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
@@ -506,7 +578,10 @@ impl InversionContribs {
     }
     /// Per-term energies.
     pub fn term_energies(&self, pos: &[f64]) -> Vec<f64> {
-        self.terms.iter().map(|c| self.term_energy(pos, c)).collect()
+        self.terms
+            .iter()
+            .map(|c| self.term_energy(pos, c))
+            .collect()
     }
 }
 
@@ -618,7 +693,14 @@ pub fn calc_torsion_cos_phi(p1: P3, p2: P3, p3: P3, p4: P3) -> f64 {
 }
 
 /// RDKit `MMFF::Utils::calcTorsionGrad`.
-fn calc_torsion_grad(r: &[P3; 4], t: &[P3; 2], d: &[f64; 2], g: &mut [[f64; 3]; 4], sin_term: f64, cos_phi: f64) {
+fn calc_torsion_grad(
+    r: &[P3; 4],
+    t: &[P3; 2],
+    d: &[f64; 2],
+    g: &mut [[f64; 3]; 4],
+    sin_term: f64,
+    cos_phi: f64,
+) {
     let dcos = [
         1.0 / d[0] * (t[1].x - cos_phi * t[0].x),
         1.0 / d[0] * (t[1].y - cos_phi * t[0].y),
@@ -632,18 +714,36 @@ fn calc_torsion_grad(r: &[P3; 4], t: &[P3; 2], d: &[f64; 2], g: &mut [[f64; 3]; 
     g[0][2] += sin_term * (dcos[1] * r[1].x - dcos[0] * r[1].y);
 
     g[1][0] += sin_term
-        * (dcos[1] * (r[1].z - r[0].z) + dcos[2] * (r[0].y - r[1].y) + dcos[4] * (-r[3].z) + dcos[5] * (r[3].y));
+        * (dcos[1] * (r[1].z - r[0].z)
+            + dcos[2] * (r[0].y - r[1].y)
+            + dcos[4] * (-r[3].z)
+            + dcos[5] * (r[3].y));
     g[1][1] += sin_term
-        * (dcos[0] * (r[0].z - r[1].z) + dcos[2] * (r[1].x - r[0].x) + dcos[3] * (r[3].z) + dcos[5] * (-r[3].x));
+        * (dcos[0] * (r[0].z - r[1].z)
+            + dcos[2] * (r[1].x - r[0].x)
+            + dcos[3] * (r[3].z)
+            + dcos[5] * (-r[3].x));
     g[1][2] += sin_term
-        * (dcos[0] * (r[1].y - r[0].y) + dcos[1] * (r[0].x - r[1].x) + dcos[3] * (-r[3].y) + dcos[4] * (r[3].x));
+        * (dcos[0] * (r[1].y - r[0].y)
+            + dcos[1] * (r[0].x - r[1].x)
+            + dcos[3] * (-r[3].y)
+            + dcos[4] * (r[3].x));
 
     g[2][0] += sin_term
-        * (dcos[1] * (r[0].z) + dcos[2] * (-r[0].y) + dcos[4] * (r[3].z - r[2].z) + dcos[5] * (r[2].y - r[3].y));
+        * (dcos[1] * (r[0].z)
+            + dcos[2] * (-r[0].y)
+            + dcos[4] * (r[3].z - r[2].z)
+            + dcos[5] * (r[2].y - r[3].y));
     g[2][1] += sin_term
-        * (dcos[0] * (-r[0].z) + dcos[2] * (r[0].x) + dcos[3] * (r[2].z - r[3].z) + dcos[5] * (r[3].x - r[2].x));
+        * (dcos[0] * (-r[0].z)
+            + dcos[2] * (r[0].x)
+            + dcos[3] * (r[2].z - r[3].z)
+            + dcos[5] * (r[3].x - r[2].x));
     g[2][2] += sin_term
-        * (dcos[0] * (r[0].y) + dcos[1] * (-r[0].x) + dcos[3] * (r[3].y - r[2].y) + dcos[4] * (r[2].x - r[3].x));
+        * (dcos[0] * (r[0].y)
+            + dcos[1] * (-r[0].x)
+            + dcos[3] * (r[3].y - r[2].y)
+            + dcos[4] * (r[2].x - r[3].x));
 
     g[3][0] += sin_term * (dcos[4] * r[2].z - dcos[5] * r[2].y);
     g[3][1] += sin_term * (dcos[5] * r[2].x - dcos[3] * r[2].z);
@@ -667,7 +767,10 @@ pub struct TorsionAngleContribs {
 
 impl TorsionAngleContribs {
     pub fn new(dim: usize) -> Self {
-        TorsionAngleContribs { dim, terms: Vec::new() }
+        TorsionAngleContribs {
+            dim,
+            terms: Vec::new(),
+        }
     }
     pub fn add(&mut self, idx: [usize; 4], v: [f64; 6], s: [i32; 6]) {
         self.terms.push(TorsionTerm { idx, v, s });
@@ -682,7 +785,11 @@ impl Contrib for TorsionAngleContribs {
         let mut accum = 0.0;
         for c in &self.terms {
             let p = |i| P3::from_pos(pos, i, self.dim);
-            accum += calc_torsion_energy(&c.v, &c.s, calc_torsion_cos_phi(p(c.idx[0]), p(c.idx[1]), p(c.idx[2]), p(c.idx[3])));
+            accum += calc_torsion_energy(
+                &c.v,
+                &c.s,
+                calc_torsion_cos_phi(p(c.idx[0]), p(c.idx[1]), p(c.idx[2]), p(c.idx[3])),
+            );
         }
         accum
     }
@@ -701,7 +808,11 @@ impl Contrib for TorsionAngleContribs {
             t[1] /= d[1];
             let cos_phi = t[0].dot(&t[1]).clamp(-1.0, 1.0);
             let sin_phi_sq = 1.0 - cos_phi * cos_phi;
-            let sin_phi = if sin_phi_sq > 0.0 { sin_phi_sq.sqrt() } else { 0.0 };
+            let sin_phi = if sin_phi_sq > 0.0 {
+                sin_phi_sq.sqrt()
+            } else {
+                0.0
+            };
             let c2 = cos_phi * cos_phi;
             let c3 = cos_phi * c2;
             let c4 = cos_phi * c3;
@@ -715,7 +826,12 @@ impl Contrib for TorsionAngleContribs {
                 - 4.0 * v[3] * s(3) * (8.0 * c3 * sin_phi - 4.0 * cos_phi * sin_phi)
                 - 5.0 * v[4] * s(4) * (16.0 * c4 * sin_phi - 12.0 * c2 * sin_phi + sin_phi)
                 - 6.0 * v[4] * s(4) * (32.0 * c5 * sin_phi - 32.0 * c3 * sin_phi + 6.0 * sin_phi);
-            let sin_term = -de_dphi * (if is_double_zero(sin_phi) { 1.0 / cos_phi } else { 1.0 / sin_phi });
+            let sin_term = -de_dphi
+                * (if is_double_zero(sin_phi) {
+                    1.0 / cos_phi
+                } else {
+                    1.0 / sin_phi
+                });
             let mut g = [[0.0; 3]; 4];
             for (gk, &ik) in g.iter_mut().zip(&c.idx) {
                 *gk = [grad[dim * ik], grad[dim * ik + 1], grad[dim * ik + 2]];
@@ -751,7 +867,10 @@ mod tests {
         let mut g = vec![0.0; n * dim];
         ff.energy_grad(pos, &mut g);
         let num = numerical_gradient(&ff, pos, 1e-6);
-        g.iter().zip(&num).map(|(a, b)| (scale * a - b).abs()).fold(0.0, f64::max)
+        g.iter()
+            .zip(&num)
+            .map(|(a, b)| (scale * a - b).abs())
+            .fold(0.0, f64::max)
     }
 
     #[test]
@@ -833,7 +952,11 @@ mod tests {
         let pos = coords(4, 3, 17);
         let mut c = TorsionAngleContribs::new(3);
         // RDKit adds a bogus 6-fold term with V[4] to the gradient, so V[4] = V[5] = 0 here
-        c.add([0, 1, 2, 3], [1.0, 5.0, 2.5, 0.7, 0.0, 0.0], [1, -1, 1, -1, 1, 1]);
+        c.add(
+            [0, 1, 2, 3],
+            [1.0, 5.0, 2.5, 0.7, 0.0, 0.0],
+            [1, -1, 1, -1, 1, 1],
+        );
         assert!(grad_err(Box::new(c), 4, 3, &pos, 1.0) < 1e-4);
     }
 }

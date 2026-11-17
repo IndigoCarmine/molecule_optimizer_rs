@@ -14,7 +14,11 @@ pub struct ExprError {
 
 impl ExprError {
     pub(crate) fn new(pos: usize, msg: impl Into<String>, source: &str) -> Self {
-        ExprError { pos, msg: msg.into(), source: source.to_string() }
+        ExprError {
+            pos,
+            msg: msg.into(),
+            source: source.to_string(),
+        }
     }
 }
 
@@ -23,10 +27,20 @@ impl fmt::Display for ExprError {
         // Show the line that contains the error with a caret below it.
         let pos = self.pos.min(self.source.len());
         let start = self.source[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let end = self.source[pos..].find('\n').map(|i| pos + i).unwrap_or(self.source.len());
+        let end = self.source[pos..]
+            .find('\n')
+            .map(|i| pos + i)
+            .unwrap_or(self.source.len());
         let line = self.source[start..end].trim_end_matches('\r');
         let col = self.source[start..pos].chars().count();
-        write!(f, "{} at position {}\n  {}\n  {}^", self.msg, self.pos, line, " ".repeat(col))
+        write!(
+            f,
+            "{} at position {}\n  {}\n  {}^",
+            self.msg,
+            self.pos,
+            line,
+            " ".repeat(col)
+        )
     }
 }
 
@@ -163,7 +177,9 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ExprError> {
             if i < b.len() && (b[i].is_ascii_alphabetic() || b[i] == b'_') {
                 return Err(ExprError::new(i, "unexpected character after number", src));
             }
-            let v: f64 = src[start..i].parse().map_err(|_| ExprError::new(start, "invalid number", src))?;
+            let v: f64 = src[start..i]
+                .parse()
+                .map_err(|_| ExprError::new(start, "invalid number", src))?;
             out.push((Tok::Num(v), start));
             continue;
         }
@@ -189,7 +205,11 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ExprError> {
             }
             _ => {
                 let ch = src[i..].chars().next().unwrap_or('?');
-                return Err(ExprError::new(i, format!("unexpected character '{ch}'"), src));
+                return Err(ExprError::new(
+                    i,
+                    format!("unexpected character '{ch}'"),
+                    src,
+                ));
             }
         }
     }
@@ -241,7 +261,12 @@ impl Parser<'_> {
             stmts.push(self.statement()?);
             match self.peek() {
                 Tok::Sym(';') | Tok::End => {}
-                t => return self.err(format!("expected ';' or end of input, found {}", describe(t))),
+                t => {
+                    return self.err(format!(
+                        "expected ';' or end of input, found {}",
+                        describe(t)
+                    ));
+                }
             }
         }
         if stmts.is_empty() {
@@ -258,7 +283,10 @@ impl Parser<'_> {
             self.bump();
             self.bump();
             let expr = self.expr()?;
-            return Ok(Statement { name: Some((name, p)), expr });
+            return Ok(Statement {
+                name: Some((name, p)),
+                expr,
+            });
         }
         let expr = self.expr()?;
         if *self.peek() == Tok::Sym('=') {
@@ -278,7 +306,10 @@ impl Parser<'_> {
             self.bump();
             let rhs = self.term()?;
             let pos = lhs.pos;
-            lhs = Expr { kind: ExprKind::Bin(op, Box::new(lhs), Box::new(rhs)), pos };
+            lhs = Expr {
+                kind: ExprKind::Bin(op, Box::new(lhs), Box::new(rhs)),
+                pos,
+            };
         }
     }
 
@@ -293,7 +324,10 @@ impl Parser<'_> {
             self.bump();
             let rhs = self.unary()?;
             let pos = lhs.pos;
-            lhs = Expr { kind: ExprKind::Bin(op, Box::new(lhs), Box::new(rhs)), pos };
+            lhs = Expr {
+                kind: ExprKind::Bin(op, Box::new(lhs), Box::new(rhs)),
+                pos,
+            };
         }
     }
 
@@ -303,7 +337,10 @@ impl Parser<'_> {
                 let p = self.pos();
                 self.bump();
                 let e = self.unary()?;
-                Ok(Expr { kind: ExprKind::Neg(Box::new(e)), pos: p })
+                Ok(Expr {
+                    kind: ExprKind::Neg(Box::new(e)),
+                    pos: p,
+                })
             }
             Tok::Sym('+') => {
                 self.bump();
@@ -320,7 +357,10 @@ impl Parser<'_> {
             // Right associative; the exponent may carry a sign (`x^-2`).
             let exp = self.unary()?;
             let pos = base.pos;
-            return Ok(Expr { kind: ExprKind::Bin(BinOp::Pow, Box::new(base), Box::new(exp)), pos });
+            return Ok(Expr {
+                kind: ExprKind::Bin(BinOp::Pow, Box::new(base), Box::new(exp)),
+                pos,
+            });
         }
         Ok(base)
     }
@@ -328,7 +368,10 @@ impl Parser<'_> {
     fn primary(&mut self) -> Result<Expr, ExprError> {
         let (t, p) = self.bump();
         match t {
-            Tok::Num(v) => Ok(Expr { kind: ExprKind::Num(v), pos: p }),
+            Tok::Num(v) => Ok(Expr {
+                kind: ExprKind::Num(v),
+                pos: p,
+            }),
             Tok::Ident(name) => {
                 if *self.peek() == Tok::Sym('(') {
                     self.bump();
@@ -344,9 +387,15 @@ impl Parser<'_> {
                         }
                     }
                     self.expect(')')?;
-                    Ok(Expr { kind: ExprKind::Call(name, args), pos: p })
+                    Ok(Expr {
+                        kind: ExprKind::Call(name, args),
+                        pos: p,
+                    })
                 } else {
-                    Ok(Expr { kind: ExprKind::Var(name), pos: p })
+                    Ok(Expr {
+                        kind: ExprKind::Var(name),
+                        pos: p,
+                    })
                 }
             }
             Tok::Sym('(') => {
@@ -356,7 +405,10 @@ impl Parser<'_> {
             }
             t => {
                 self.i -= usize::from(self.i > 0 && t != Tok::End);
-                self.err(format!("expected a number, name or '(', found {}", describe(&t)))
+                self.err(format!(
+                    "expected a number, name or '(', found {}",
+                    describe(&t)
+                ))
             }
         }
     }
@@ -367,7 +419,10 @@ pub fn parse(src: &str) -> Result<Script, ExprError> {
     let toks = lex(src)?;
     let mut p = Parser { toks, i: 0, src };
     let statements = p.script()?;
-    Ok(Script { statements, source: src.to_string() })
+    Ok(Script {
+        statements,
+        source: src.to_string(),
+    })
 }
 
 /// Parses a single expression (no `;` or definitions).
@@ -376,7 +431,10 @@ pub fn parse_expr(src: &str) -> Result<Expr, ExprError> {
     let mut p = Parser { toks, i: 0, src };
     let e = p.expr()?;
     if *p.peek() != Tok::End {
-        return p.err(format!("expected end of input, found {}", describe(p.peek())));
+        return p.err(format!(
+            "expected end of input, found {}",
+            describe(p.peek())
+        ));
     }
     Ok(e)
 }
@@ -385,19 +443,30 @@ pub fn parse_expr(src: &str) -> Result<Expr, ExprError> {
 /// a definition).
 pub fn parse_definitions(src: &str) -> Result<Script, ExprError> {
     if src.trim().is_empty() {
-        return Ok(Script { statements: Vec::new(), source: src.to_string() });
+        return Ok(Script {
+            statements: Vec::new(),
+            source: src.to_string(),
+        });
     }
     let s = parse(src)?;
     for st in &s.statements {
         if st.name.is_none() {
-            return Err(ExprError::new(st.expr.pos, "expected a definition 'name = expression'", src));
+            return Err(ExprError::new(
+                st.expr.pos,
+                "expected a definition 'name = expression'",
+                src,
+            ));
         }
     }
     Ok(s)
 }
 
 pub(crate) fn format_number(v: f64) -> String {
-    if v != 0.0 && (v.abs() >= 1e15 || v.abs() < 1e-5) { format!("{v:e}") } else { format!("{v}") }
+    if v != 0.0 && (v.abs() >= 1e15 || v.abs() < 1e-5) {
+        format!("{v:e}")
+    } else {
+        format!("{v}")
+    }
 }
 
 fn prec(e: &Expr) -> u8 {

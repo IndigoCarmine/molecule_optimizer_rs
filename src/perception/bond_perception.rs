@@ -12,7 +12,9 @@ pub fn perceive_connectivity(mol: &mut Molecule, tol: f64) {
     if n < 2 {
         return;
     }
-    let max_r = (0..n).map(|i| element(mol.atom(i).atomic_num).r_cov).fold(0.0, f64::max);
+    let max_r = (0..n)
+        .map(|i| element(mol.atom(i).atomic_num).r_cov)
+        .fold(0.0, f64::max);
     let cell = (2.0 * max_r + tol).max(1.0);
     let mut mins = [f64::INFINITY; 3];
     for p in &mol.coords {
@@ -82,7 +84,9 @@ fn prune_hydrogen_bonds(mol: &mut Molecule) {
             .atom_bonds(h)
             .iter()
             .min_by(|a, b| {
-                dist(mol.coords[h], mol.coords[a.0]).partial_cmp(&dist(mol.coords[h], mol.coords[b.0])).unwrap()
+                dist(mol.coords[h], mol.coords[a.0])
+                    .partial_cmp(&dist(mol.coords[h], mol.coords[b.0]))
+                    .unwrap()
             })
             .map(|x| x.1)
             .unwrap();
@@ -96,7 +100,14 @@ fn prune_hydrogen_bonds(mol: &mut Molecule) {
     if !need {
         return;
     }
-    let bonds: Vec<_> = mol.bonds().iter().cloned().enumerate().filter(|(i, _)| keep[*i]).map(|x| x.1).collect();
+    let bonds: Vec<_> = mol
+        .bonds()
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(i, _)| keep[*i])
+        .map(|x| x.1)
+        .collect();
     mol.clear_bonds();
     for b in bonds {
         let bi = mol.add_bond(b.begin, b.end, b.order);

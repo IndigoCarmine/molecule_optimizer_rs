@@ -5,7 +5,9 @@
 //! the same directory (see that script for the format).
 
 use molecule_optimizer_rs::Molecule;
-use molecule_optimizer_rs::ff::mmff::{DielectricModel, MmffBuilder, MmffMolProperties, MmffVariant};
+use molecule_optimizer_rs::ff::mmff::{
+    DielectricModel, MmffBuilder, MmffMolProperties, MmffVariant,
+};
 use molecule_optimizer_rs::ff::{ForceField, ForceFieldBuilder};
 use molecule_optimizer_rs::io::molfile::read_sdf_lenient;
 use molecule_optimizer_rs::optim::{MinimizeOptions, NoObserver, minimize};
@@ -45,11 +47,22 @@ fn parse_ref(text: &str) -> Vec<Ref> {
             continue;
         }
         if f[0] == "MOL" {
-            out.push(Ref { name: f[1].into(), n: f[2].parse().unwrap(), status: f[3].into(), ..Default::default() });
+            out.push(Ref {
+                name: f[1].into(),
+                n: f[2].parse().unwrap(),
+                status: f[3].into(),
+                ..Default::default()
+            });
             continue;
         }
         let r = out.last_mut().unwrap();
-        let opt = |f: &[&str]| (f[1].parse::<i32>().unwrap(), f[2].parse::<f64>().unwrap(), floats(&f[3..]));
+        let opt = |f: &[&str]| {
+            (
+                f[1].parse::<i32>().unwrap(),
+                f[2].parse::<f64>().unwrap(),
+                floats(&f[3..]),
+            )
+        };
         match f[0] {
             "T" => r.types = f[1..].iter().map(|s| s.parse().unwrap()).collect(),
             "Q" => r.charges = floats(&f[1..]),
@@ -104,7 +117,15 @@ struct Stats {
     po200_exact: usize,
 }
 
-const TERM_LABELS: [&str; 7] = ["BondStretch", "AngleBend", "StretchBend", "OopBend", "Torsion", "VdW", "Electrostatic"];
+const TERM_LABELS: [&str; 7] = [
+    "BondStretch",
+    "AngleBend",
+    "StretchBend",
+    "OopBend",
+    "Torsion",
+    "VdW",
+    "Electrostatic",
+];
 
 fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
     let sdf_text = std::fs::read_to_string(data_dir().join(sdf)).unwrap();
@@ -126,12 +147,26 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
         if props.atom_types() != r.types.as_slice() {
             let diff: Vec<String> = (0..r.n)
                 .filter(|&i| props.atom_types()[i] != r.types[i])
-                .map(|i| format!("{}{}:{}!={}", mol.atom(i).symbol(), i + 1, props.atom_types()[i], r.types[i]))
+                .map(|i| {
+                    format!(
+                        "{}{}:{}!={}",
+                        mol.atom(i).symbol(),
+                        i + 1,
+                        props.atom_types()[i],
+                        r.types[i]
+                    )
+                })
                 .collect();
-            st.type_mismatch.push(format!("{} [{}]", r.name, diff.join(" ")));
+            st.type_mismatch
+                .push(format!("{} [{}]", r.name, diff.join(" ")));
             continue;
         }
-        let ce = props.partial_charges().iter().zip(&r.charges).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+        let ce = props
+            .partial_charges()
+            .iter()
+            .zip(&r.charges)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
         st.max_charge_err = st.max_charge_err.max(ce);
         if ce > 1e-4 {
             st.charge_mismatch.push(format!("{} ({ce:.2e})", r.name));
@@ -142,31 +177,60 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
         let er = rel(r.energy[0], e);
         st.max_energy_rel = st.max_energy_rel.max(er);
         if (e - r.energy[0]).abs() > 1e-6 * r.energy[0].abs().max(1.0) {
-            st.energy_mismatch.push(format!("{} ({} vs {})", r.name, e, r.energy[0]));
+            st.energy_mismatch
+                .push(format!("{} ({} vs {})", r.name, e, r.energy[0]));
         }
         let bd: HashMap<String, f64> = ff.energy_breakdown(&pos).into_iter().collect();
         for (k, l) in TERM_LABELS.iter().enumerate() {
             let ours = bd.get(*l).copied().unwrap_or(0.0);
-            st.max_term_rel = st.max_term_rel.max((ours - r.energy[k + 1]).abs() / r.energy[0].abs().max(1.0));
+            st.max_term_rel = st
+                .max_term_rel
+                .max((ours - r.energy[k + 1]).abs() / r.energy[0].abs().max(1.0));
         }
         // extra settings
         let variants = [
-            MmffBuilder { dielectric_model: DielectricModel::Distance, dielectric_constant: 4.0, ..builder.clone() },
-            MmffBuilder { ignore_interfrag_interactions: false, ..builder.clone() },
-            MmffBuilder { nonbonded_thresh: 9.0, ..builder.clone() },
+            MmffBuilder {
+                dielectric_model: DielectricModel::Distance,
+                dielectric_constant: 4.0,
+                ..builder.clone()
+            },
+            MmffBuilder {
+                ignore_interfrag_interactions: false,
+                ..builder.clone()
+            },
+            MmffBuilder {
+                nonbonded_thresh: 9.0,
+                ..builder.clone()
+            },
         ];
         for (k, b) in variants.iter().enumerate() {
-            let e2 = b.build_with_properties(&mol, &props, &[]).unwrap().energy(&pos);
+            let e2 = b
+                .build_with_properties(&mol, &props, &[])
+                .unwrap()
+                .energy(&pos);
             st.max_extra_rel = st.max_extra_rel.max(rel(r.extra[k], e2));
         }
         let mut g = vec![0.0; pos.len()];
         ff.energy_grad(&pos, &mut g);
         let gmax = r.grad.iter().fold(1.0f64, |a, b| a.max(b.abs()));
-        let ge = g.iter().zip(&r.grad).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max) / gmax;
+        let ge = g
+            .iter()
+            .zip(&r.grad)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max)
+            / gmax;
         st.max_grad_err = st.max_grad_err.max(ge);
         // short trajectory
         let mut p10 = pos.clone();
-        minimize(&ff, &mut p10, &MinimizeOptions { max_iters: 10, ..opts.clone() }, &mut NoObserver);
+        minimize(
+            &ff,
+            &mut p10,
+            &MinimizeOptions {
+                max_iters: 10,
+                ..opts.clone()
+            },
+            &mut NoObserver,
+        );
         st.o10_max_rmsd = st.o10_max_rmsd.max(heavy_rmsd(&mol, &p10, &r.o10.2));
         // full optimisation
         let mut p200 = pos.clone();
@@ -176,14 +240,19 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
         st.o200_max_rmsd = st.o200_max_rmsd.max(rmsd);
         st.o200_max_de = st.o200_max_de.max(de);
         if rmsd > 1e-3 || de > 1e-4 {
-            st.o200_bad.push(format!("{} (rmsd {rmsd:.2e}, dE {de:.2e})", r.name));
+            st.o200_bad
+                .push(format!("{} (rmsd {rmsd:.2e}, dE {de:.2e})", r.name));
         }
         // from the perturbed start
         let mut mp = mol.clone();
         mp.set_flat_coords(&r.pert);
         let ffp = builder.build_with_properties(&mp, &props, &[]).unwrap();
         let mut pp = r.pert.clone();
-        assert!(rel(r.pert_e, ffp.energy(&pp)) < 1e-6, "{}: perturbed energy", r.name);
+        assert!(
+            rel(r.pert_e, ffp.energy(&pp)) < 1e-6,
+            "{}: perturbed energy",
+            r.name
+        );
         let res = minimize(&ffp, &mut pp, &opts, &mut NoObserver);
         let rmsd = heavy_rmsd(&mol, &pp, &r.po200.2);
         let de = (res.energy - r.po200.1).abs();
@@ -196,17 +265,33 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
         // "same structure" tolerance of the conformer tests (observed: up to
         // RMSD 2.3e-2 A / dE 3.2e-4 kcal/mol, while run to convergence both
         // trajectories reach the same minimum within 2e-8 kcal/mol).
-        let (tol_rmsd, tol_de) = if r.po200.0 != 0 { (5e-2, 1e-3) } else { (1e-3, 1e-4) };
+        let (tol_rmsd, tol_de) = if r.po200.0 != 0 {
+            (5e-2, 1e-3)
+        } else {
+            (1e-3, 1e-4)
+        };
         if rmsd > tol_rmsd || de > tol_de {
-            st.po200_bad.push(format!("{} (rmsd {rmsd:.2e}, dE {de:.2e}, status {:?} vs {})", r.name, res.status, r.po200.0));
+            st.po200_bad.push(format!(
+                "{} (rmsd {rmsd:.2e}, dE {de:.2e}, status {:?} vs {})",
+                r.name, res.status, r.po200.0
+            ));
         } else if rmsd < 1e-6 {
             st.po200_exact += 1;
         }
     }
     println!("{sdf} ({}):", variant.name());
     println!("  molecules: {}", st.n);
-    println!("  atom-type mismatches: {} {:?}", st.type_mismatch.len(), st.type_mismatch);
-    println!("  charge mismatches: {} (max |dq| {:.2e}) {:?}", st.charge_mismatch.len(), st.max_charge_err, st.charge_mismatch);
+    println!(
+        "  atom-type mismatches: {} {:?}",
+        st.type_mismatch.len(),
+        st.type_mismatch
+    );
+    println!(
+        "  charge mismatches: {} (max |dq| {:.2e}) {:?}",
+        st.charge_mismatch.len(),
+        st.max_charge_err,
+        st.charge_mismatch
+    );
     println!(
         "  energy mismatches: {} (max rel {:.2e}; terms {:.2e}; diel/interfrag/thresh {:.2e}) {:?}",
         st.energy_mismatch.len(),
@@ -216,8 +301,17 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
         st.energy_mismatch
     );
     println!("  gradient max rel err: {:.2e}", st.max_grad_err);
-    println!("  10-iteration heavy-atom RMSD max: {:.2e}", st.o10_max_rmsd);
-    println!("  MMFFOptimizeMolecule: max RMSD {:.2e}, max dE {:.2e}, outliers {} {:?}", st.o200_max_rmsd, st.o200_max_de, st.o200_bad.len(), st.o200_bad);
+    println!(
+        "  10-iteration heavy-atom RMSD max: {:.2e}",
+        st.o10_max_rmsd
+    );
+    println!(
+        "  MMFFOptimizeMolecule: max RMSD {:.2e}, max dE {:.2e}, outliers {} {:?}",
+        st.o200_max_rmsd,
+        st.o200_max_de,
+        st.o200_bad.len(),
+        st.o200_bad
+    );
     println!(
         "  perturbed start: max RMSD {:.2e}, max dE {:.2e}, RMSD<1e-6: {}, outliers {} {:?}",
         st.po200_max_rmsd,
@@ -230,41 +324,81 @@ fn run_set(sdf: &str, reff: &str, variant: MmffVariant) -> Stats {
 }
 
 fn check(st: &Stats) {
-    assert!(st.type_mismatch.is_empty(), "atom type mismatches: {:?}", st.type_mismatch);
-    assert!(st.charge_mismatch.is_empty(), "charge mismatches: {:?}", st.charge_mismatch);
-    assert!(st.energy_mismatch.is_empty(), "energy mismatches: {:?}", st.energy_mismatch);
+    assert!(
+        st.type_mismatch.is_empty(),
+        "atom type mismatches: {:?}",
+        st.type_mismatch
+    );
+    assert!(
+        st.charge_mismatch.is_empty(),
+        "charge mismatches: {:?}",
+        st.charge_mismatch
+    );
+    assert!(
+        st.energy_mismatch.is_empty(),
+        "energy mismatches: {:?}",
+        st.energy_mismatch
+    );
     assert!(st.max_term_rel < 1e-6 && st.max_extra_rel < 1e-6);
     assert!(st.max_grad_err < 1e-6);
     assert!(st.o10_max_rmsd < 1e-4);
-    assert!(st.o200_bad.is_empty(), "optimization outliers: {:?}", st.o200_bad);
+    assert!(
+        st.o200_bad.is_empty(),
+        "optimization outliers: {:?}",
+        st.o200_bad
+    );
     // minimizations from perturbed starts (all agree to the last printed
     // digit at the time of writing)
-    assert!(st.po200_bad.is_empty(), "perturbed-start outliers: {:?}", st.po200_bad);
+    assert!(
+        st.po200_bad.is_empty(),
+        "perturbed-start outliers: {:?}",
+        st.po200_bad
+    );
 }
 
 fn hyper_ref(name: &str) -> String {
     let own = format!("{name}.ref");
-    if data_dir().join(&own).exists() { own } else { format!("{}.ref", name.replace("hypervalent", "dative")) }
+    if data_dir().join(&own).exists() {
+        own
+    } else {
+        format!("{}.ref", name.replace("hypervalent", "dative"))
+    }
 }
 
 #[test]
 fn mmff94_dative() {
-    check(&run_set("MMFF94_dative.sdf", "MMFF94_dative.ref", MmffVariant::Mmff94));
+    check(&run_set(
+        "MMFF94_dative.sdf",
+        "MMFF94_dative.ref",
+        MmffVariant::Mmff94,
+    ));
 }
 
 #[test]
 fn mmff94_hypervalent() {
-    check(&run_set("MMFF94_hypervalent.sdf", &hyper_ref("MMFF94_hypervalent"), MmffVariant::Mmff94));
+    check(&run_set(
+        "MMFF94_hypervalent.sdf",
+        &hyper_ref("MMFF94_hypervalent"),
+        MmffVariant::Mmff94,
+    ));
 }
 
 #[test]
 fn mmff94s_dative() {
-    check(&run_set("MMFF94s_dative.sdf", "MMFF94s_dative.ref", MmffVariant::Mmff94s));
+    check(&run_set(
+        "MMFF94s_dative.sdf",
+        "MMFF94s_dative.ref",
+        MmffVariant::Mmff94s,
+    ));
 }
 
 #[test]
 fn mmff94s_hypervalent() {
-    check(&run_set("MMFF94s_hypervalent.sdf", &hyper_ref("MMFF94s_hypervalent"), MmffVariant::Mmff94s));
+    check(&run_set(
+        "MMFF94s_hypervalent.sdf",
+        &hyper_ref("MMFF94s_hypervalent"),
+        MmffVariant::Mmff94s,
+    ));
 }
 
 #[test]

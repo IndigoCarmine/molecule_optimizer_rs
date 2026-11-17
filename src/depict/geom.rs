@@ -105,7 +105,9 @@ impl Default for Transform2D {
 
 impl Transform2D {
     pub const fn identity() -> Self {
-        Transform2D { d: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] }
+        Transform2D {
+            d: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        }
     }
 
     fn translation(p: Point2D) -> Self {
@@ -173,7 +175,10 @@ impl Transform2D {
 
     pub fn apply(&self, p: Point2D) -> Point2D {
         let d = &self.d;
-        Point2D::new(d[0] * p.x + d[1] * p.y + d[2], d[3] * p.x + d[4] * p.y + d[5])
+        Point2D::new(
+            d[0] * p.x + d[1] * p.y + d[2],
+            d[3] * p.x + d[4] * p.y + d[5],
+        )
     }
 
     pub fn transform_point(&self, p: &mut Point2D) {

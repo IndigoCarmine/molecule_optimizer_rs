@@ -19,26 +19,39 @@ use molecule_optimizer_rs::{Result, io};
 use std::time::{Duration, Instant};
 
 fn hits(r: &AssemblySearchResult, gmin: &[[f64; 3]], emin: f64) -> usize {
-    r.all.iter().filter(|s| (s.energy - emin).abs() < 0.01 && r.rmsd(&s.coords, gmin, true) < 0.25).count()
+    r.all
+        .iter()
+        .filter(|s| (s.energy - emin).abs() < 0.01 && r.rmsd(&s.coords, gmin, true) < 0.25)
+        .count()
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().unwrap_or_else(|| "tests/data/assembly/acetic_acid.sdf".into());
+    let path = args
+        .next()
+        .unwrap_or_else(|| "tests/data/assembly/acetic_acid.sdf".into());
     let copies: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(2);
     let trials: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(32);
     let out = args.next().unwrap_or_else(|| "assembly.sdf".into());
     let mono = io::read_file(&path)?.remove(0);
     let input = AssemblyInput::Molecules(vec![(mono, copies)]);
-    let opts = AssemblySearchOptions { num_trials: trials, ..Default::default() };
+    let opts = AssemblySearchOptions {
+        num_trials: trials,
+        ..Default::default()
+    };
 
     // λ-continuation, asynchronously with a live view of the trials
     let t0 = Instant::now();
     let job = Engine::global().assembly_search(input.clone(), MmffBuilder::default(), opts.clone());
     while !job.is_finished() {
         let s = job.snapshot();
-        let lam: Vec<String> = s.data.in_flight.values().map(|t| format!("{:.3}", t.lambda_vdw)).collect();
+        let lam: Vec<String> = s
+            .data
+            .in_flight
+            .values()
+            .map(|t| format!("{:.3}", t.lambda_vdw))
+            .collect();
         let best = s.data.best().map(|b| b.energy).unwrap_or(f64::NAN);
         println!(
             "{}/{} done, λ of in-flight trials [{}], best E = {best:.4}",
@@ -56,19 +69,35 @@ async fn main() -> Result<()> {
     let direct = assembly_search(
         &input,
         &MmffBuilder::default(),
-        &AssemblySearchOptions { mode: AssemblyMode::Direct, ..opts },
+        &AssemblySearchOptions {
+            mode: AssemblyMode::Direct,
+            ..opts
+        },
     )?;
     let t_dir = t0.elapsed();
 
-    println!("\nmonomer energies {:?}, reference Σ = {:.4} kcal/mol", lam.monomer_energies, lam.reference_energy);
+    println!(
+        "\nmonomer energies {:?}, reference Σ = {:.4} kcal/mol",
+        lam.monomer_energies, lam.reference_energy
+    );
     println!("unique structures (λ-continuation):");
     println!("  #   trial   E(MMFF94)    ΔE_bind   connected");
     for (k, s) in lam.structures.iter().enumerate() {
-        println!("  {k:<3} {:<7} {:<12.4} {:<9.4} {}", s.trial, s.energy, s.binding_energy, s.connected);
+        println!(
+            "  {k:<3} {:<7} {:<12.4} {:<9.4} {}",
+            s.trial, s.energy, s.binding_energy, s.connected
+        );
     }
-    let (gl, gd) = (lam.global_minimum().unwrap(), direct.global_minimum().unwrap());
+    let (gl, gd) = (
+        lam.global_minimum().unwrap(),
+        direct.global_minimum().unwrap(),
+    );
     let g = if gl.energy <= gd.energy { gl } else { gd };
-    println!("\nlowest: E = {:.4} kcal/mol, binding energy {:.4} kcal/mol", g.energy, g.energy - lam.reference_energy);
+    println!(
+        "\nlowest: E = {:.4} kcal/mol, binding energy {:.4} kcal/mol",
+        g.energy,
+        g.energy - lam.reference_energy
+    );
     println!(
         "λ-continuation: {}/{} trials reached it, {} unique, {:.2?}",
         hits(&lam, &g.coords, g.energy),
@@ -91,7 +120,10 @@ async fn main() -> Result<()> {
         sdf.push_str(&write_sdf_record(
             &m,
             Some(&s.coords),
-            &[("energy", format!("{:.6}", s.energy)), ("binding_energy", format!("{:.6}", s.binding_energy))],
+            &[
+                ("energy", format!("{:.6}", s.energy)),
+                ("binding_energy", format!("{:.6}", s.binding_energy)),
+            ],
         ));
     }
     std::fs::write(&out, sdf)?;

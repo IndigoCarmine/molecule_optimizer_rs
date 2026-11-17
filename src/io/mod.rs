@@ -51,8 +51,9 @@ pub fn read_str(text: &str, format: Format) -> Result<Vec<Molecule>> {
 /// Reads all molecules from a file; the format is taken from the extension.
 pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<Molecule>> {
     let path = path.as_ref();
-    let fmt = Format::from_path(path)
-        .ok_or_else(|| Error::InvalidArgument(format!("unknown file extension: {}", path.display())))?;
+    let fmt = Format::from_path(path).ok_or_else(|| {
+        Error::InvalidArgument(format!("unknown file extension: {}", path.display()))
+    })?;
     let text = std::fs::read_to_string(path)?;
     read_str(&text, fmt)
 }
@@ -72,8 +73,9 @@ pub fn write_str(mol: &Molecule, coords: Option<&[[f64; 3]]>, format: Format) ->
 /// Writes molecules to a file; the format is taken from the extension.
 pub fn write_file(path: impl AsRef<Path>, mols: &[&Molecule]) -> Result<()> {
     let path = path.as_ref();
-    let fmt = Format::from_path(path)
-        .ok_or_else(|| Error::InvalidArgument(format!("unknown file extension: {}", path.display())))?;
+    let fmt = Format::from_path(path).ok_or_else(|| {
+        Error::InvalidArgument(format!("unknown file extension: {}", path.display()))
+    })?;
     let mut s = String::new();
     for m in mols {
         s.push_str(&write_str(m, None, fmt));

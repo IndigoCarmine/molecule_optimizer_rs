@@ -24,13 +24,21 @@ fn compare(mol: &Molecule, exp: &Value) -> Vec<String> {
     for (i, t) in tags.iter().enumerate() {
         let got = tag_str(mol.atom(i).chiral_tag);
         if got != t.as_str().unwrap() {
-            errs.push(format!("atom {i}: got '{got}' expected '{}'", t.as_str().unwrap()));
+            errs.push(format!(
+                "atom {i}: got '{got}' expected '{}'",
+                t.as_str().unwrap()
+            ));
         }
     }
     let mut expected_bonds = std::collections::BTreeMap::new();
     for b in exp["bond_stereo"].as_array().unwrap() {
         let idx = b["bond"].as_u64().unwrap() as usize;
-        let sa: Vec<usize> = b["stereo_atoms"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as usize).collect();
+        let sa: Vec<usize> = b["stereo_atoms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_u64().unwrap() as usize)
+            .collect();
         let st = match b["stereo"].as_str().unwrap() {
             "Z" | "CIS" => BondStereo::Cis,
             "E" | "TRANS" => BondStereo::Trans,
@@ -39,10 +47,17 @@ fn compare(mol: &Molecule, exp: &Value) -> Vec<String> {
         expected_bonds.insert(idx, (st, (sa[0], sa[1])));
     }
     for (b, bond) in mol.bonds().iter().enumerate() {
-        let got = if bond.stereo == BondStereo::None { None } else { Some((bond.stereo, bond.stereo_atoms.unwrap())) };
+        let got = if bond.stereo == BondStereo::None {
+            None
+        } else {
+            Some((bond.stereo, bond.stereo_atoms.unwrap()))
+        };
         let want = expected_bonds.get(&b).copied();
         if got != want {
-            errs.push(format!("bond {b} ({}-{}): got {got:?} expected {want:?}", bond.begin, bond.end));
+            errs.push(format!(
+                "bond {b} ({}-{}): got {got:?} expected {want:?}",
+                bond.begin, bond.end
+            ));
         }
     }
     errs
@@ -55,7 +70,9 @@ fn run_fixture(sdf: &Path, json: &Path) -> (usize, usize, Vec<String>) {
     let mut ok = 0;
     let mut report = Vec::new();
     for mut m in mols.clone() {
-        let e = exp.get(&m.name).unwrap_or_else(|| panic!("no reference for {}", m.name));
+        let e = exp
+            .get(&m.name)
+            .unwrap_or_else(|| panic!("no reference for {}", m.name));
         assign_stereo_legacy_from_3d(&mut m);
         let errs = compare(&m, e);
         if errs.is_empty() {
@@ -68,7 +85,9 @@ fn run_fixture(sdf: &Path, json: &Path) -> (usize, usize, Vec<String>) {
 }
 
 fn data(p: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(p)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data")
+        .join(p)
 }
 
 #[test]
@@ -103,7 +122,9 @@ fn cip_ranks_match_rdkit() {
     let mut bad = Vec::new();
     let mut n = 0;
     for m in io::read_sdf(&text).unwrap() {
-        let Some(arr) = exp.get(&m.name).and_then(|v| v.as_array()) else { continue };
+        let Some(arr) = exp.get(&m.name).and_then(|v| v.as_array()) else {
+            continue;
+        };
         let want: Vec<u32> = arr.iter().map(|x| x.as_u64().unwrap() as u32).collect();
         let got = molecule_optimizer_rs::perception::legacy_stereo::cip_ranks(&m);
         n += 1;

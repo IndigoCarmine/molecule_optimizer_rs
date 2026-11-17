@@ -88,9 +88,9 @@ pub use builder::{CompositeForceField, CustomTermsExt, WithCustomTerms, energy_p
 pub use kernel::{Globals, Kernel};
 pub use parse::ExprError;
 pub use terms::{
-    AtomParamFn, AtomParams, BondedKind, CustomAngle, CustomBond, CustomBondedContrib, CustomContrib, CustomExternal,
-    CustomNonbonded, CustomNonbondedContrib, CustomTerm, CustomTorsion, Cutoff, InteractionGroups, PreparedTerm,
-    as_custom,
+    AtomParamFn, AtomParams, BondedKind, CustomAngle, CustomBond, CustomBondedContrib,
+    CustomContrib, CustomExternal, CustomNonbonded, CustomNonbondedContrib, CustomTerm,
+    CustomTorsion, Cutoff, InteractionGroups, PreparedTerm, as_custom,
 };
 
 use std::collections::HashSet;

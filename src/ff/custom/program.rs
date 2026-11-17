@@ -74,7 +74,10 @@ impl Program<f64> {
             }
             match g.node(i as Id) {
                 Node::Var(k) => {
-                    assert!((k as usize) < n_inputs, "variable {k} out of range ({n_inputs} inputs)");
+                    assert!(
+                        (k as usize) < n_inputs,
+                        "variable {k} out of range ({n_inputs} inputs)"
+                    );
                     reg[i] = k as u16;
                 }
                 Node::Const(b) => {
@@ -106,7 +109,14 @@ impl Program<f64> {
                 (n_regs - 1) as u16
             });
             reg[i] = d;
-            code.push(Instr { code: code_, d, a: reg[a as usize], b: reg[b as usize], c: reg[c as usize], n: k });
+            code.push(Instr {
+                code: code_,
+                d,
+                a: reg[a as usize],
+                b: reg[b as usize],
+                c: reg[c as usize],
+                n: k,
+            });
             // Free operands whose last use is this node.
             let mut ch: Vec<Id> = node.children().collect();
             ch.sort_unstable();
@@ -120,7 +130,13 @@ impl Program<f64> {
         }
         assert!(n_regs < u16::MAX as usize, "expression too large");
         let outputs = roots.iter().map(|&r| reg[r as usize]).collect();
-        Program { n_inputs, n_regs, consts, code, outputs }
+        Program {
+            n_inputs,
+            n_regs,
+            consts,
+            code,
+            outputs,
+        }
     }
 }
 
@@ -130,7 +146,11 @@ impl<T: Real> Program<T> {
         Program {
             n_inputs: self.n_inputs,
             n_regs: self.n_regs,
-            consts: self.consts.iter().map(|&(r, v)| (r, U::from_f64(v.to_f64()))).collect(),
+            consts: self
+                .consts
+                .iter()
+                .map(|&(r, v)| (r, U::from_f64(v.to_f64())))
+                .collect(),
             code: self.code.clone(),
             outputs: self.outputs.clone(),
         }

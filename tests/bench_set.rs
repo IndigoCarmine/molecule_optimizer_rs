@@ -21,7 +21,10 @@ fn set_dir() -> PathBuf {
 
 fn load(file: &str) -> Vec<Molecule> {
     let text = std::fs::read_to_string(set_dir().join(file)).unwrap();
-    read_sdf_lenient(&text).into_iter().map(|r| r.expect("parse")).collect()
+    read_sdf_lenient(&text)
+        .into_iter()
+        .map(|r| r.expect("parse"))
+        .collect()
 }
 
 fn prop(m: &Molecule, k: &str) -> f64 {
@@ -36,7 +39,10 @@ fn rmsd_heavy(m: &Molecule, a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
 }
 
 fn check(kind: &str, builder: &dyn ForceFieldBuilder, label: &str) {
-    let initial: HashMap<String, Molecule> = load("initial.sdf").into_iter().map(|m| (m.name.clone(), m)).collect();
+    let initial: HashMap<String, Molecule> = load("initial.sdf")
+        .into_iter()
+        .map(|m| (m.name.clone(), m))
+        .collect();
     let opt = load(&format!("{}_opt.sdf", kind.to_lowercase()));
     let mut worst_e0 = 0.0f64;
     let mut worst_eopt = 0.0f64;
@@ -47,17 +53,25 @@ fn check(kind: &str, builder: &dyn ForceFieldBuilder, label: &str) {
         let m0 = &initial[&o.name];
         let e0_ref = prop(o, "E_INITIAL");
         let eopt_ref = prop(o, "E_OPT");
-        let ff = builder.build_dyn(m0, &[]).unwrap_or_else(|e| panic!("{}: {e}", o.name));
+        let ff = builder
+            .build_dyn(m0, &[])
+            .unwrap_or_else(|e| panic!("{}: {e}", o.name));
         let mut pos = m0.flat_coords();
         let e0 = ff.energy(&pos);
         let e_at_opt = ff.energy(&o.flat_coords());
         let scale = |e: f64| e.abs().max(1.0);
         if (e0 - e0_ref).abs() / scale(e0_ref) > 1e-9 {
-            println!("MISMATCH {label} {}: ours {e0:.6} rdkit {e0_ref:.6}", o.name);
+            println!(
+                "MISMATCH {label} {}: ours {e0:.6} rdkit {e0_ref:.6}",
+                o.name
+            );
         }
         worst_e0 = worst_e0.max((e0 - e0_ref).abs() / scale(e0_ref));
         worst_eopt = worst_eopt.max((e_at_opt - eopt_ref).abs() / scale(eopt_ref));
-        let opts = MinimizeOptions { max_iters: prop(o, "OPT_MAX_ITERS") as usize, ..Default::default() };
+        let opts = MinimizeOptions {
+            max_iters: prop(o, "OPT_MAX_ITERS") as usize,
+            ..Default::default()
+        };
         let r = minimize(&ff, &mut pos, &opts, &mut NoObserver);
         let ours: Vec<[f64; 3]> = pos.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
         let de = (r.energy - prop(o, "E_MIN")).abs();
@@ -75,9 +89,19 @@ fn check(kind: &str, builder: &dyn ForceFieldBuilder, label: &str) {
          minimization: max |dE|={worst_min_e:.2e} kcal/mol, max heavy RMSD={worst_rmsd:.2e} A",
         opt.len()
     );
-    assert!(worst_e0 < 1e-9, "{label}: initial energy mismatch {worst_e0}");
-    assert!(worst_eopt < 1e-9, "{label}: energy at RDKit-optimized structure mismatch {worst_eopt}");
-    assert!(failures.is_empty(), "{label}: minimization differs from RDKit:\n{}", failures.join("\n"));
+    assert!(
+        worst_e0 < 1e-9,
+        "{label}: initial energy mismatch {worst_e0}"
+    );
+    assert!(
+        worst_eopt < 1e-9,
+        "{label}: energy at RDKit-optimized structure mismatch {worst_eopt}"
+    );
+    assert!(
+        failures.is_empty(),
+        "{label}: minimization differs from RDKit:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -92,10 +116,18 @@ fn uff_reference_path() {
 
 #[test]
 fn mmff_fast_exact_path() {
-    check("MMFF", &FastBuilder::new(MmffBuilder::default(), FastOptions::exact()), "MMFF94/fast");
+    check(
+        "MMFF",
+        &FastBuilder::new(MmffBuilder::default(), FastOptions::exact()),
+        "MMFF94/fast",
+    );
 }
 
 #[test]
 fn uff_fast_exact_path() {
-    check("UFF", &FastBuilder::new(UffBuilder::default(), FastOptions::exact()), "UFF/fast");
+    check(
+        "UFF",
+        &FastBuilder::new(UffBuilder::default(), FastOptions::exact()),
+        "UFF/fast",
+    );
 }

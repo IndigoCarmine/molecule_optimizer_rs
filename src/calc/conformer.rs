@@ -21,7 +21,12 @@ pub trait ConformerGenerator: Send + Sync {
     fn name(&self) -> &str;
     /// Generates conformer `conf_id`. The observer sees internal
     /// minimization steps (positions may be 4D); it may stop the run.
-    fn generate(&self, mol: &Molecule, conf_id: usize, observer: &mut dyn Observer) -> Result<Vec<V3>>;
+    fn generate(
+        &self,
+        mol: &Molecule,
+        conf_id: usize,
+        observer: &mut dyn Observer,
+    ) -> Result<Vec<V3>>;
 }
 
 /// Simple generator: random rotations about rotatable bonds of the input
@@ -52,16 +57,25 @@ impl ConformerGenerator for RandomTorsionGenerator {
     fn name(&self) -> &str {
         "RandomTorsion"
     }
-    fn generate(&self, mol: &Molecule, conf_id: usize, _observer: &mut dyn Observer) -> Result<Vec<V3>> {
+    fn generate(
+        &self,
+        mol: &Molecule,
+        conf_id: usize,
+        _observer: &mut dyn Observer,
+    ) -> Result<Vec<V3>> {
         let mut m = mol.clone();
         let rot = Self::rotatable_bonds(&mut m);
-        let mut rng = ChaCha8Rng::seed_from_u64(self.seed ^ (conf_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let mut rng = ChaCha8Rng::seed_from_u64(
+            self.seed ^ (conf_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        );
         let mut c = mol.coords.clone();
         if conf_id == 0 {
             return Ok(c);
         }
         for (a, b) in rot {
-            let Some(side) = mol.fragment_side(b, a) else { continue };
+            let Some(side) = mol.fragment_side(b, a) else {
+                continue;
+            };
             let theta: f64 = rng.gen_range(-std::f64::consts::PI..std::f64::consts::PI);
             let (o, axis) = (c[a], crate::core::geometry::sub(c[b], c[a]));
             for i in side {
@@ -108,7 +122,10 @@ impl ConformerSearchOptions {
         ConformerSearchOptions {
             num_conformers: 50,
             generator,
-            minimize: MinimizeOptions { max_iters: 2000, ..Default::default() },
+            minimize: MinimizeOptions {
+                max_iters: 2000,
+                ..Default::default()
+            },
             energy_window: f64::INFINITY,
             rmsd_threshold: 0.125,
             energy_tolerance: 1e-2,
@@ -183,7 +200,11 @@ impl ConformerSearchResult {
 }
 
 fn rmsd_atoms(mol: &Molecule, with_h: bool) -> Vec<usize> {
-    if with_h { (0..mol.num_atoms()).collect() } else { mol.heavy_atoms() }
+    if with_h {
+        (0..mol.num_atoms()).collect()
+    } else {
+        mol.heavy_atoms()
+    }
 }
 
 fn rmsd(a: &[V3], b: &[V3], atoms: &[usize]) -> f64 {
@@ -193,7 +214,11 @@ fn rmsd(a: &[V3], b: &[V3], atoms: &[usize]) -> f64 {
 }
 
 /// Deduplicates conformers (deterministic: by energy, then id).
-pub fn deduplicate(mut confs: Vec<Conformer>, mol: &Molecule, opts: &ConformerSearchOptions) -> Vec<Conformer> {
+pub fn deduplicate(
+    mut confs: Vec<Conformer>,
+    mol: &Molecule,
+    opts: &ConformerSearchOptions,
+) -> Vec<Conformer> {
     confs.sort_by(|a, b| a.energy.total_cmp(&b.energy).then(a.id.cmp(&b.id)));
     let atoms = rmsd_atoms(mol, opts.rmsd_with_hydrogens);
     let emin = confs.first().map(|c| c.energy).unwrap_or(0.0);
@@ -202,9 +227,10 @@ pub fn deduplicate(mut confs: Vec<Conformer>, mol: &Molecule, opts: &ConformerSe
         if c.energy - emin > opts.energy_window {
             break;
         }
-        let dup = out
-            .iter()
-            .any(|o| (o.energy - c.energy).abs() < opts.energy_tolerance && rmsd(&o.coords, &c.coords, &atoms) < opts.rmsd_threshold);
+        let dup = out.iter().any(|o| {
+            (o.energy - c.energy).abs() < opts.energy_tolerance
+                && rmsd(&o.coords, &c.coords, &atoms) < opts.rmsd_threshold
+        });
         if !dup {
             out.push(c);
         }
@@ -217,11 +243,16 @@ pub fn deduplicate(mut confs: Vec<Conformer>, mol: &Molecule, opts: &ConformerSe
     out
 }
 
-fn insert_found(found: &mut Vec<Conformer>, c: Conformer, atoms: &[usize], opts: &ConformerSearchOptions) {
-    if let Some(pos) = found
-        .iter()
-        .position(|o| (o.energy - c.energy).abs() < opts.energy_tolerance && rmsd(&o.coords, &c.coords, atoms) < opts.rmsd_threshold)
-    {
+fn insert_found(
+    found: &mut Vec<Conformer>,
+    c: Conformer,
+    atoms: &[usize],
+    opts: &ConformerSearchOptions,
+) {
+    if let Some(pos) = found.iter().position(|o| {
+        (o.energy - c.energy).abs() < opts.energy_tolerance
+            && rmsd(&o.coords, &c.coords, atoms) < opts.rmsd_threshold
+    }) {
         if c.energy < found[pos].energy {
             found[pos] = c;
         } else {
@@ -245,16 +276,33 @@ fn run_one(
     let coords = match job {
         Some(ctx) => {
             ctx.update_silent(|s| {
-                s.in_flight.insert(id, (Stage::Generating, Frame::default()));
+                s.in_flight
+                    .insert(id, (Stage::Generating, Frame::default()));
             });
             let mut obs = CtxObserver::new(ctx, |ctx, info| {
                 let dim = info.pos.len() / mol.num_atoms().max(1);
                 let coords: Vec<V3> = (0..mol.num_atoms())
-                    .map(|i| [info.pos[dim * i], info.pos[dim * i + 1], info.pos[dim * i + 2]])
+                    .map(|i| {
+                        [
+                            info.pos[dim * i],
+                            info.pos[dim * i + 1],
+                            info.pos[dim * i + 2],
+                        ]
+                    })
                     .collect();
                 let (e, it) = (info.energy, info.iteration);
                 ctx.update(|s| {
-                    s.in_flight.insert(id, (Stage::Generating, Frame { coords, energy: e, iteration: it }));
+                    s.in_flight.insert(
+                        id,
+                        (
+                            Stage::Generating,
+                            Frame {
+                                coords,
+                                energy: e,
+                                iteration: it,
+                            },
+                        ),
+                    );
                 });
             });
             opts.generator.generate(mol, id, &mut obs)?
@@ -270,13 +318,33 @@ fn run_one(
     let r = match job {
         Some(ctx) => {
             ctx.update(|s| {
-                s.in_flight.insert(id, (Stage::Optimizing, Frame { coords: coords.clone(), energy: f64::NAN, iteration: 0 }));
+                s.in_flight.insert(
+                    id,
+                    (
+                        Stage::Optimizing,
+                        Frame {
+                            coords: coords.clone(),
+                            energy: f64::NAN,
+                            iteration: 0,
+                        },
+                    ),
+                );
             });
             let mut obs = CtxObserver::new(ctx, |ctx, info| {
                 let coords = to_points(info.pos);
                 let (e, it) = (info.energy, info.iteration);
                 ctx.update(|s| {
-                    s.in_flight.insert(id, (Stage::Optimizing, Frame { coords, energy: e, iteration: it }));
+                    s.in_flight.insert(
+                        id,
+                        (
+                            Stage::Optimizing,
+                            Frame {
+                                coords,
+                                energy: e,
+                                iteration: it,
+                            },
+                        ),
+                    );
                 });
             });
             optim::minimize_with(ff, &mut pos, &opts.minimize, false, &mut obs)
@@ -286,7 +354,13 @@ fn run_one(
     if r.status == MinimizeStatus::Cancelled {
         return Err(Error::Cancelled);
     }
-    Ok(Conformer { id, coords: to_points(&pos), energy: r.energy, status: r.status, iterations: r.iterations })
+    Ok(Conformer {
+        id,
+        coords: to_points(&pos),
+        energy: r.energy,
+        status: r.status,
+        iterations: r.iterations,
+    })
 }
 
 fn search(
@@ -332,11 +406,20 @@ fn search(
         return Err(Error::Embedding("no conformer could be generated".into()));
     }
     let conformers = deduplicate(all.clone(), mol, opts);
-    Ok(ConformerSearchResult { conformers, all, failed, cancelled })
+    Ok(ConformerSearchResult {
+        conformers,
+        all,
+        failed,
+        cancelled,
+    })
 }
 
 /// Synchronous conformer search (parallel on the current rayon pool).
-pub fn conformer_search(mol: &Molecule, builder: &dyn ForceFieldBuilder, opts: &ConformerSearchOptions) -> Result<ConformerSearchResult> {
+pub fn conformer_search(
+    mol: &Molecule,
+    builder: &dyn ForceFieldBuilder,
+    opts: &ConformerSearchOptions,
+) -> Result<ConformerSearchResult> {
     search(mol, builder, opts, None)
 }
 
@@ -350,8 +433,13 @@ impl Engine {
         opts: ConformerSearchOptions,
     ) -> JobHandle<ConformerSearchResult, ConformerSearchSnapshot> {
         let n = opts.num_conformers;
-        self.spawn(ConformerSearchSnapshot { total: n, ..Default::default() }, n, move |ctx| {
-            search(&mol, builder.as_ref(), &opts, Some(&ctx))
-        })
+        self.spawn(
+            ConformerSearchSnapshot {
+                total: n,
+                ..Default::default()
+            },
+            n,
+            move |ctx| search(&mol, builder.as_ref(), &opts, Some(&ctx)),
+        )
     }
 }

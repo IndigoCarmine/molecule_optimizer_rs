@@ -11,7 +11,11 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/etkdg");
 
 fn molecules() -> BTreeMap<String, Molecule> {
     let text = std::fs::read_to_string(format!("{DIR}/molecules.sdf")).unwrap();
-    io::molfile::read_sdf(&text).unwrap().into_iter().map(|m| (m.name.clone(), m)).collect()
+    io::molfile::read_sdf(&text)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.name.clone(), m))
+        .collect()
 }
 
 fn json(name: &str) -> Value {
@@ -19,11 +23,24 @@ fn json(name: &str) -> Value {
 }
 
 fn coords(v: &Value) -> Option<Vec<[f64; 3]>> {
-    v.as_array().map(|a| a.iter().map(|p| [p[0].as_f64().unwrap(), p[1].as_f64().unwrap(), p[2].as_f64().unwrap()]).collect())
+    v.as_array().map(|a| {
+        a.iter()
+            .map(|p| {
+                [
+                    p[0].as_f64().unwrap(),
+                    p[1].as_f64().unwrap(),
+                    p[2].as_f64().unwrap(),
+                ]
+            })
+            .collect()
+    })
 }
 
 fn max_dev(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
-    a.iter().zip(b).flat_map(|(p, q)| (0..3).map(move |k| (p[k] - q[k]).abs())).fold(0.0, f64::max)
+    a.iter()
+        .zip(b)
+        .flat_map(|(p, q)| (0..3).map(move |k| (p[k] - q[k]).abs()))
+        .fold(0.0, f64::max)
 }
 
 fn params(name: &str) -> EmbedParams {
@@ -70,11 +87,18 @@ fn bounds_match_rdkit() {
                 }
             }
             if worst.0 > 1e-6 {
-                bad.push(format!("{name}/{key}: max dev {:.3e} at ({}, {})", worst.0, worst.1, worst.2));
+                bad.push(format!(
+                    "{name}/{key}: max dev {:.3e} at ({}, {})",
+                    worst.0, worst.1, worst.2
+                ));
             }
         }
     }
-    println!("bounds mismatches: {}/{}", bad.len(), data.as_object().unwrap().len() * 3);
+    println!(
+        "bounds mismatches: {}/{}",
+        bad.len(),
+        data.as_object().unwrap().len() * 3
+    );
     for b in &bad {
         println!("  {b}");
     }
@@ -91,7 +115,17 @@ fn experimental_torsions_match_rdkit() {
         for (pname, list) in rec.as_object().unwrap() {
             total += 1;
             let e = Embedding::new(&mols[name], &params(pname)).unwrap();
-            let ours: Vec<[usize; 4]> = e.fragments.iter().flat_map(|f| f.details.exp_torsions.iter().filter(|t| !t.smarts.is_empty()).map(|t| t.atoms.map(|a| f.atoms[a]))).collect();
+            let ours: Vec<[usize; 4]> = e
+                .fragments
+                .iter()
+                .flat_map(|f| {
+                    f.details
+                        .exp_torsions
+                        .iter()
+                        .filter(|t| !t.smarts.is_empty())
+                        .map(|t| t.atoms.map(|a| f.atoms[a]))
+                })
+                .collect();
             let theirs: Vec<[usize; 4]> = list
                 .as_array()
                 .unwrap()
@@ -102,7 +136,9 @@ fn experimental_torsions_match_rdkit() {
                 })
                 .collect();
             if ours != theirs {
-                bad.push(format!("{name}/{pname}: ours {ours:?}\n      rdkit {theirs:?}"));
+                bad.push(format!(
+                    "{name}/{pname}: ours {ours:?}\n      rdkit {theirs:?}"
+                ));
             }
         }
     }
@@ -125,8 +161,17 @@ fn seed_parity_report() {
     let mut exact: BTreeMap<String, usize> = BTreeMap::new();
     for (name, rec) in data.as_object().unwrap() {
         let mol = &mols[name];
-        for key in ["initial", "etkdgv3", "etkdg", "kdg", "etdg", "random_coords"] {
-            let Some(expected) = coords(&rec[key]) else { continue };
+        for key in [
+            "initial",
+            "etkdgv3",
+            "etkdg",
+            "kdg",
+            "etdg",
+            "random_coords",
+        ] {
+            let Some(expected) = coords(&rec[key]) else {
+                continue;
+            };
             let (pname, stop, random) = match key {
                 "initial" => ("etkdgv3", StopAfter { initial_only: true }, false),
                 "random_coords" => ("etkdgv3", StopAfter::default(), true),
@@ -181,9 +226,15 @@ fn seed_parity_report() {
     }
     println!("seed parity (RMSD < 1e-3 A vs RDKit):");
     for (k, (ok, n)) in &counts {
-        println!("  {k:14} {ok:3}/{n}   (max |dx| < 1e-8: {})", exact.get(k).copied().unwrap_or(0));
+        println!(
+            "  {k:14} {ok:3}/{n}   (max |dx| < 1e-8: {})",
+            exact.get(k).copied().unwrap_or(0)
+        );
     }
-    println!("average time per embedding: {:.2} ms", t0.elapsed().as_secs_f64() * 1e3 / n_embed as f64);
+    println!(
+        "average time per embedding: {:.2} ms",
+        t0.elapsed().as_secs_f64() * 1e3 / n_embed as f64
+    );
     for l in &lines {
         println!("  {l}");
     }

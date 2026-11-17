@@ -2,7 +2,9 @@
 
 use super::{Frame, SharedBuilder, to_flat, to_points};
 use crate::core::Molecule;
-use crate::core::geometry::{V3, add, angle, cross, dihedral, dist, normalize, rotate_about_axis, scale, sub};
+use crate::core::geometry::{
+    V3, add, angle, cross, dihedral, dist, normalize, rotate_about_axis, scale, sub,
+};
 use crate::error::{Error, Result};
 use crate::ff::{Constraint, ForceField, ForceFieldBuilder};
 use crate::optim::{self, MinimizeOptions, MinimizeStatus};
@@ -14,9 +16,24 @@ use std::sync::Arc;
 /// (Å for distances, degrees for angles and dihedrals).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScanCoordinate {
-    Distance { i: usize, j: usize, values: Vec<f64> },
-    Angle { i: usize, j: usize, k: usize, values: Vec<f64> },
-    Dihedral { i: usize, j: usize, k: usize, l: usize, values: Vec<f64> },
+    Distance {
+        i: usize,
+        j: usize,
+        values: Vec<f64>,
+    },
+    Angle {
+        i: usize,
+        j: usize,
+        k: usize,
+        values: Vec<f64>,
+    },
+    Dihedral {
+        i: usize,
+        j: usize,
+        k: usize,
+        l: usize,
+        values: Vec<f64>,
+    },
 }
 
 impl ScanCoordinate {
@@ -36,14 +53,18 @@ impl ScanCoordinate {
         match *self {
             ScanCoordinate::Distance { i, j, .. } => dist(c[i], c[j]),
             ScanCoordinate::Angle { i, j, k, .. } => angle(c[i], c[j], c[k]).to_degrees(),
-            ScanCoordinate::Dihedral { i, j, k, l, .. } => dihedral(c[i], c[j], c[k], c[l]).to_degrees(),
+            ScanCoordinate::Dihedral { i, j, k, l, .. } => {
+                dihedral(c[i], c[j], c[k], c[l]).to_degrees()
+            }
         }
     }
     fn constraint(&self, value: f64, force: f64) -> Constraint {
         match *self {
             ScanCoordinate::Distance { i, j, .. } => Constraint::distance(i, j, value, force),
             ScanCoordinate::Angle { i, j, k, .. } => Constraint::angle(i, j, k, value, force),
-            ScanCoordinate::Dihedral { i, j, k, l, .. } => Constraint::dihedral(i, j, k, l, value, force),
+            ScanCoordinate::Dihedral { i, j, k, l, .. } => {
+                Constraint::dihedral(i, j, k, l, value, force)
+            }
         }
     }
     fn atoms(&self) -> Vec<usize> {
@@ -66,7 +87,11 @@ impl ScanCoordinate {
                     let frags = mol.fragments();
                     let fi = frags.iter().position(|f| f.contains(&i));
                     let fj = frags.iter().position(|f| f.contains(&j));
-                    if fi != fj { fj.map(|k| frags[k].clone()) } else { Some(vec![j]) }
+                    if fi != fj {
+                        fj.map(|k| frags[k].clone())
+                    } else {
+                        Some(vec![j])
+                    }
                 };
                 let Some(side) = side else { return false };
                 if side.contains(&i) {
@@ -81,7 +106,9 @@ impl ScanCoordinate {
                 true
             }
             ScanCoordinate::Angle { i, j, k, .. } => {
-                let Some(side) = mol.fragment_side(k, j) else { return false };
+                let Some(side) = mol.fragment_side(k, j) else {
+                    return false;
+                };
                 if side.contains(&i) || side.contains(&j) {
                     return false;
                 }
@@ -98,7 +125,9 @@ impl ScanCoordinate {
                 true
             }
             ScanCoordinate::Dihedral { i, j, k, l, .. } => {
-                let Some(side) = mol.fragment_side(k, j) else { return false };
+                let Some(side) = mol.fragment_side(k, j) else {
+                    return false;
+                };
                 if side.contains(&i) || side.contains(&j) {
                     return false;
                 }
@@ -148,7 +177,10 @@ impl Default for ScanOptions {
             mode: ScanMode::Relaxed,
             distance_force: 1.0e4,
             angle_force: 1.0e3,
-            minimize: MinimizeOptions { max_iters: 2000, ..Default::default() },
+            minimize: MinimizeOptions {
+                max_iters: 2000,
+                ..Default::default()
+            },
             extra_constraints: Vec::new(),
             preset_geometry: true,
         }
@@ -202,7 +234,11 @@ pub struct ScanResult {
 impl ScanResult {
     /// Energies relative to the minimum (kcal/mol), in point order.
     pub fn relative_energies(&self) -> Vec<f64> {
-        let m = self.points.iter().map(|p| p.energy).fold(f64::INFINITY, f64::min);
+        let m = self
+            .points
+            .iter()
+            .map(|p| p.energy)
+            .fold(f64::INFINITY, f64::min);
         self.points.iter().map(|p| p.energy - m).collect()
     }
 }
@@ -225,7 +261,11 @@ impl ScanCtx<'_> {
         start: &[V3],
         job: Option<&JobContext<ScanSnapshot>>,
     ) -> Result<ScanPoint> {
-        let values: Vec<f64> = idx.iter().zip(&self.opts.coordinates).map(|(&k, c)| c.values()[k]).collect();
+        let values: Vec<f64> = idx
+            .iter()
+            .zip(&self.opts.coordinates)
+            .map(|(&k, c)| c.values()[k])
+            .collect();
         let mut c = start.to_vec();
         if self.opts.preset_geometry {
             for (sc, &v) in self.opts.coordinates.iter().zip(&values) {
@@ -241,7 +281,9 @@ impl ScanCtx<'_> {
             cons.push(sc.constraint(v, f));
         }
         let ff = self.builder.build_dyn(self.mol, &cons)?;
-        let ff_plain = self.builder.build_dyn(self.mol, &self.opts.extra_constraints)?;
+        let ff_plain = self
+            .builder
+            .build_dyn(self.mol, &self.opts.extra_constraints)?;
         let mut pos = to_flat(&c);
         let fi = flat_index(idx, &self.shape);
         let r = match job {
@@ -252,19 +294,42 @@ impl ScanCtx<'_> {
                 let mut obs = CtxObserver::new(ctx, |ctx, info| {
                     let coords = to_points(info.pos);
                     let (e, it) = (info.energy, info.iteration);
-                    ctx.update(|s| s.points[fi] = PointState::Running(Frame { coords, energy: e, iteration: it }));
+                    ctx.update(|s| {
+                        s.points[fi] = PointState::Running(Frame {
+                            coords,
+                            energy: e,
+                            iteration: it,
+                        })
+                    });
                 });
-                ctx.update_silent(|s| s.points[fi] = PointState::Running(Frame { coords: c.clone(), energy: f64::NAN, iteration: 0 }));
+                ctx.update_silent(|s| {
+                    s.points[fi] = PointState::Running(Frame {
+                        coords: c.clone(),
+                        energy: f64::NAN,
+                        iteration: 0,
+                    })
+                });
                 optim::minimize_with(&ff, &mut pos, &self.opts.minimize, false, &mut obs)
             }
-            None => optim::minimize_with(&ff, &mut pos, &self.opts.minimize, false, &mut optim::NoObserver),
+            None => optim::minimize_with(
+                &ff,
+                &mut pos,
+                &self.opts.minimize,
+                false,
+                &mut optim::NoObserver,
+            ),
         };
         if r.status == MinimizeStatus::Cancelled {
             return Err(Error::Cancelled);
         }
         let coords = to_points(&pos);
         let energy = ff_plain.energy(&pos);
-        let achieved = self.opts.coordinates.iter().map(|sc| sc.measure(&coords)).collect();
+        let achieved = self
+            .opts
+            .coordinates
+            .iter()
+            .map(|sc| sc.measure(&coords))
+            .collect();
         let pt = ScanPoint {
             index: idx.to_vec(),
             values,
@@ -276,7 +341,13 @@ impl ScanCtx<'_> {
             iterations: r.iterations,
         };
         if let Some(ctx) = job {
-            ctx.update(|s| s.points[fi] = PointState::Done(Frame { coords, energy, iteration: r.iterations }));
+            ctx.update(|s| {
+                s.points[fi] = PointState::Done(Frame {
+                    coords,
+                    energy,
+                    iteration: r.iterations,
+                })
+            });
             ctx.inc_progress();
         }
         Ok(pt)
@@ -284,7 +355,13 @@ impl ScanCtx<'_> {
 
     /// All points with the given prefix; `first` is the already computed
     /// point `prefix + [0, 0, ...]`.
-    fn line(&self, axis: usize, prefix: Vec<usize>, first: ScanPoint, job: Option<&JobContext<ScanSnapshot>>) -> Vec<Result<ScanPoint>> {
+    fn line(
+        &self,
+        axis: usize,
+        prefix: Vec<usize>,
+        first: ScanPoint,
+        job: Option<&JobContext<ScanSnapshot>>,
+    ) -> Vec<Result<ScanPoint>> {
         let d = self.shape.len();
         let mut anchors: Vec<Result<ScanPoint>> = vec![Ok(first)];
         for v in 1..self.shape[axis] {
@@ -345,7 +422,11 @@ impl ScanCtx<'_> {
             }
         }
         points.sort_by_key(|p| flat_index(&p.index, &self.shape));
-        Ok(ScanResult { shape: self.shape.clone(), points, cancelled })
+        Ok(ScanResult {
+            shape: self.shape.clone(),
+            points,
+            cancelled,
+        })
     }
 }
 
@@ -355,31 +436,59 @@ fn validate(mol: &Molecule, opts: &ScanOptions) -> Result<Vec<usize>> {
     }
     for c in &opts.coordinates {
         if c.values().is_empty() {
-            return Err(Error::InvalidArgument("scan coordinate without values".into()));
+            return Err(Error::InvalidArgument(
+                "scan coordinate without values".into(),
+            ));
         }
         if c.atoms().iter().any(|&a| a >= mol.num_atoms()) {
-            return Err(Error::InvalidArgument("scan atom index out of range".into()));
+            return Err(Error::InvalidArgument(
+                "scan atom index out of range".into(),
+            ));
         }
     }
     Ok(opts.coordinates.iter().map(|c| c.values().len()).collect())
 }
 
 /// Runs a scan synchronously (uses the current rayon pool for parallelism).
-pub fn scan(mol: &Molecule, builder: &dyn ForceFieldBuilder, opts: &ScanOptions) -> Result<ScanResult> {
+pub fn scan(
+    mol: &Molecule,
+    builder: &dyn ForceFieldBuilder,
+    opts: &ScanOptions,
+) -> Result<ScanResult> {
     let shape = validate(mol, opts)?;
-    ScanCtx { mol, builder, opts, shape }.run(None)
+    ScanCtx {
+        mol,
+        builder,
+        opts,
+        shape,
+    }
+    .run(None)
 }
 
 impl Engine {
     /// Runs a coordinate scan asynchronously. Completed and in-progress
     /// points (with their current coordinates) are visible in the snapshot.
-    pub fn scan(&self, mol: Arc<Molecule>, builder: SharedBuilder, opts: ScanOptions) -> JobHandle<ScanResult, ScanSnapshot> {
+    pub fn scan(
+        &self,
+        mol: Arc<Molecule>,
+        builder: SharedBuilder,
+        opts: ScanOptions,
+    ) -> JobHandle<ScanResult, ScanSnapshot> {
         let shape = validate(&mol, &opts).unwrap_or_default();
         let total: usize = shape.iter().product();
-        let init = ScanSnapshot { points: vec![PointState::Pending; total], shape: shape.clone() };
+        let init = ScanSnapshot {
+            points: vec![PointState::Pending; total],
+            shape: shape.clone(),
+        };
         self.spawn(init, total, move |ctx| {
             let shape = validate(&mol, &opts)?;
-            ScanCtx { mol: &mol, builder: builder.as_ref(), opts: &opts, shape }.run(Some(&ctx))
+            ScanCtx {
+                mol: &mol,
+                builder: builder.as_ref(),
+                opts: &opts,
+                shape,
+            }
+            .run(Some(&ctx))
         })
     }
 }

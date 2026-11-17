@@ -54,7 +54,9 @@ pub struct DoubleSource {
 
 impl DoubleSource {
     pub fn new(seed: u32) -> Self {
-        DoubleSource { engine: MinstdRand::new(seed) }
+        DoubleSource {
+            engine: MinstdRand::new(seed),
+        }
     }
 
     /// boost `detail::generate_uniform_real` for an integral engine.

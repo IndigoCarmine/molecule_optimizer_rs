@@ -42,7 +42,9 @@ fn bond_order_between(mol: &Molecule, a: usize, b: usize) -> Result<f64> {
         .ok_or_else(|| Error::ForceField(format!("no bond between atoms {a} and {b}")))?;
     let bo = bond_type_as_double(mol.bond(bi).order);
     if bo <= 0.0 {
-        return Err(Error::ForceField(format!("UFF: bad bond order for bond {a}-{b}")));
+        return Err(Error::ForceField(format!(
+            "UFF: bad bond order for bond {a}-{b}"
+        )));
     }
     Ok(bo)
 }
@@ -52,7 +54,10 @@ fn add_bonds(mol: &Molecule, params: &Params, out: &mut Vec<BondStretchContrib>)
         if let (Some(p1), Some(p2)) = (params[b.begin], params[b.end]) {
             let bo = bond_type_as_double(b.order);
             if bo <= 0.0 {
-                return Err(Error::ForceField(format!("UFF: bad bond order for bond {}-{}", b.begin, b.end)));
+                return Err(Error::ForceField(format!(
+                    "UFF: bad bond order for bond {}-{}",
+                    b.begin, b.end
+                )));
             }
             out.push(BondStretchContrib::new(b.begin, b.end, bo, p1, p2));
         }
@@ -60,7 +65,12 @@ fn add_bonds(mol: &Molecule, params: &Params, out: &mut Vec<BondStretchContrib>)
     Ok(())
 }
 
-fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<AngleBendContrib>) -> Result<()> {
+fn add_angles(
+    mol: &Molecule,
+    rings: &RingInfo,
+    params: &Params,
+    out: &mut Vec<AngleBendContrib>,
+) -> Result<()> {
     // neighbor list of the current central atom (reused)
     let mut nbrs: Vec<usize> = Vec::new();
     for j in 0..mol.num_atoms() {
@@ -83,14 +93,20 @@ fn add_angles(mol: &Molecule, rings: &RingInfo, params: &Params, out: &mut Vec<A
                     Hybridization::SP2 => {
                         let mut order = 3;
                         if rings.is_atom_in_ring_of_size(j, 3) {
-                            let (i3, k3) = (rings.is_atom_in_ring_of_size(i, 3), rings.is_atom_in_ring_of_size(k, 3));
+                            let (i3, k3) = (
+                                rings.is_atom_in_ring_of_size(i, 3),
+                                rings.is_atom_in_ring_of_size(k, 3),
+                            );
                             if i3 != k3 {
                                 order = 30;
                             } else if i3 && k3 {
                                 order = 35;
                             }
                         } else if rings.is_atom_in_ring_of_size(j, 4) {
-                            let (i4, k4) = (rings.is_atom_in_ring_of_size(i, 4), rings.is_atom_in_ring_of_size(k, 4));
+                            let (i4, k4) = (
+                                rings.is_atom_in_ring_of_size(i, 4),
+                                rings.is_atom_in_ring_of_size(k, 4),
+                            );
                             if i4 != k4 {
                                 order = 40;
                             } else if i4 && k4 {
@@ -145,19 +161,28 @@ fn add_trigonal_bipyramid_angles(
     let (Some((ax1b, ax1)), Some((ax2b, ax2))) = (ax, ax_other) else {
         return Err(Error::ForceField("UFF: axial bond not found".into()));
     };
-    let eq: Vec<(usize, usize)> = bonds.iter().filter(|&&(_, b)| b != ax1b && b != ax2b).map(|&(o, b)| (b, o)).collect();
+    let eq: Vec<(usize, usize)> = bonds
+        .iter()
+        .filter(|&&(_, b)| b != ax1b && b != ax2b)
+        .map(|&(o, b)| (b, o))
+        .collect();
     if eq.len() < 3 {
         return Err(Error::ForceField("UFF: equatorial bond not found".into()));
     }
-    let center = params[aid].ok_or_else(|| Error::MissingParameters(format!("UFF: no parameters for atom {aid}")))?;
+    let center = params[aid]
+        .ok_or_else(|| Error::MissingParameters(format!("UFF: no parameters for atom {aid}")))?;
     let bo = |b: usize| bond_type_as_double(mol.bond(b).order);
     let mut add = |(bi, i): (usize, usize), (bj, j): (usize, usize), order: u32| -> Result<()> {
         if let (Some(pi), Some(pj)) = (params[i], params[j]) {
             let (o1, o2) = (bo(bi), bo(bj));
             if o1 <= 0.0 || o2 <= 0.0 {
-                return Err(Error::ForceField(format!("UFF: bad bond order at atom {aid}")));
+                return Err(Error::ForceField(format!(
+                    "UFF: bad bond order at atom {aid}"
+                )));
             }
-            out.push(AngleBendContrib::new(i, aid, j, o1, o2, pi, center, pj, order));
+            out.push(AngleBendContrib::new(
+                i, aid, j, o1, o2, pi, center, pj, order,
+            ));
         }
         Ok(())
     };
@@ -177,7 +202,11 @@ fn add_trigonal_bipyramid_angles(
     Ok(())
 }
 
-fn add_angle_special_cases(mol: &Molecule, params: &Params, out: &mut Vec<AngleBendContrib>) -> Result<()> {
+fn add_angle_special_cases(
+    mol: &Molecule,
+    params: &Params,
+    out: &mut Vec<AngleBendContrib>,
+) -> Result<()> {
     for i in 0..mol.num_atoms() {
         if mol.atom(i).hybridization == Hybridization::SP3D && mol.degree(i) == 5 {
             add_trigonal_bipyramid_angles(mol, i, params, out)?;
@@ -226,7 +255,11 @@ fn add_nonbonded(
 
 /// Atom matches `[!$(*#*)&!D1]`.
 fn torsion_atom_ok(mol: &Molecule, i: usize) -> bool {
-    mol.degree(i) != 1 && !mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Triple)
+    mol.degree(i) != 1
+        && !mol
+            .atom_bonds(i)
+            .iter()
+            .any(|&(_, b)| mol.bond(b).order == BondOrder::Triple)
 }
 
 fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContrib>) {
@@ -245,7 +278,9 @@ fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContr
             continue;
         }
         for idx2 in mol.neighbors(idx1).filter(|&b| b > idx1 && ok[b]) {
-            let (Some(p1), Some(p2)) = (params[idx1], params[idx2]) else { continue };
+            let (Some(p1), Some(p2)) = (params[idx1], params[idx2]) else {
+                continue;
+            };
             let bond = mol.bond_between(idx1, idx2).expect("bond");
             let a1 = mol.atom(idx1);
             let a2 = mol.atom(idx2);
@@ -260,7 +295,8 @@ fn add_torsions(mol: &Molecule, params: &Params, out: &mut Vec<TorsionAngleContr
                         if t2 == bond || t2 == t1 || e_idx == b_idx {
                             continue;
                         }
-                        let has_sp2 = mol.atom(b_idx).hybridization == SP2 || mol.atom(e_idx).hybridization == SP2;
+                        let has_sp2 = mol.atom(b_idx).hybridization == SP2
+                            || mol.atom(e_idx).hybridization == SP2;
                         here.push(TorsionAngleContrib::new(
                             [b_idx, idx1, idx2, e_idx],
                             bo,
@@ -298,7 +334,9 @@ fn add_inversions(mol: &Molecule, out: &mut Vec<InversionContrib>) {
             *slot = a;
         }
         let is_bound_to_sp2_o = at2 == 6
-            && nb.iter().any(|&a| mol.atom(a).atomic_num == 8 && mol.atom(a).hybridization == Hybridization::SP2);
+            && nb.iter().any(|&a| {
+                mol.atom(a).atomic_num == 8 && mol.atom(a).hybridization == Hybridization::SP2
+            });
         // RDKit stores the neighbours at idx[0], idx[2], idx[3]
         let idx = [nb[0], center, nb[1], nb[2]];
         for perm in [[0, 1, 2, 3], [0, 1, 3, 2], [2, 1, 3, 0]] {
@@ -334,11 +372,18 @@ pub fn build_contribs(
         }
     };
     // one term list per kind (in RDKit's order; summed term by term)
-    let (mut bonds, mut angles, mut vdw, mut torsions, mut inversions) = (vec![], vec![], vec![], vec![], vec![]);
+    let (mut bonds, mut angles, mut vdw, mut torsions, mut inversions) =
+        (vec![], vec![], vec![], vec![], vec![]);
     add_bonds(mol, params, &mut bonds)?;
     add_angles(mol, rings, params, &mut angles)?;
     add_angle_special_cases(mol, params, &mut angles)?;
-    add_nonbonded(mol, params, vdw_thresh, ignore_interfrag_interactions, &mut vdw);
+    add_nonbonded(
+        mol,
+        params,
+        vdw_thresh,
+        ignore_interfrag_interactions,
+        &mut vdw,
+    );
     add_torsions(mol, params, &mut torsions);
     add_inversions(mol, &mut inversions);
     Ok([
@@ -361,6 +406,11 @@ pub fn construct_force_field(
     ignore_interfrag_interactions: bool,
 ) -> Result<ContribForceField> {
     let mut ff = ContribForceField::new(mol.num_atoms(), 3);
-    ff.add_contribs(build_contribs(mol, params, vdw_thresh, ignore_interfrag_interactions)?);
+    ff.add_contribs(build_contribs(
+        mol,
+        params,
+        vdw_thresh,
+        ignore_interfrag_interactions,
+    )?);
     Ok(ff)
 }

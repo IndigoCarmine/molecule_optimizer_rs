@@ -35,9 +35,14 @@ pub(crate) fn to_flat(pts: &[[f64; 3]]) -> Vec<f64> {
     pts.iter().flat_map(|p| p.iter().copied()).collect()
 }
 
-pub use assembly::{AssemblyInput, AssemblyMode, AssemblySearchOptions, AssemblySearchResult, AssemblySearchSnapshot, AssemblyStructure, MonomerConformers};
-pub use conformer::{Conformer, ConformerSearchOptions, ConformerSearchResult, ConformerSearchSnapshot};
+pub use assembly::{
+    AssemblyInput, AssemblyMode, AssemblySearchOptions, AssemblySearchResult,
+    AssemblySearchSnapshot, AssemblyStructure, MonomerConformers,
+};
 pub use build::build_3d;
+pub use conformer::{
+    Conformer, ConformerSearchOptions, ConformerSearchResult, ConformerSearchSnapshot,
+};
 pub use energy::EnergyResult;
 pub use optimize::{OptimizeOptions, OptimizeResult, OptimizeSnapshot};
 pub use scan::{ScanCoordinate, ScanMode, ScanOptions, ScanPoint, ScanResult, ScanSnapshot};

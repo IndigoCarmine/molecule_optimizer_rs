@@ -10,7 +10,11 @@ pub fn erf(x: f64) -> f64 {
         return x;
     }
     let a = x.abs();
-    let v = if a < 2.0 { erf_series(a) } else { 1.0 - erfc_cf(a) };
+    let v = if a < 2.0 {
+        erf_series(a)
+    } else {
+        1.0 - erfc_cf(a)
+    };
     if x < 0.0 { -v } else { v }
 }
 
@@ -22,7 +26,11 @@ pub fn erfc(x: f64) -> f64 {
     if x < 0.0 {
         return 2.0 - erfc(-x);
     }
-    if x < 2.0 { 1.0 - erf_series(x) } else { erfc_cf(x) }
+    if x < 2.0 {
+        1.0 - erf_series(x)
+    } else {
+        erfc_cf(x)
+    }
 }
 
 /// `erf(x) = 2/sqrt(pi) exp(-x^2) sum_n (2x^2)^n x / (2n+1)!!` (all terms

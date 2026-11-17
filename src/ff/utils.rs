@@ -58,7 +58,13 @@ pub(crate) struct BondDistances {
 impl BondDistances {
     pub(crate) fn new(n: usize, depth: u8) -> Self {
         assert!(depth < u8::MAX);
-        BondDistances { depth, dist: vec![u8::MAX; n], touched: Vec::new(), frontier: Vec::new(), next: Vec::new() }
+        BondDistances {
+            depth,
+            dist: vec![u8::MAX; n],
+            touched: Vec::new(),
+            frontier: Vec::new(),
+            next: Vec::new(),
+        }
     }
     /// Computes the distances from atom `s` (replacing the previous row).
     pub(crate) fn compute(&mut self, mol: &crate::core::Molecule, s: usize) {
@@ -174,12 +180,24 @@ impl Torsion {
         let d1 = l1.max(1.0e-5);
         let t1 = [n1[0] / d1, n1[1] / d1, n1[2] / d1];
         let cos_phi = dot(t0, t1).clamp(-1.0, 1.0);
-        Torsion { r: [r0, r1, r2, r3], n: [n0, n1], n_len: [l0, l1], t: [t0, t1], d: [d0, d1], cos_phi }
+        Torsion {
+            r: [r0, r1, r2, r3],
+            n: [n0, n1],
+            n_len: [l0, l1],
+            t: [t0, t1],
+            d: [d0, d1],
+            cos_phi,
+        }
     }
 
     #[inline(always)]
     pub fn at(pos: &[f64], idx: [usize; 4]) -> Self {
-        Torsion::new(p3(pos, idx[0]), p3(pos, idx[1]), p3(pos, idx[2]), p3(pos, idx[3]))
+        Torsion::new(
+            p3(pos, idx[0]),
+            p3(pos, idx[1]),
+            p3(pos, idx[2]),
+            p3(pos, idx[3]),
+        )
     }
 
     /// Cosine as RDKit's torsion energies compute it (UFF
@@ -208,7 +226,13 @@ impl Torsion {
     /// [`DihedralData`] (with the angle).
     #[inline]
     pub fn data(&self) -> DihedralData {
-        DihedralData { dihedral: self.angle(), cos_phi: self.cos_phi, r: self.r, t: self.t, d: self.d }
+        DihedralData {
+            dihedral: self.angle(),
+            cos_phi: self.cos_phi,
+            r: self.r,
+            t: self.t,
+            d: self.d,
+        }
     }
 
     /// RDKit `calcTorsionGrad` (UFF and MMFF): adds `sin_term * dcos(phi)/dx`
@@ -287,12 +311,21 @@ impl OutOfPlane {
     pub fn new(i: V3, j: V3, k: V3, l: V3) -> Self {
         let r = [sub(i, j), sub(k, j), sub(l, j)];
         let l2 = [dot(r[0], r[0]), dot(r[1], r[1]), dot(r[2], r[2])];
-        OutOfPlane { r, l2, d: [l2[0].sqrt(), l2[1].sqrt(), l2[2].sqrt()] }
+        OutOfPlane {
+            r,
+            l2,
+            d: [l2[0].sqrt(), l2[1].sqrt(), l2[2].sqrt()],
+        }
     }
 
     #[inline(always)]
     pub fn at(pos: &[f64], idx: [usize; 4]) -> Self {
-        OutOfPlane::new(p3(pos, idx[0]), p3(pos, idx[1]), p3(pos, idx[2]), p3(pos, idx[3]))
+        OutOfPlane::new(
+            p3(pos, idx[0]),
+            p3(pos, idx[1]),
+            p3(pos, idx[2]),
+            p3(pos, idx[3]),
+        )
     }
 
     /// Whether a bond length is (numerically) zero; RDKit's gradients then
@@ -321,7 +354,10 @@ impl OutOfPlane {
         let n = cross([-u[0][0], -u[0][1], -u[0][2]], u[1]);
         let nl = norm(n);
         let n = [n[0] / nl, n[1] / nl, n[2] / nl];
-        (dot(n, u[2]).clamp(-1.0, 1.0), dot(u[0], u[1]).clamp(-1.0, 1.0))
+        (
+            dot(n, u[2]).clamp(-1.0, 1.0),
+            dot(u[0], u[1]).clamp(-1.0, 1.0),
+        )
     }
 
     /// Adds RDKit's out-of-plane gradient (MMFF `OopBendContrib::getGrad`,
@@ -330,7 +366,18 @@ impl OutOfPlane {
     /// in UFF.
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    pub fn add_grad(&self, grad: &mut [f64], idx: [usize; 4], u: &[V3; 3], de: f64, sin_w: f64, cos_w: f64, cos_theta: f64, sin_theta: f64, sin_theta_sq: f64) {
+    pub fn add_grad(
+        &self,
+        grad: &mut [f64],
+        idx: [usize; 4],
+        u: &[V3; 3],
+        de: f64,
+        sin_w: f64,
+        cos_w: f64,
+        cos_theta: f64,
+        sin_theta: f64,
+        sin_theta_sq: f64,
+    ) {
         let [rji, rjk, rjl] = *u;
         let [dji, djk, djl] = self.d;
         let t1 = cross(rjl, rjk);
@@ -361,7 +408,12 @@ mod tests {
     use super::*;
     #[test]
     fn rdkit_dihedral_matches_iupac() {
-        let pts = [[1.0, 0.2, 0.1], [0.0, 0.0, 0.0], [0.1, -0.2, 1.4], [-0.7, 0.9, 1.9]];
+        let pts = [
+            [1.0, 0.2, 0.1],
+            [0.0, 0.0, 0.0],
+            [0.1, -0.2, 1.4],
+            [-0.7, 0.9, 1.9],
+        ];
         let pos: Vec<f64> = pts.iter().flatten().copied().collect();
         let a = compute_dihedral(&pos, 0, 1, 2, 3).dihedral;
         let b = crate::core::geometry::dihedral(pts[0], pts[1], pts[2], pts[3]);

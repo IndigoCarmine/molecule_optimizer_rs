@@ -24,7 +24,11 @@ impl P3 {
     /// components only).
     #[inline]
     pub fn from_pos(pos: &[f64], i: usize, dim: usize) -> Self {
-        P3 { x: pos[dim * i], y: pos[dim * i + 1], z: pos[dim * i + 2] }
+        P3 {
+            x: pos[dim * i],
+            y: pos[dim * i + 1],
+            z: pos[dim * i + 2],
+        }
     }
     #[inline]
     pub fn length_sq(&self) -> f64 {
@@ -40,7 +44,11 @@ impl P3 {
     }
     #[inline]
     pub fn cross(&self, o: &P3) -> P3 {
-        P3 { x: self.y * o.z - self.z * o.y, y: -self.x * o.z + self.z * o.x, z: self.x * o.y - self.y * o.x }
+        P3 {
+            x: self.y * o.z - self.z * o.y,
+            y: -self.x * o.z + self.z * o.x,
+            z: self.x * o.y - self.y * o.x,
+        }
     }
     /// RDKit `normalize` (no-op on zero vectors instead of throwing).
     #[inline]
@@ -72,35 +80,55 @@ impl Add for P3 {
     type Output = P3;
     #[inline]
     fn add(self, o: P3) -> P3 {
-        P3 { x: self.x + o.x, y: self.y + o.y, z: self.z + o.z }
+        P3 {
+            x: self.x + o.x,
+            y: self.y + o.y,
+            z: self.z + o.z,
+        }
     }
 }
 impl Sub for P3 {
     type Output = P3;
     #[inline]
     fn sub(self, o: P3) -> P3 {
-        P3 { x: self.x - o.x, y: self.y - o.y, z: self.z - o.z }
+        P3 {
+            x: self.x - o.x,
+            y: self.y - o.y,
+            z: self.z - o.z,
+        }
     }
 }
 impl Neg for P3 {
     type Output = P3;
     #[inline]
     fn neg(self) -> P3 {
-        P3 { x: -self.x, y: -self.y, z: -self.z }
+        P3 {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 }
 impl Mul<f64> for P3 {
     type Output = P3;
     #[inline]
     fn mul(self, s: f64) -> P3 {
-        P3 { x: self.x * s, y: self.y * s, z: self.z * s }
+        P3 {
+            x: self.x * s,
+            y: self.y * s,
+            z: self.z * s,
+        }
     }
 }
 impl Div<f64> for P3 {
     type Output = P3;
     #[inline]
     fn div(self, s: f64) -> P3 {
-        P3 { x: self.x / s, y: self.y / s, z: self.z / s }
+        P3 {
+            x: self.x / s,
+            y: self.y / s,
+            z: self.z / s,
+        }
     }
 }
 impl DivAssign<f64> for P3 {

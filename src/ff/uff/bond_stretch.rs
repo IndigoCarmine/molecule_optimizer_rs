@@ -35,10 +35,21 @@ pub struct BondStretchContrib {
 }
 
 impl BondStretchContrib {
-    pub fn new(idx1: usize, idx2: usize, bond_order: f64, end1: &AtomicParams, end2: &AtomicParams) -> Self {
+    pub fn new(
+        idx1: usize,
+        idx2: usize,
+        bond_order: f64,
+        end1: &AtomicParams,
+        end2: &AtomicParams,
+    ) -> Self {
         let rest_len = calc_bond_rest_length(bond_order, end1, end2);
         let force_constant = calc_bond_force_constant(rest_len, end1, end2);
-        BondStretchContrib { idx1, idx2, rest_len, force_constant }
+        BondStretchContrib {
+            idx1,
+            idx2,
+            rest_len,
+            force_constant,
+        }
     }
 }
 

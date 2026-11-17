@@ -28,7 +28,13 @@ const RELATION_1_X: u8 = 3;
 fn torsion_bonds(mol: &Molecule) -> Vec<(usize, usize)> {
     let n = mol.num_atoms();
     let ok: Vec<bool> = (0..n)
-        .map(|i| mol.degree(i) != 1 && !mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Triple))
+        .map(|i| {
+            mol.degree(i) != 1
+                && !mol
+                    .atom_bonds(i)
+                    .iter()
+                    .any(|&(_, b)| mol.bond(b).order == BondOrder::Triple)
+        })
         .collect();
     let mut seen = vec![false; mol.num_bonds()];
     let mut out = Vec::new();
@@ -48,7 +54,12 @@ fn torsion_bonds(mol: &Molecule) -> Vec<(usize, usize)> {
 
 /// Builds the MMFF contributions for `mol` (coordinates taken from
 /// `coords`) with the given molecule properties.
-pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperties, coords: &[[f64; 3]], opts: &MmffBuilder) {
+pub(crate) fn add_mmff_terms(
+    ff: &mut ContribForceField,
+    props: &MmffMolProperties,
+    coords: &[[f64; 3]],
+    opts: &MmffBuilder,
+) {
     let mol = &props.tm.mol;
     let n = mol.num_atoms();
     let params = props.params;
@@ -73,7 +84,10 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         if mol.degree(j) == 1 {
             continue;
         }
-        let central = params.prop.get(props.atom_type(j)).expect("MMFF properties");
+        let central = params
+            .prop
+            .get(props.atom_type(j))
+            .expect("MMFF properties");
         nb.clear();
         nb.extend(mol.neighbors(j));
         for a in 0..nb.len() {
@@ -94,7 +108,10 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         if mol.degree(j) == 1 {
             continue;
         }
-        let central = params.prop.get(props.atom_type(j)).expect("MMFF properties");
+        let central = params
+            .prop
+            .get(props.atom_type(j))
+            .expect("MMFF properties");
         if central.linh != 0 {
             continue;
         }
@@ -103,7 +120,9 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
         for a in 0..nb.len() {
             for c in (a + 1)..nb.len() {
                 if let Some((_, s, b, ang)) = props.stretch_bend_params(nb[a], j, nb[c]) {
-                    stbn.add_term(nb[a], j, nb[c], b[0].r0, b[1].r0, ang.theta0, s.kba_ijk, s.kba_kji);
+                    stbn.add_term(
+                        nb[a], j, nb[c], b[0].r0, b[1].r0, ang.theta0, s.kba_ijk, s.kba_kji,
+                    );
                 }
             }
         }
@@ -126,7 +145,13 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
             continue;
         };
         for perm in [[0usize, 1, 2, 3], [0, 1, 3, 2], [2, 1, 3, 0]] {
-            oop.add_term(idx[perm[0]], idx[perm[1]], idx[perm[2]], idx[perm[3]], p.koop);
+            oop.add_term(
+                idx[perm[0]],
+                idx[perm[1]],
+                idx[perm[2]],
+                idx[perm[3]],
+                p.koop,
+            );
         }
     }
     if !oop.is_empty() {
@@ -203,15 +228,26 @@ pub(crate) fn add_mmff_terms(ff: &mut ContribForceField, props: &MmffMolProperti
                     continue;
                 }
                 let is_1_4 = cell == RELATION_1_4;
-                let d = [coords[i][0] - coords[j][0], coords[i][1] - coords[j][1], coords[i][2] - coords[j][2]];
+                let d = [
+                    coords[i][0] - coords[j][0],
+                    coords[i][1] - coords[j][1],
+                    coords[i][2] - coords[j][2],
+                ];
                 let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 if dist > opts.nonbonded_thresh {
                     continue;
                 }
-                let key = dense[types[i] as usize] as usize * nt + dense[types[j] as usize] as usize;
-                let vdw = *vdw_cache[key].get_or_insert_with(|| props.vdw_params(i, j).map(|v| (v.r_ij_star, v.epsilon)));
+                let key =
+                    dense[types[i] as usize] as usize * nt + dense[types[j] as usize] as usize;
+                let vdw = *vdw_cache[key].get_or_insert_with(|| {
+                    props.vdw_params(i, j).map(|v| (v.r_ij_star, v.epsilon))
+                });
                 let ele = if !is_double_zero(q[i]) && !is_double_zero(q[j]) {
-                    Some((q[i] * q[j] / opts.dielectric_constant, opts.dielectric_model, is_1_4))
+                    Some((
+                        q[i] * q[j] / opts.dielectric_constant,
+                        opts.dielectric_model,
+                        is_1_4,
+                    ))
                 } else {
                     None
                 };

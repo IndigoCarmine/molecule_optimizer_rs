@@ -12,7 +12,8 @@ fn root() -> PathBuf {
 }
 
 fn sdf() -> Vec<Molecule> {
-    io::read_sdf(&std::fs::read_to_string(root().join("benches/data/set/initial.sdf")).unwrap()).unwrap()
+    io::read_sdf(&std::fs::read_to_string(root().join("benches/data/set/initial.sdf")).unwrap())
+        .unwrap()
 }
 
 fn same(a: &Molecule, b: &Molecule, kind: ForceFieldKind) -> Result<(), String> {
@@ -22,7 +23,11 @@ fn same(a: &Molecule, b: &Molecule, kind: ForceFieldKind) -> Result<(), String> 
         return Err(format!("types differ: {:?} vs {:?}", x.types, y.types));
     }
     if let (Some(p), Some(q)) = (&x.partial_charges, &y.partial_charges) {
-        let d = p.iter().zip(q).map(|(u, v)| (u - v).abs()).fold(0.0, f64::max);
+        let d = p
+            .iter()
+            .zip(q)
+            .map(|(u, v)| (u - v).abs())
+            .fold(0.0, f64::max);
         if d > 1e-12 {
             return Err(format!("charges differ by {d}"));
         }
@@ -33,7 +38,10 @@ fn same(a: &Molecule, b: &Molecule, kind: ForceFieldKind) -> Result<(), String> 
 #[test]
 fn sdf_and_mol2_give_identical_assignments() {
     let mols = sdf();
-    let mol2 = io::read_mol2_str(&std::fs::read_to_string(root().join("tests/data/mol2/bench_initial.mol2")).unwrap()).unwrap();
+    let mol2 = io::read_mol2_str(
+        &std::fs::read_to_string(root().join("tests/data/mol2/bench_initial.mol2")).unwrap(),
+    )
+    .unwrap();
     let mut bad = Vec::new();
     for (a, b) in mols.iter().zip(&mol2) {
         for kind in [ForceFieldKind::Mmff94, ForceFieldKind::Uff] {
@@ -69,7 +77,11 @@ fn sdf_and_xyz_give_identical_assignments() {
             }
         }
     }
-    println!("XYZ vs SDF: {} mismatches of {} molecules", bad.len(), mols.len());
+    println!(
+        "XYZ vs SDF: {} mismatches of {} molecules",
+        bad.len(),
+        mols.len()
+    );
     for b in &bad {
         println!("  {}", &b[..b.len().min(160)]);
     }

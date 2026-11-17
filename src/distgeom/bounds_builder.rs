@@ -45,10 +45,20 @@ pub struct TorsionValue {
 
 impl TorsionValue {
     fn of(kind: TorsionType) -> Self {
-        TorsionValue { kind, value: None, extra_dist: None, is_forced: false }
+        TorsionValue {
+            kind,
+            value: None,
+            extra_dist: None,
+            is_forced: false,
+        }
     }
     fn forced(kind: TorsionType) -> Self {
-        TorsionValue { kind, value: None, extra_dist: None, is_forced: true }
+        TorsionValue {
+            kind,
+            value: None,
+            extra_dist: None,
+            is_forced: true,
+        }
     }
 }
 
@@ -109,10 +119,16 @@ struct Symm<T: Copy> {
 }
 impl<T: Copy> Symm<T> {
     fn new(n: usize, v: T) -> Self {
-        Symm { data: vec![v; n * (n + 1) / 2] }
+        Symm {
+            data: vec![v; n * (n + 1) / 2],
+        }
     }
     fn idx(i: usize, j: usize) -> usize {
-        if j <= i { i * (i + 1) / 2 + j } else { j * (j + 1) / 2 + i }
+        if j <= i {
+            i * (i + 1) / 2 + j
+        } else {
+            j * (j + 1) / 2 + i
+        }
     }
     fn get(&self, i: usize, j: usize) -> T {
         self.data[Self::idx(i, j)]
@@ -170,7 +186,11 @@ fn uid2(a: usize, b: usize, n: usize) -> usize {
 }
 #[inline]
 fn uid3(a: usize, b: usize, c: usize, n: usize) -> usize {
-    if a < c { a * n * n + b * n + c } else { c * n * n + b * n + a }
+    if a < c {
+        a * n * n + b * n + c
+    } else {
+        c * n * n + b * n + a
+    }
 }
 
 /// `RDGeom::compute13Dist`.
@@ -242,7 +262,9 @@ impl Ctx<'_> {
 
 fn squish_bond(cx: &Ctx, b: usize) -> bool {
     let bond = cx.mol.bond(b);
-    bond.is_conjugated && (cx.anum(bond.begin) > 10 || cx.anum(bond.end) > 10) && cx.ri.is_bond_in_ring_of_size(b, 5)
+    bond.is_conjugated
+        && (cx.anum(bond.begin) > 10 || cx.anum(bond.end) > 10)
+        && cx.ri.is_bond_in_ring_of_size(b, 5)
 }
 
 fn set12_bounds(cx: &Ctx, mmat: &mut BoundsMatrix, acc: &mut ComputedData) -> bool {
@@ -327,7 +349,11 @@ fn ring_angle(cx: &Ctx, a: usize, rs: usize) -> f64 {
     if (h == Hybridization::SP2 && rs <= 8) || rs == 3 || rs == 4 {
         PI * (1.0 - 2.0 / rs as f64)
     } else if h == Hybridization::SP3 {
-        if rs == 5 { 104.0 * PI / 180.0 } else { 109.5 * PI / 180.0 }
+        if rs == 5 {
+            104.0 * PI / 180.0
+        } else {
+            109.5 * PI / 180.0
+        }
     } else if h == Hybridization::SP3D {
         105.0 * PI / 180.0
     } else if h == Hybridization::SP3D2 {
@@ -460,7 +486,15 @@ fn atom_stereo(cx: &Ctx, b: usize, aid1: usize, aid4: usize) -> BondStereo {
     st
 }
 
-fn in_ring14_type(cx: &Ctx, b2: usize, a1: usize, a2: usize, a3: usize, a4: usize, ring_size: usize) -> TorsionValue {
+fn in_ring14_type(
+    cx: &Ctx,
+    b2: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    ring_size: usize,
+) -> TorsionValue {
     let (h2, h3) = (cx.hyb(a2), cx.hyb(a3));
     let st = atom_stereo(cx, b2, a1, a4);
     let sp2 = h2 == Hybridization::SP2 && h3 == Hybridization::SP2;
@@ -475,7 +509,15 @@ fn in_ring14_type(cx: &Ctx, b2: usize, a1: usize, a2: usize, a3: usize, a4: usiz
     }
 }
 
-fn two_in_same_ring14_type(cx: &Ctx, b2: usize, a1: usize, a2: usize, a3: usize, a4: usize, prefer_trans: bool) -> TorsionValue {
+fn two_in_same_ring14_type(
+    cx: &Ctx,
+    b2: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    prefer_trans: bool,
+) -> TorsionValue {
     let (h2, h3) = (cx.hyb(a2), cx.hyb(a3));
     let st = atom_stereo(cx, b2, a1, a4);
     let sp2 = h2 == Hybridization::SP2 && h3 == Hybridization::SP2;
@@ -499,7 +541,13 @@ fn check_amide_ester14(cx: &Ctx, b1: usize, b3: usize, a2: usize, a3: usize, a4:
         && (n2 == 8 || (n2 == 7 && cx.total_hs(a2) == 1))
 }
 
-fn check_macrocycle_all_in_same_ring_amide_ester14(cx: &Ctx, a1: usize, a2: usize, a3: usize, a4: usize) -> bool {
+fn check_macrocycle_all_in_same_ring_amide_ester14(
+    cx: &Ctx,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+) -> bool {
     let (n2, n3) = (cx.anum(a2), cx.anum(a3));
     if n3 != 6 {
         return false;
@@ -554,7 +602,17 @@ fn is_sec_amide_h(cx: &Ctx, h: usize, n: usize) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn chain14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: usize, a2: usize, a3: usize, a4: usize, force_trans_amides: bool) -> TorsionValue {
+fn chain14_type(
+    cx: &Ctx,
+    b1: usize,
+    b2: usize,
+    b3: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    force_trans_amides: bool,
+) -> TorsionValue {
     match cx.order(b2) {
         BondOrder::Double => {
             if cx.order(b1) == BondOrder::Double || cx.order(b3) == BondOrder::Double {
@@ -573,9 +631,16 @@ fn chain14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: usize, a2: usize,
         }
         BondOrder::Single => {
             if cx.anum(a2) == 16 && cx.anum(a3) == 16 && cx.degree(a2) == 2 && cx.degree(a3) == 2 {
-                return TorsionValue { kind: TorsionType::Custom, value: Some(PI / 2.0), extra_dist: None, is_forced: false };
+                return TorsionValue {
+                    kind: TorsionType::Custom,
+                    value: Some(PI / 2.0),
+                    extra_dist: None,
+                    is_forced: false,
+                };
             }
-            if check_amide_ester14(cx, b1, b3, a2, a3, a4) || check_amide_ester14(cx, b3, b1, a3, a2, a1) {
+            if check_amide_ester14(cx, b1, b3, a2, a3, a4)
+                || check_amide_ester14(cx, b3, b1, a3, a2, a1)
+            {
                 if force_trans_amides {
                     if is_sec_amide_h(cx, a1, a2) || is_sec_amide_h(cx, a4, a3) {
                         return TorsionValue::forced(TorsionType::Trans);
@@ -603,7 +668,15 @@ fn chain14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: usize, a2: usize,
     }
 }
 
-fn check_macrocycle_two_in_same_ring_amide_ester14(cx: &Ctx, b1: usize, b3: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> bool {
+fn check_macrocycle_two_in_same_ring_amide_ester14(
+    cx: &Ctx,
+    b1: usize,
+    b3: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+) -> bool {
     let (n1, n2, n3, n4) = (cx.anum(a1), cx.anum(a2), cx.anum(a3), cx.anum(a4));
     n1 != 1
         && n3 == 6
@@ -614,12 +687,26 @@ fn check_macrocycle_two_in_same_ring_amide_ester14(cx: &Ctx, b1: usize, b3: usiz
 }
 
 #[allow(clippy::too_many_arguments)]
-fn macro_two_in_same_ring14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: usize, a2: usize, a3: usize, a4: usize, use_mc: bool) -> TorsionValue {
+fn macro_two_in_same_ring14_type(
+    cx: &Ctx,
+    b1: usize,
+    b2: usize,
+    b3: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    use_mc: bool,
+) -> TorsionValue {
     let st = atom_stereo(cx, b2, a1, a4);
     if check_macrocycle_two_in_same_ring_amide_ester14(cx, b1, b3, a1, a2, a3, a4)
         || check_macrocycle_two_in_same_ring_amide_ester14(cx, b3, b1, a4, a3, a2, a1)
     {
-        return if use_mc { TorsionValue::forced(TorsionType::Cis) } else { TorsionValue::of(TorsionType::CisTrans) };
+        return if use_mc {
+            TorsionValue::forced(TorsionType::Cis)
+        } else {
+            TorsionValue::of(TorsionType::CisTrans)
+        };
     }
     if st == BondStereo::Cis {
         TorsionValue::of(TorsionType::Cis)
@@ -633,7 +720,17 @@ fn macro_two_in_same_ring14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn macro_all_in_same_ring14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: usize, a2: usize, a3: usize, a4: usize, use_mc: bool) -> TorsionValue {
+fn macro_all_in_same_ring14_type(
+    cx: &Ctx,
+    b1: usize,
+    b2: usize,
+    b3: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    use_mc: bool,
+) -> TorsionValue {
     match cx.order(b2) {
         BondOrder::Double => {
             if cx.order(b1) == BondOrder::Double || cx.order(b3) == BondOrder::Double {
@@ -652,20 +749,34 @@ fn macro_all_in_same_ring14_type(cx: &Ctx, b1: usize, b2: usize, b3: usize, a1: 
         }
         BondOrder::Single => {
             if cx.anum(a2) == 16 && cx.anum(a3) == 16 && cx.degree(a2) == 2 && cx.degree(a3) == 2 {
-                return TorsionValue { kind: TorsionType::Custom, value: Some(PI / 2.0), extra_dist: None, is_forced: false };
+                return TorsionValue {
+                    kind: TorsionType::Custom,
+                    value: Some(PI / 2.0),
+                    extra_dist: None,
+                    is_forced: false,
+                };
             }
             if check_macrocycle_all_in_same_ring_amide_ester14(cx, a1, a2, a3, a4)
                 || check_macrocycle_all_in_same_ring_amide_ester14(cx, a4, a3, a2, a1)
             {
                 return if use_mc {
-                    TorsionValue { kind: TorsionType::Trans, value: None, extra_dist: Some(0.1), is_forced: true }
+                    TorsionValue {
+                        kind: TorsionType::Trans,
+                        value: None,
+                        extra_dist: Some(0.1),
+                        is_forced: true,
+                    }
                 } else {
                     TorsionValue::of(TorsionType::CisTrans)
                 };
             }
             if check_amide_ester15(cx, b1, b3, a2, a3) || check_amide_ester15(cx, b3, b1, a3, a2) {
                 if use_mc {
-                    if cx.anum(a2) == 7 && cx.degree(a2) == 3 && cx.anum(a1) == 1 && cx.total_hs(a2) == 1 {
+                    if cx.anum(a2) == 7
+                        && cx.degree(a2) == 3
+                        && cx.anum(a1) == 1
+                        && cx.total_hs(a2) == 1
+                    {
                         return TorsionValue::forced(TorsionType::Cis);
                     } else {
                         return TorsionValue::forced(TorsionType::Trans);
@@ -690,7 +801,11 @@ struct Bounds14 {
 
 /// RDKit `merge(std::vector<Bounds>)`.
 fn merge_bounds(mut b: Vec<Bounds14>) -> Bounds14 {
-    b.sort_by(|x, y| x.lower.partial_cmp(&y.lower).unwrap_or(std::cmp::Ordering::Equal));
+    b.sort_by(|x, y| {
+        x.lower
+            .partial_cmp(&y.lower)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut cur = b[0];
     let mut comp_upper = cur.upper;
     let mut result_lower: Option<f64> = None;
@@ -703,11 +818,20 @@ fn merge_bounds(mut b: Vec<Bounds14>) -> Bounds14 {
                 result_lower = Some(cur.lower);
             }
             cur.lower = bd.lower;
-            cur.upper = if bd.lower <= comp_upper { comp_upper.min(bd.upper) } else { bd.upper };
+            cur.upper = if bd.lower <= comp_upper {
+                comp_upper.min(bd.upper)
+            } else {
+                bd.upper
+            };
         }
         comp_upper = comp_upper.max(bd.upper);
     }
-    Bounds14 { lower: result_lower.unwrap_or(cur.lower), upper: cur.upper, aid1: b[0].aid1, aid4: b[0].aid4 }
+    Bounds14 {
+        lower: result_lower.unwrap_or(cur.lower),
+        upper: cur.upper,
+        aid1: b[0].aid1,
+        aid4: b[0].aid4,
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -744,14 +868,36 @@ fn collect14(
     let (bl_l1, bl_l2, bl_l3) = (mmat.lower(a1, a2), mmat.lower(a2, a3), mmat.lower(a3, a4));
     let ba12 = acc.bond_angles.get(b1, b2);
     let ba23 = acc.bond_angles.get(b2, b3);
-    if ty != Type14::InChain && (cx.mol.bond_between(a1, a3).is_some() || cx.mol.bond_between(a4, a2).is_some()) {
+    if ty != Type14::InChain
+        && (cx.mol.bond_between(a1, a3).is_some() || cx.mol.bond_between(a4, a2).is_some())
+    {
         return;
     }
     let tv = match ty {
         Type14::InChain => chain14_type(cx, b1, b2, b3, a1, a2, a3, a4, info.force_trans_amides),
         Type14::InRing => in_ring14_type(cx, b2, a1, a2, a3, a4, info.ring_size),
-        Type14::MacrocycleAllInSameRing => macro_all_in_same_ring14_type(cx, b1, b2, b3, a1, a2, a3, a4, info.use_macrocycle14config),
-        Type14::MacrocycleTwoInSameRing => macro_two_in_same_ring14_type(cx, b1, b2, b3, a1, a2, a3, a4, info.use_macrocycle14config),
+        Type14::MacrocycleAllInSameRing => macro_all_in_same_ring14_type(
+            cx,
+            b1,
+            b2,
+            b3,
+            a1,
+            a2,
+            a3,
+            a4,
+            info.use_macrocycle14config,
+        ),
+        Type14::MacrocycleTwoInSameRing => macro_two_in_same_ring14_type(
+            cx,
+            b1,
+            b2,
+            b3,
+            a1,
+            a2,
+            a3,
+            a4,
+            info.use_macrocycle14config,
+        ),
         Type14::ShareRingBond | Type14::TwoInDiffRing => in_ring14_type(cx, b2, a1, a2, a3, a4, 0),
         Type14::TwoInSameRing => two_in_same_ring14_type(cx, b2, a1, a2, a3, a4, info.prefer_trans),
     };
@@ -794,9 +940,25 @@ fn collect14(
         dl -= GEN_DIST_TOL;
         du += GEN_DIST_TOL;
     }
-    acc.paths14.push(Path14 { bid1: b1, bid2: b2, bid3: b3, aid1: a1, aid2: a2, aid3: a3, aid4: a4, value: tv, type14: ty, ring_size: info.ring_size });
+    acc.paths14.push(Path14 {
+        bid1: b1,
+        bid2: b2,
+        bid3: b3,
+        aid1: a1,
+        aid2: a2,
+        aid3: a3,
+        aid4: a4,
+        value: tv,
+        type14: ty,
+        ring_size: info.ring_size,
+    });
     acc.visited14[pid] = true;
-    collected.entry(pid).or_default().push(Bounds14 { lower: dl, upper: du, aid1: a1, aid4: a4 });
+    collected.entry(pid).or_default().push(Bounds14 {
+        lower: dl,
+        upper: du,
+        aid1: a1,
+        aid4: a4,
+    });
 }
 
 fn record14_path(cx: &Ctx, b1: usize, b2: usize, b3: usize, acc: &mut ComputedData, rs: usize) {
@@ -811,10 +973,28 @@ fn record14_path(cx: &Ctx, b1: usize, b2: usize, b3: usize, acc: &mut ComputedDa
     } else {
         TorsionValue::of(TorsionType::Flexible)
     };
-    acc.paths14.push(Path14 { bid1: b1, bid2: b2, bid3: b3, aid1: a1, aid2: a2, aid3: a3, aid4: a4, value, type14: Type14::InRing, ring_size: rs });
+    acc.paths14.push(Path14 {
+        bid1: b1,
+        bid2: b2,
+        bid3: b3,
+        aid1: a1,
+        aid2: a2,
+        aid3: a3,
+        aid4: a4,
+        value,
+        type14: Type14::InRing,
+        ring_size: rs,
+    });
 }
 
-fn set14_bounds(cx: &Ctx, mmat: &mut BoundsMatrix, acc: &mut ComputedData, dmat: &[f64], use_mc: bool, force_trans: bool) {
+fn set14_bounds(
+    cx: &Ctx,
+    mmat: &mut BoundsMatrix,
+    acc: &mut ComputedData,
+    dmat: &[f64],
+    use_mc: bool,
+    force_trans: bool,
+) {
     let nb = cx.nb;
     let mut bond_rings = cx.ri.bond_rings.clone();
     bond_rings.sort_by_key(|r| std::cmp::Reverse(r.len()));
@@ -838,10 +1018,38 @@ fn set14_bounds(cx: &Ctx, mmat: &mut BoundsMatrix, acc: &mut ComputedData, dmat:
             done_paths.insert(id);
             if rs > 5 {
                 if use_mc && rs >= MIN_MACROCYCLE_RING_SIZE {
-                    collect14(cx, bid1, bid2, bid3, Type14::MacrocycleAllInSameRing, acc, mmat, dmat, Info14 { use_macrocycle14config: use_mc, ..Default::default() }, &mut collected);
+                    collect14(
+                        cx,
+                        bid1,
+                        bid2,
+                        bid3,
+                        Type14::MacrocycleAllInSameRing,
+                        acc,
+                        mmat,
+                        dmat,
+                        Info14 {
+                            use_macrocycle14config: use_mc,
+                            ..Default::default()
+                        },
+                        &mut collected,
+                    );
                     bid_is_macrocycle.insert(bid2);
                 } else {
-                    collect14(cx, bid1, bid2, bid3, Type14::InRing, acc, mmat, dmat, Info14 { ring_size: rs, ..Default::default() }, &mut collected);
+                    collect14(
+                        cx,
+                        bid1,
+                        bid2,
+                        bid3,
+                        Type14::InRing,
+                        acc,
+                        mmat,
+                        dmat,
+                        Info14 {
+                            ring_size: rs,
+                            ..Default::default()
+                        },
+                        &mut collected,
+                    );
                     cis_ring_bond_pairs[pid] = rs <= 8;
                 }
             } else {
@@ -870,17 +1078,78 @@ fn set14_bounds(cx: &Ctx, mmat: &mut BoundsMatrix, acc: &mut ComputedData, dmat:
                 let nr = |b: usize| cx.ri.num_bond_rings(b);
                 if ring_bond_pairs[pid1] || ring_bond_pairs[pid2] {
                     if use_mc && bid_is_macrocycle.contains(&bid2) {
-                        collect14(cx, bid1, bid2, bid3, Type14::MacrocycleTwoInSameRing, acc, mmat, dmat, Info14::default(), &mut collected);
+                        collect14(
+                            cx,
+                            bid1,
+                            bid2,
+                            bid3,
+                            Type14::MacrocycleTwoInSameRing,
+                            acc,
+                            mmat,
+                            dmat,
+                            Info14::default(),
+                            &mut collected,
+                        );
                     } else {
                         let pt = cis_ring_bond_pairs[pid1] || cis_ring_bond_pairs[pid2];
-                        collect14(cx, bid1, bid2, bid3, Type14::TwoInSameRing, acc, mmat, dmat, Info14 { prefer_trans: pt, ..Default::default() }, &mut collected);
+                        collect14(
+                            cx,
+                            bid1,
+                            bid2,
+                            bid3,
+                            Type14::TwoInSameRing,
+                            acc,
+                            mmat,
+                            dmat,
+                            Info14 {
+                                prefer_trans: pt,
+                                ..Default::default()
+                            },
+                            &mut collected,
+                        );
                     }
                 } else if (nr(bid1) > 0 && nr(bid2) > 0) || (nr(bid2) > 0 && nr(bid3) > 0) {
-                    collect14(cx, bid1, bid2, bid3, Type14::TwoInDiffRing, acc, mmat, dmat, Info14::default(), &mut collected);
+                    collect14(
+                        cx,
+                        bid1,
+                        bid2,
+                        bid3,
+                        Type14::TwoInDiffRing,
+                        acc,
+                        mmat,
+                        dmat,
+                        Info14::default(),
+                        &mut collected,
+                    );
                 } else if nr(bid2) > 0 {
-                    collect14(cx, bid1, bid2, bid3, Type14::ShareRingBond, acc, mmat, dmat, Info14::default(), &mut collected);
+                    collect14(
+                        cx,
+                        bid1,
+                        bid2,
+                        bid3,
+                        Type14::ShareRingBond,
+                        acc,
+                        mmat,
+                        dmat,
+                        Info14::default(),
+                        &mut collected,
+                    );
                 } else {
-                    collect14(cx, bid1, bid2, bid3, Type14::InChain, acc, mmat, dmat, Info14 { force_trans_amides: force_trans, ..Default::default() }, &mut collected);
+                    collect14(
+                        cx,
+                        bid1,
+                        bid2,
+                        bid3,
+                        Type14::InChain,
+                        acc,
+                        mmat,
+                        dmat,
+                        Info14 {
+                            force_trans_amides: force_trans,
+                            ..Default::default()
+                        },
+                        &mut collected,
+                    );
                 }
             }
         }
@@ -925,7 +1194,16 @@ fn d15_trans_cis(d1: f64, d2: f64, d3: f64, d4: f64, a12: f64, a23: f64, a34: f6
 }
 
 #[allow(clippy::too_many_arguments)]
-fn set15_helper(cx: &Ctx, bid1: usize, bid2: usize, bid3: usize, ty: TorsionType, acc: &mut ComputedData, mmat: &mut BoundsMatrix, dmat: &[f64]) {
+fn set15_helper(
+    cx: &Ctx,
+    bid1: usize,
+    bid2: usize,
+    bid3: usize,
+    ty: TorsionType,
+    acc: &mut ComputedData,
+    mmat: &mut BoundsMatrix,
+    dmat: &[f64],
+) {
     let nb = cx.nb;
     let na = cx.na;
     let aid2 = acc.bond_adj.get(bid1, bid2) as usize;
@@ -1013,7 +1291,11 @@ fn set15_helper(cx: &Ctx, bid1: usize, bid2: usize, bid3: usize, ty: TorsionType
 }
 
 fn set15_bounds(cx: &Ctx, mmat: &mut BoundsMatrix, acc: &mut ComputedData, dmat: &[f64]) {
-    let paths: Vec<(usize, usize, usize, TorsionType)> = acc.paths14.iter().map(|p| (p.bid1, p.bid2, p.bid3, p.value.kind)).collect();
+    let paths: Vec<(usize, usize, usize, TorsionType)> = acc
+        .paths14
+        .iter()
+        .map(|p| (p.bid1, p.bid2, p.bid3, p.value.kind))
+        .collect();
     for (b1, b2, b3, ty) in paths {
         set15_helper(cx, b1, b2, b3, ty, acc, mmat, dmat);
         set15_helper(cx, b3, b2, b1, ty, acc, mmat, dmat);
@@ -1041,7 +1323,11 @@ fn set_lower_bound_vdw(cx: &Ctx, mmat: &mut BoundsMatrix, dmat: &[f64]) {
                 } else if dmat[i * npt + j] == 4.0 {
                     mmat.set_lower(i, j, VDW_SCALE_15 * (vw1 + vw2));
                 } else if dmat[i * npt + j] == 5.0 {
-                    mmat.set_lower(i, j, (VDW_SCALE_15 + 0.5 * (1.0 - VDW_SCALE_15)) * (vw1 + vw2));
+                    mmat.set_lower(
+                        i,
+                        j,
+                        (VDW_SCALE_15 + 0.5 * (1.0 - VDW_SCALE_15)) * (vw1 + vw2),
+                    );
                 } else {
                     mmat.set_lower(i, j, vw1 + vw2);
                 }
@@ -1058,7 +1344,11 @@ pub fn distance_matrix(mol: &Molecule) -> Vec<f64> {
     let mut out = vec![0.0; n * n];
     for i in 0..n {
         for j in 0..n {
-            out[i * n + j] = if td[i][j] == usize::MAX { 1e8 } else { td[i][j] as f64 };
+            out[i * n + j] = if td[i][j] == usize::MAX {
+                1e8
+            } else {
+                td[i][j] as f64
+            };
         }
     }
     out
@@ -1073,18 +1363,34 @@ fn ring_info(mol: &Molecule) -> std::borrow::Cow<'_, RingInfo> {
 
 /// RDKit `setTopolBounds` (UFF 1-2 distances). Returns the recorded 1-4
 /// paths (RDKit `paths14`).
-pub fn set_topol_bounds(mol: &Molecule, mmat: &mut BoundsMatrix, opts: &TopolOptions) -> Vec<Path14> {
+pub fn set_topol_bounds(
+    mol: &Molecule,
+    mmat: &mut BoundsMatrix,
+    opts: &TopolOptions,
+) -> Vec<Path14> {
     let na = mol.num_atoms();
     let nb = mol.num_bonds();
     let ri = ring_info(mol);
-    let cx = Ctx { mol, ri: &ri, na, nb };
+    let cx = Ctx {
+        mol,
+        ri: &ri,
+        na,
+        nb,
+    };
     let mut acc = ComputedData::new(na, nb);
     let dmat = distance_matrix(mol);
     set12_bounds(&cx, mmat, &mut acc);
     if opts.set13bounds {
         set13_bounds(&cx, mmat, &mut acc);
         if opts.set14bounds {
-            set14_bounds(&cx, mmat, &mut acc, &dmat, opts.use_macrocycle14config, opts.force_trans_amides);
+            set14_bounds(
+                &cx,
+                mmat,
+                &mut acc,
+                &dmat,
+                opts.use_macrocycle14config,
+                opts.force_trans_amides,
+            );
             if opts.set15bounds {
                 set15_bounds(&cx, mmat, &mut acc, &dmat);
             }
@@ -1123,7 +1429,9 @@ pub fn collect_bonds_and_angles(mol: &Molecule) -> (Vec<(usize, usize)>, Vec<[us
             // triple bond, or consecutive double bonds (allene-like center)
             if bi.order == BondOrder::Triple
                 || bj.order == BondOrder::Triple
-                || (bi.order == BondOrder::Double && bj.order == BondOrder::Double && mol.degree(t[1]) == 2)
+                || (bi.order == BondOrder::Double
+                    && bj.order == BondOrder::Double
+                    && mol.degree(t[1]) == 2)
             {
                 t[3] = 1;
             }

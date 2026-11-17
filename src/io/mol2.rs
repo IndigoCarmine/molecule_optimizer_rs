@@ -55,7 +55,15 @@ impl Mol2AtomRecord {
     pub fn to_line(&self) -> String {
         let mut s = format!(
             "{:>7} {:<8}{:>11.4}{:>11.4}{:>11.4} {:<6}{:>5} {:<8}{:>10.4}",
-            self.atom_id, self.atom_name, self.x, self.y, self.z, self.atom_type, self.subst_id, self.subst_name, self.charge
+            self.atom_id,
+            self.atom_name,
+            self.x,
+            self.y,
+            self.z,
+            self.atom_type,
+            self.subst_id,
+            self.subst_name,
+            self.charge
         );
         if !self.status_bit.is_empty() {
             s.push(' ');
@@ -95,7 +103,10 @@ impl Mol2BondRecord {
     }
 
     pub fn to_line(&self) -> String {
-        let mut s = format!("{:>6}{:>6}{:>6} {:<4}", self.bond_id, self.origin_atom_id, self.target_atom_id, self.bond_type);
+        let mut s = format!(
+            "{:>6}{:>6}{:>6} {:<4}",
+            self.bond_id, self.origin_atom_id, self.target_atom_id, self.bond_type
+        );
         if !self.status_bit.is_empty() {
             s.push(' ');
             s.push_str(&self.status_bit);
@@ -158,7 +169,9 @@ impl Mol2File {
             match line {
                 Mol2Line::Atom(a) => writeln!(out, "{}", a.to_line()).unwrap(),
                 Mol2Line::Bond(b) => writeln!(out, "{}", b.to_line()).unwrap(),
-                Mol2Line::SectionHeader(s) | Mol2Line::MoleculeLine(s) | Mol2Line::Other(s) => writeln!(out, "{}", s).unwrap(),
+                Mol2Line::SectionHeader(s) | Mol2Line::MoleculeLine(s) | Mol2Line::Other(s) => {
+                    writeln!(out, "{}", s).unwrap()
+                }
                 Mol2Line::Empty => writeln!(out).unwrap(),
             }
         }
@@ -193,7 +206,9 @@ impl Mol2File {
                 Some(m) => m.lines.push(l.clone()),
                 None => {
                     if !matches!(l, Mol2Line::Empty | Mol2Line::Other(_)) {
-                        out.push(Mol2File { lines: vec![l.clone()] });
+                        out.push(Mol2File {
+                            lines: vec![l.clone()],
+                        });
                     }
                 }
             }
@@ -208,7 +223,10 @@ impl Mol2File {
         for l in &self.lines {
             match l {
                 Mol2Line::SectionHeader(h) => {
-                    inside = h.trim().trim_start_matches("@<TRIPOS>").eq_ignore_ascii_case(name);
+                    inside = h
+                        .trim()
+                        .trim_start_matches("@<TRIPOS>")
+                        .eq_ignore_ascii_case(name);
                 }
                 Mol2Line::MoleculeLine(s) | Mol2Line::Other(s) if inside => out.push(s.as_str()),
                 _ => {}
@@ -219,7 +237,10 @@ impl Mol2File {
 
     /// Partial charges of the ATOM records (in file order).
     pub fn partial_charges(&self) -> Vec<f64> {
-        self.atoms().filter(|a| !is_lone_pair(a)).map(|a| a.charge).collect()
+        self.atoms()
+            .filter(|a| !is_lone_pair(a))
+            .map(|a| a.charge)
+            .collect()
     }
 
     /// Converts the first molecule block to a [`Molecule`].
@@ -249,7 +270,11 @@ pub struct Mol2ReadOptions {
 
 impl Default for Mol2ReadOptions {
     fn default() -> Self {
-        Mol2ReadOptions { all_hydrogens_explicit: true, infer_formal_charges: true, sanitize: true }
+        Mol2ReadOptions {
+            all_hydrogens_explicit: true,
+            infer_formal_charges: true,
+            sanitize: true,
+        }
     }
 }
 
@@ -280,7 +305,14 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
             0
         } else {
             atomic_number(sym)
-                .or_else(|| atomic_number(&rec.atom_name.chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>()))
+                .or_else(|| {
+                    atomic_number(
+                        &rec.atom_name
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphabetic())
+                            .collect::<String>(),
+                    )
+                })
                 .ok_or_else(|| Error::UnknownElement(rec.atom_type.clone()))?
         };
         let mut atom = Atom::new(anum);
@@ -298,7 +330,10 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
         types.push(rec.atom_type.clone());
     }
     for rec in file.bonds() {
-        let (Some(&a), Some(&b)) = (id_to_index.get(&rec.origin_atom_id), id_to_index.get(&rec.target_atom_id)) else {
+        let (Some(&a), Some(&b)) = (
+            id_to_index.get(&rec.origin_atom_id),
+            id_to_index.get(&rec.target_atom_id),
+        ) else {
             continue; // bonds to lone pairs / unknown atoms
         };
         if a != b && !rec.bond_type.eq_ignore_ascii_case("nc") {
@@ -312,7 +347,11 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
     }
     // CRYSIN: a b c alpha beta gamma [space group] [setting]
     if let Some(line) = file.section_lines("CRYSIN").first() {
-        let v: Vec<f64> = line.split_whitespace().take(6).filter_map(|s| s.parse().ok()).collect();
+        let v: Vec<f64> = line
+            .split_whitespace()
+            .take(6)
+            .filter_map(|s| s.parse().ok())
+            .collect();
         if v.len() == 6 && v[0] > 0.0 && v[1] > 0.0 && v[2] > 0.0 {
             mol.cell = UnitCell::from_parameters(v[0], v[1], v[2], v[3], v[4], v[5]).ok();
         }
@@ -329,14 +368,21 @@ fn mol2_to_molecule(file: &Mol2File, opts: &Mol2ReadOptions) -> Result<Molecule>
 
 /// Formal charges from a `@<TRIPOS>UNITY_ATOM_ATTR` section (`AtomExpr <q>`
 /// entries, as read by RDKit). Returns `true` if any charge was found.
-fn read_unity_charges(file: &Mol2File, mol: &mut Molecule, id_to_index: &HashMap<usize, usize>) -> bool {
+fn read_unity_charges(
+    file: &Mol2File,
+    mol: &mut Molecule,
+    id_to_index: &HashMap<usize, usize>,
+) -> bool {
     let lines = file.section_lines("UNITY_ATOM_ATTR");
     let mut found = false;
     let mut k = 0;
     while k < lines.len() {
         let f: Vec<&str> = lines[k].split_whitespace().collect();
         k += 1;
-        let (Some(id), Some(n)) = (f.first().and_then(|s| s.parse::<usize>().ok()), f.get(1).and_then(|s| s.parse::<usize>().ok())) else {
+        let (Some(id), Some(n)) = (
+            f.first().and_then(|s| s.parse::<usize>().ok()),
+            f.get(1).and_then(|s| s.parse::<usize>().ok()),
+        ) else {
             continue;
         };
         for _ in 0..n {
@@ -346,7 +392,11 @@ fn read_unity_charges(file: &Mol2File, mol: &mut Molecule, id_to_index: &HashMap
             let g: Vec<&str> = lines[k].split_whitespace().collect();
             k += 1;
             if g.first() == Some(&"AtomExpr") {
-                if let Some(q) = g.get(1).filter(|s| !s.contains('=')).and_then(|s| s.parse::<i8>().ok()) {
+                if let Some(q) = g
+                    .get(1)
+                    .filter(|s| !s.contains('='))
+                    .and_then(|s| s.parse::<i8>().ok())
+                {
                     if let Some(&i) = id_to_index.get(&id) {
                         mol.atom_mut(i).formal_charge = q;
                         found = true;
@@ -395,7 +445,10 @@ fn cleanup_substructures(mol: &mut Molecule, types: &[String]) -> Result<()> {
             mol.atom_mut(idx).formal_charge = 1;
         } else if t == "O.co2" {
             if mol.degree(idx) != 1 {
-                return Err(Error::Perception(format!("{}: O.co2 with degree > 1", mol.name)));
+                return Err(Error::Perception(format!(
+                    "{}: O.co2 with degree > 1",
+                    mol.name
+                )));
             }
             let nbr = mol.neighbors(idx).next().unwrap();
             let tn = types[nbr].as_str();
@@ -428,14 +481,23 @@ fn cleanup_substructures(mol: &mut Molecule, types: &[String]) -> Result<()> {
                     fixed[idx] = true;
                 }
             } else {
-                return Err(Error::Perception(format!("{}: O.co2 with non C.2 or S.o2 neighbor", mol.name)));
+                return Err(Error::Perception(format!(
+                    "{}: O.co2 with non C.2 or S.o2 neighbor",
+                    mol.name
+                )));
             }
         } else if t == "C.cat" {
             fixed[idx] = true;
             let nbrs: Vec<usize> = mol.neighbors(idx).collect();
-            let n_n = nbrs.iter().filter(|&&x| mol.atom(x).atomic_num == 7).count();
+            let n_n = nbrs
+                .iter()
+                .filter(|&&x| mol.atom(x).atomic_num == 7)
+                .count();
             if !(2..=3).contains(&n_n) {
-                return Err(Error::Perception(format!("{}: C.cat with bad number of N neighbors", mol.name)));
+                return Err(Error::Perception(format!(
+                    "{}: C.cat with bad number of N neighbors",
+                    mol.name
+                )));
             }
             let mut to_mod: Option<usize> = None;
             if n_n == 2 {
@@ -462,7 +524,11 @@ fn cleanup_substructures(mol: &mut Molecule, types: &[String]) -> Result<()> {
                         if nh1 > nh2 { i1 } else { i2 }
                     } else {
                         let ri = mol.rings().clone();
-                        if ri.num_atom_rings(i1) > ri.num_atom_rings(i2) { i1 } else { i2 }
+                        if ri.num_atom_rings(i1) > ri.num_atom_rings(i2) {
+                            i1
+                        } else {
+                            i2
+                        }
                     });
                 }
             } else {
@@ -524,9 +590,15 @@ fn guess_formal_charges(mol: &mut Molecule, types: &[String]) {
         }
         let exp_val = (accum + 0.1).round() as i32;
         let el = crate::core::element(a.atomic_num);
-        let Some(&v0) = el.valences.first() else { continue };
+        let Some(&v0) = el.valences.first() else {
+            continue;
+        };
         let n_el = el.n_outer as i32;
-        let mut chg = if n_el >= 4 { exp_val - v0 } else { v0 - exp_val };
+        let mut chg = if n_el >= 4 {
+            exp_val - v0
+        } else {
+            v0 - exp_val
+        };
         if chg > 0 && n_el >= 4 {
             for &vi in &el.valences {
                 chg = exp_val - vi;
@@ -536,7 +608,11 @@ fn guess_formal_charges(mol: &mut Molecule, types: &[String]) {
             }
         }
         if chg != 0 {
-            let q = if a.is_aromatic && chg.abs() > 1 { chg.signum() } else { chg };
+            let q = if a.is_aromatic && chg.abs() > 1 {
+                chg.signum()
+            } else {
+                chg
+            };
             mol.atom_mut(i).formal_charge = q as i8;
             if chg == 2 && exp_val == 5 && a.atomic_num == 7 {
                 fix_nitro(mol, i);
@@ -582,11 +658,15 @@ pub fn read_mol2(text: &str) -> Result<Molecule> {
 // --- writing ---
 
 fn has_double_to(mol: &Molecule, i: usize, elems: &[u8]) -> bool {
-    mol.atom_bonds(i).iter().any(|&(o, b)| mol.bond(b).order == BondOrder::Double && elems.contains(&mol.atom(o).atomic_num))
+    mol.atom_bonds(i).iter().any(|&(o, b)| {
+        mol.bond(b).order == BondOrder::Double && elems.contains(&mol.atom(o).atomic_num)
+    })
 }
 
 fn terminal_o_count(mol: &Molecule, i: usize) -> usize {
-    mol.neighbors(i).filter(|&o| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1).count()
+    mol.neighbors(i)
+        .filter(|&o| mol.atom(o).atomic_num == 8 && mol.degree(o) == 1)
+        .count()
 }
 
 /// SYBYL atom type for atom `i` (expects a sanitized molecule).
@@ -602,29 +682,54 @@ pub fn sybyl_type(mol: &Molecule, i: usize) -> String {
             } else if a.hybridization == Hybridization::SP {
                 "C.1".into()
             } else if a.hybridization == Hybridization::SP2 {
-                let n_n = mol.neighbors(i).filter(|&x| mol.atom(x).atomic_num == 7).count();
+                let n_n = mol
+                    .neighbors(i)
+                    .filter(|&x| mol.atom(x).atomic_num == 7)
+                    .count();
                 let cationic = n_n == 3 && mol.neighbors(i).any(|x| mol.atom(x).formal_charge > 0);
-                if a.formal_charge > 0 || cationic { "C.cat".into() } else { "C.2".into() }
+                if a.formal_charge > 0 || cationic {
+                    "C.cat".into()
+                } else {
+                    "C.2".into()
+                }
             } else {
                 "C.3".into()
             }
         }
         7 => {
             if a.is_aromatic {
-                if deg == 3 && mol.atom_bonds(i).iter().all(|&(_, b)| mol.bond(b).order != BondOrder::Double) {
+                if deg == 3
+                    && mol
+                        .atom_bonds(i)
+                        .iter()
+                        .all(|&(_, b)| mol.bond(b).order != BondOrder::Double)
+                {
                     "N.pl3".into()
                 } else {
                     "N.ar".into()
                 }
             } else if a.hybridization == Hybridization::SP {
                 "N.1".into()
-            } else if deg == 4 && a.formal_charge > 0 && mol.atom_bonds(i).iter().all(|&(_, b)| mol.bond(b).order == BondOrder::Single) {
+            } else if deg == 4
+                && a.formal_charge > 0
+                && mol
+                    .atom_bonds(i)
+                    .iter()
+                    .all(|&(_, b)| mol.bond(b).order == BondOrder::Single)
+            {
                 "N.4".into()
             } else if terminal_o_count(mol, i) >= 2 {
                 "N.pl3".into()
-            } else if mol.neighbors(i).any(|c| mol.atom(c).atomic_num == 6 && has_double_to(mol, c, &[8, 16]) && deg == 3) {
+            } else if mol
+                .neighbors(i)
+                .any(|c| mol.atom(c).atomic_num == 6 && has_double_to(mol, c, &[8, 16]) && deg == 3)
+            {
                 "N.am".into()
-            } else if mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Double) {
+            } else if mol
+                .atom_bonds(i)
+                .iter()
+                .any(|&(_, b)| mol.bond(b).order == BondOrder::Double)
+            {
                 "N.2".into()
             } else if a.hybridization == Hybridization::SP2 {
                 "N.pl3".into()
@@ -637,11 +742,18 @@ pub fn sybyl_type(mol: &Molecule, i: usize) -> String {
             let co2 = mol.degree(i) == 1
                 && c.is_some_and(|c| {
                     let z = mol.atom(c).atomic_num;
-                    (z == 6 || z == 15) && terminal_o_count(mol, c) >= 2 && (a.formal_charge < 0 || mol.neighbors(c).any(|o| mol.atom(o).formal_charge < 0))
+                    (z == 6 || z == 15)
+                        && terminal_o_count(mol, c) >= 2
+                        && (a.formal_charge < 0
+                            || mol.neighbors(c).any(|o| mol.atom(o).formal_charge < 0))
                 });
             if co2 {
                 "O.co2".into()
-            } else if mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Double) {
+            } else if mol
+                .atom_bonds(i)
+                .iter()
+                .any(|&(_, b)| mol.bond(b).order == BondOrder::Double)
+            {
                 "O.2".into()
             } else {
                 "O.3".into()
@@ -649,12 +761,25 @@ pub fn sybyl_type(mol: &Molecule, i: usize) -> String {
         }
         15 => "P.3".into(),
         16 => {
-            let n_oxo = mol.atom_bonds(i).iter().filter(|&&(o, b)| mol.atom(o).atomic_num == 8 && mol.bond(b).order == BondOrder::Double && mol.degree(o) == 1).count();
+            let n_oxo = mol
+                .atom_bonds(i)
+                .iter()
+                .filter(|&&(o, b)| {
+                    mol.atom(o).atomic_num == 8
+                        && mol.bond(b).order == BondOrder::Double
+                        && mol.degree(o) == 1
+                })
+                .count();
             if n_oxo >= 2 {
                 "S.O2".into()
             } else if n_oxo == 1 {
                 "S.O".into()
-            } else if a.is_aromatic || mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).order == BondOrder::Double) {
+            } else if a.is_aromatic
+                || mol
+                    .atom_bonds(i)
+                    .iter()
+                    .any(|&(_, b)| mol.bond(b).order == BondOrder::Double)
+            {
                 "S.2".into()
             } else {
                 "S.3".into()
@@ -683,9 +808,15 @@ fn mol2_bond_type(mol: &Molecule, kek: &Molecule, b: usize, aromatic_bonds: bool
             // amide C(=O)-N
             let (x, y) = (bond.begin, bond.end);
             let is_amide = |c: usize, nn: usize| {
-                kek.atom(c).atomic_num == 6 && kek.atom(nn).atomic_num == 7 && has_double_to(kek, c, &[8])
+                kek.atom(c).atomic_num == 6
+                    && kek.atom(nn).atomic_num == 7
+                    && has_double_to(kek, c, &[8])
             };
-            if is_amide(x, y) || is_amide(y, x) { "am" } else { "1" }
+            if is_amide(x, y) || is_amide(y, x) {
+                "am"
+            } else {
+                "1"
+            }
         }
     }
 }
@@ -701,7 +832,11 @@ pub struct Mol2WriteOptions {
 
 /// Builds a [`Mol2File`] for a molecule (optional replacement coordinates
 /// and partial charges).
-pub fn molecule_to_mol2(mol: &Molecule, coords: Option<&[[f64; 3]]>, charges: Option<&[f64]>) -> Mol2File {
+pub fn molecule_to_mol2(
+    mol: &Molecule,
+    coords: Option<&[[f64; 3]]>,
+    charges: Option<&[f64]>,
+) -> Mol2File {
     molecule_to_mol2_with(mol, coords, charges, &Mol2WriteOptions::default())
 }
 
@@ -716,10 +851,18 @@ pub fn molecule_to_mol2_with(
     let kek = perception::kekulized_copy(mol).unwrap_or_else(|_| mol.clone());
     let mut lines = vec![
         Mol2Line::SectionHeader("@<TRIPOS>MOLECULE".into()),
-        Mol2Line::MoleculeLine(if mol.name.is_empty() { "molecule".into() } else { mol.name.clone() }),
+        Mol2Line::MoleculeLine(if mol.name.is_empty() {
+            "molecule".into()
+        } else {
+            mol.name.clone()
+        }),
         Mol2Line::MoleculeLine(format!("{} {} 1 0 0", mol.num_atoms(), mol.num_bonds())),
         Mol2Line::MoleculeLine("SMALL".into()),
-        Mol2Line::MoleculeLine(if charges.is_some() { "USER_CHARGES".into() } else { "NO_CHARGES".into() }),
+        Mol2Line::MoleculeLine(if charges.is_some() {
+            "USER_CHARGES".into()
+        } else {
+            "NO_CHARGES".into()
+        }),
         Mol2Line::Empty,
         Mol2Line::SectionHeader("@<TRIPOS>ATOM".into()),
     ];
@@ -729,8 +872,16 @@ pub fn molecule_to_mol2_with(
         let (name, subst_id, subst_name) = match &a.residue {
             Some(r) if !r.atom_name.is_empty() => (
                 r.atom_name.clone(),
-                if r.residue_number == 0 { 1 } else { r.residue_number },
-                if r.residue_name.is_empty() { "UNL".into() } else { r.residue_name.clone() },
+                if r.residue_number == 0 {
+                    1
+                } else {
+                    r.residue_number
+                },
+                if r.residue_name.is_empty() {
+                    "UNL".into()
+                } else {
+                    r.residue_name.clone()
+                },
             ),
             _ => {
                 let k = counts.entry(a.symbol()).or_insert(0);
@@ -765,7 +916,9 @@ pub fn molecule_to_mol2_with(
         let [a, b, cc] = cell.lengths();
         let [al, be, ga] = cell.angles();
         lines.push(Mol2Line::SectionHeader("@<TRIPOS>CRYSIN".into()));
-        lines.push(Mol2Line::Other(format!("{a:.4} {b:.4} {cc:.4} {al:.4} {be:.4} {ga:.4} 1 1")));
+        lines.push(Mol2Line::Other(format!(
+            "{a:.4} {b:.4} {cc:.4} {al:.4} {be:.4} {ga:.4} 1 1"
+        )));
     }
     Mol2File { lines }
 }

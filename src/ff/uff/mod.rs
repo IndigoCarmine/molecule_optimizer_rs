@@ -58,7 +58,11 @@ fn int_pow_n(x: f64, n: u32) -> f64 {
         1 => x,
         _ => {
             let half = int_pow_n(x, n / 2);
-            if n.is_multiple_of(2) { half * half } else { half * half * x }
+            if n.is_multiple_of(2) {
+                half * half
+            } else {
+                half * half * x
+            }
         }
     }
 }
@@ -93,7 +97,10 @@ pub struct UffBuilder {
 
 impl Default for UffBuilder {
     fn default() -> Self {
-        UffBuilder { vdw_thresh: 10.0, ignore_interfrag_interactions: true }
+        UffBuilder {
+            vdw_thresh: 10.0,
+            ignore_interfrag_interactions: true,
+        }
     }
 }
 
@@ -107,8 +114,12 @@ impl ForceFieldBuilder for UffBuilder {
             return Err(Error::InvalidArgument("molecule has no coordinates".into()));
         }
         let (_, params, _) = atom_typer::atom_types_and_params(mol);
-        let mut ff =
-            builder::construct_force_field(mol, &params, self.vdw_thresh, self.ignore_interfrag_interactions)?;
+        let mut ff = builder::construct_force_field(
+            mol,
+            &params,
+            self.vdw_thresh,
+            self.ignore_interfrag_interactions,
+        )?;
         ff.add_constraints(&mol.coords, constraints);
         Ok(ff)
     }
@@ -164,7 +175,10 @@ mod tests {
         let b = UffBuilder::default();
         assert_eq!(b.name(), "UFF");
         let plain = b.build(&m, &[]).unwrap();
-        let cs = [Constraint::Fixed { i: 0 }, Constraint::distance(0, 3, 2.0, 100.0)];
+        let cs = [
+            Constraint::Fixed { i: 0 },
+            Constraint::distance(0, 3, 2.0, 100.0),
+        ];
         let ff = b.build(&m, &cs).unwrap();
         assert_eq!(ff.num_contribs(), plain.num_contribs() + 1);
         assert_eq!(ff.fixed_points(), &[0]);
@@ -172,8 +186,22 @@ mod tests {
         let mut g = vec![0.0; pos.len()];
         ff.energy_grad(&pos, &mut g);
         assert_eq!(&g[..3], &[0.0, 0.0, 0.0]);
-        let labels: Vec<_> = ff.energy_breakdown(&pos).into_iter().map(|(k, _)| k).collect();
-        assert_eq!(labels, ["BondStretch", "AngleBend", "VdW", "Torsion", "Inversion", "Constraint"]);
+        let labels: Vec<_> = ff
+            .energy_breakdown(&pos)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "BondStretch",
+                "AngleBend",
+                "VdW",
+                "Torsion",
+                "Inversion",
+                "Constraint"
+            ]
+        );
     }
 
     #[test]
@@ -205,7 +233,12 @@ mod tests {
                 let em = r.energy(&p);
                 p[i] = x;
                 let gn = (ep - em) / (2.0 * h);
-                assert!((gn - ga[i]).abs() < 1e-5 * (1.0 + gn.abs()), "{} coord {i}: {gn} vs {}", c.label(), ga[i]);
+                assert!(
+                    (gn - ga[i]).abs() < 1e-5 * (1.0 + gn.abs()),
+                    "{} coord {i}: {gn} vs {}",
+                    c.label(),
+                    ga[i]
+                );
             }
         }
         for l in ["BondStretch", "AngleBend", "Torsion", "Inversion", "VdW"] {

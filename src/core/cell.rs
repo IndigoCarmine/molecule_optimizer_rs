@@ -26,7 +26,11 @@ fn dot(a: V3, b: V3) -> f64 {
 }
 #[inline]
 fn cross(a: V3, b: V3) -> V3 {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 #[inline]
 fn norm(a: V3) -> f64 {
@@ -58,9 +62,18 @@ impl UnitCell {
     /// Cell from lengths (Å) and angles (degrees; `alpha` = ∠(b,c),
     /// `beta` = ∠(a,c), `gamma` = ∠(a,b)) in the standard (PDB) orientation:
     /// `a` along x, `b` in the xy plane.
-    pub fn from_parameters(a: f64, b: f64, c: f64, alpha: f64, beta: f64, gamma: f64) -> Result<Self> {
+    pub fn from_parameters(
+        a: f64,
+        b: f64,
+        c: f64,
+        alpha: f64,
+        beta: f64,
+        gamma: f64,
+    ) -> Result<Self> {
         if !(a > 0.0 && b > 0.0 && c > 0.0) {
-            return Err(Error::InvalidArgument(format!("cell lengths must be positive ({a}, {b}, {c})")));
+            return Err(Error::InvalidArgument(format!(
+                "cell lengths must be positive ({a}, {b}, {c})"
+            )));
         }
         let (ca, cb) = (alpha.to_radians().cos(), beta.to_radians().cos());
         let (cg, sg) = (gamma.to_radians().cos(), gamma.to_radians().sin());
@@ -68,14 +81,22 @@ impl UnitCell {
         let fix = |x: f64| if x.abs() < 1e-15 { 0.0 } else { x };
         let (ca, cb, cg) = (fix(ca), fix(cb), fix(cg));
         if sg.abs() < 1e-8 {
-            return Err(Error::InvalidArgument("degenerate cell (gamma = 0 or 180 degrees)".into()));
+            return Err(Error::InvalidArgument(
+                "degenerate cell (gamma = 0 or 180 degrees)".into(),
+            ));
         }
         let cy = (ca - cb * cg) / sg;
         let cz2 = 1.0 - cb * cb - cy * cy;
         if cz2 <= 1e-12 {
-            return Err(Error::InvalidArgument(format!("invalid cell angles ({alpha}, {beta}, {gamma})")));
+            return Err(Error::InvalidArgument(format!(
+                "invalid cell angles ({alpha}, {beta}, {gamma})"
+            )));
         }
-        Self::from_vectors([a, 0.0, 0.0], [b * cg, b * sg, 0.0], [c * cb, c * cy, c * cz2.sqrt()])
+        Self::from_vectors(
+            [a, 0.0, 0.0],
+            [b * cg, b * sg, 0.0],
+            [c * cb, c * cy, c * cz2.sqrt()],
+        )
     }
 
     /// Cell from box vectors (must be right-handed and non-degenerate).
@@ -89,7 +110,11 @@ impl UnitCell {
         let ra = cross(b, c).map(|x| x / volume);
         let rb = cross(c, a).map(|x| x / volume);
         let rc = cross(a, b).map(|x| x / volume);
-        Ok(UnitCell { vectors: [a, b, c], recip: [ra, rb, rc], volume })
+        Ok(UnitCell {
+            vectors: [a, b, c],
+            recip: [ra, rb, rc],
+            volume,
+        })
     }
 
     /// Box vectors `[a, b, c]`.
@@ -111,7 +136,12 @@ impl UnitCell {
     /// Angles `(alpha, beta, gamma)` in degrees.
     pub fn angles(&self) -> V3 {
         let [a, b, c] = self.vectors;
-        let ang = |u: V3, v: V3| (dot(u, v) / (norm(u) * norm(v))).clamp(-1.0, 1.0).acos().to_degrees();
+        let ang = |u: V3, v: V3| {
+            (dot(u, v) / (norm(u) * norm(v)))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        };
         [ang(b, c), ang(a, c), ang(a, b)]
     }
     /// `true` if the box vectors are along x, y and z.
@@ -137,7 +167,11 @@ impl UnitCell {
     /// Fractional coordinates of a Cartesian point.
     #[inline]
     pub fn to_fractional(&self, r: V3) -> V3 {
-        [dot(self.recip[0], r), dot(self.recip[1], r), dot(self.recip[2], r)]
+        [
+            dot(self.recip[0], r),
+            dot(self.recip[1], r),
+            dot(self.recip[2], r),
+        ]
     }
     /// Cartesian coordinates of a fractional point.
     #[inline]
@@ -311,11 +345,17 @@ mod tests {
         let [a, b, cc] = c.vectors();
         let mut rng = 12345u64;
         let mut rnd = || {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng >> 11) as f64 / (1u64 << 53) as f64
         };
         for _ in 0..200 {
-            let d = [30.0 * (rnd() - 0.5), 30.0 * (rnd() - 0.5), 30.0 * (rnd() - 0.5)];
+            let d = [
+                30.0 * (rnd() - 0.5),
+                30.0 * (rnd() - 0.5),
+                30.0 * (rnd() - 0.5),
+            ];
             let m = c.min_image(d);
             let ml = norm(m);
             // brute force over a wide range of images

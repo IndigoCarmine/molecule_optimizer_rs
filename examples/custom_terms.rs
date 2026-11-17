@@ -20,7 +20,10 @@ fn dimer(mol: &Molecule, shift: [f64; 3]) -> Result<Molecule> {
     let n = mol.num_atoms();
     for a in 0..n {
         let p = mol.coords[a];
-        d.add_atom(mol.atom(a).clone(), [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]]);
+        d.add_atom(
+            mol.atom(a).clone(),
+            [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]],
+        );
     }
     for b in mol.bonds() {
         d.add_bond(b.begin + n, b.end + n, b.order);
@@ -35,7 +38,9 @@ fn dimer(mol: &Molecule, shift: [f64; 3]) -> Result<Molecule> {
 }
 
 fn main() -> Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "examples/data/paracetamol.mol".into());
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "examples/data/paracetamol.mol".into());
     let mono = io::read_file(&path)?.remove(0);
     let n = mono.num_atoms();
     let mol = dimer(&mono, [7.0, 2.0, 1.0])?;
@@ -43,19 +48,21 @@ fn main() -> Result<()> {
     let second: Vec<usize> = (n..2 * n).collect();
 
     // Flat-bottom spherical wall: zero inside radius R, harmonic outside.
-    let wall =
-        CustomExternal::new("wall", "k*max(0, d - R)^2; d = sqrt(x^2 + y^2 + z^2)", &[]).atoms(0..mol.num_atoms(), &[]);
+    let wall = CustomExternal::new("wall", "k*max(0, d - R)^2; d = sqrt(x^2 + y^2 + z^2)", &[])
+        .atoms(0..mol.num_atoms(), &[]);
     // Lennard-Jones between the two copies only, with per-atom parameters by
     // element and Lorentz-Berthelot combining rules, smoothly switched off
     // between 8 and 10 Angstrom.
     let lj = CustomNonbonded::new("lj", "lambda*4*eps*(s6^2 - s6); s6 = (sig/r)^6")
         .per_atom(
             &["sig", "eps"],
-            AtomParams::Function(std::sync::Arc::new(|m: &Molecule, i: usize| match m.atom(i).atomic_num {
-                1 => vec![2.5, 0.03],
-                6 => vec![3.4, 0.09],
-                7 => vec![3.3, 0.17],
-                _ => vec![3.1, 0.21],
+            AtomParams::Function(std::sync::Arc::new(|m: &Molecule, i: usize| {
+                match m.atom(i).atomic_num {
+                    1 => vec![2.5, 0.03],
+                    6 => vec![3.4, 0.09],
+                    7 => vec![3.3, 0.17],
+                    _ => vec![3.1, 0.21],
+                }
             })),
         )
         .combining("sig = 0.5*(sig1 + sig2); eps = sqrt(eps1*eps2)")
@@ -73,7 +80,12 @@ fn main() -> Result<()> {
     let mut opts = OptimizeOptions::default();
     opts.minimize.max_iters = 5000;
     let mut coords = mol.coords.clone();
-    println!("{} ({} atoms), builder {}", mol.name, mol.num_atoms(), builder.name());
+    println!(
+        "{} ({} atoms), builder {}",
+        mol.name,
+        mol.num_atoms(),
+        builder.name()
+    );
     for lambda in [0.0, 0.5, 1.0, 2.0] {
         // Changing a global updates `ff` (and any force field built by
         // `builder`) without rebuilding.
@@ -99,13 +111,20 @@ fn main() -> Result<()> {
             r.iterations,
             ff.energy_param_derivative("lambda", &pos),
         );
-        for (k, v) in ff.energy_breakdown(&pos).iter().filter(|(k, _)| k.starts_with("Custom:")) {
+        for (k, v) in ff
+            .energy_breakdown(&pos)
+            .iter()
+            .filter(|(k, _)| k.starts_with("Custom:"))
+        {
             println!("    {k:<12} {v:10.4}");
         }
     }
 
     // The same LJ kernel as WGSL source for a GPU pipeline.
     let kernel = &builder.terms()[1].kernel;
-    println!("\nWGSL for the custom LJ term:\n{}", kernel.to_wgsl_function("lj_energy_and_deriv").unwrap());
+    println!(
+        "\nWGSL for the custom LJ term:\n{}",
+        kernel.to_wgsl_function("lj_energy_and_deriv").unwrap()
+    );
     Ok(())
 }

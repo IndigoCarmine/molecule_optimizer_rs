@@ -19,7 +19,9 @@ pub fn assign_chiral_tags_from_3d(mol: &mut Molecule) {
         let deg = mol.degree(i);
         let anum = mol.atom(i).atomic_num;
         let eligible = (deg == 4 && mol.atom(i).total_hidden_hs() == 0)
-            || (deg == 3 && mol.atom(i).total_hidden_hs() == 0 && matches!(anum, 15 | 16 | 33 | 34));
+            || (deg == 3
+                && mol.atom(i).total_hidden_hs() == 0
+                && matches!(anum, 15 | 16 | 33 | 34));
         let tetra = mol
             .atom_bonds(i)
             .iter()
@@ -75,8 +77,17 @@ pub fn assign_double_bond_stereo_from_3d(mol: &mut Molecule) {
         if mol.degree(bond.begin) < 2 || mol.degree(bond.end) < 2 {
             continue;
         }
-        let d = crate::core::geometry::dihedral(mol.pos(ra), mol.pos(bond.begin), mol.pos(bond.end), mol.pos(rb));
-        let st = if d.abs() < std::f64::consts::FRAC_PI_2 { BondStereo::Cis } else { BondStereo::Trans };
+        let d = crate::core::geometry::dihedral(
+            mol.pos(ra),
+            mol.pos(bond.begin),
+            mol.pos(bond.end),
+            mol.pos(rb),
+        );
+        let st = if d.abs() < std::f64::consts::FRAC_PI_2 {
+            BondStereo::Cis
+        } else {
+            BondStereo::Trans
+        };
         let bm = mol.bond_mut(b);
         bm.stereo = st;
         bm.stereo_atoms = Some((ra, rb));
@@ -118,7 +129,10 @@ pub fn nontetrahedral_geometry_from_3d(mol: &Molecule, i: usize) -> Option<NonTe
         return None;
     }
     let cen = mol.pos(i);
-    let v: Vec<[f64; 3]> = mol.neighbors(i).map(|n| direction(cen, mol.pos(n))).collect();
+    let v: Vec<[f64; 3]> = mol
+        .neighbors(i)
+        .map(|n| direction(cen, mol.pos(n)))
+        .collect();
     let count = v.len();
     if !(3..=6).contains(&count) {
         return None;
@@ -166,11 +180,15 @@ pub fn nontetrahedral_geometry_from_3d(mol: &Molecule, i: usize) -> Option<NonTe
 pub fn apply_nontetrahedral_hybridization_from_3d(mol: &mut Molecule) {
     use crate::core::Hybridization;
     for i in 0..mol.num_atoms() {
-        let Some(g) = nontetrahedral_geometry_from_3d(mol, i) else { continue };
+        let Some(g) = nontetrahedral_geometry_from_3d(mol, i) else {
+            continue;
+        };
         let td = mol.total_degree(i);
         let h = match g {
             NonTetrahedralGeometry::SquarePlanar if (2..=4).contains(&td) => Hybridization::SP2D,
-            NonTetrahedralGeometry::TrigonalBipyramidal if (2..=5).contains(&td) => Hybridization::SP3D,
+            NonTetrahedralGeometry::TrigonalBipyramidal if (2..=5).contains(&td) => {
+                Hybridization::SP3D
+            }
             NonTetrahedralGeometry::Octahedral if (2..=6).contains(&td) => Hybridization::SP3D2,
             _ => continue,
         };
@@ -205,7 +223,9 @@ pub fn assign_stereo_from_2d(mol: &mut Molecule) {
         }
         let wavy = bond.dir == BondDir::Either
             || [bond.begin, bond.end].iter().any(|&a| {
-                mol.atom_bonds(a).iter().any(|&(_, ob)| ob != b && mol.bond(ob).dir == BondDir::Either)
+                mol.atom_bonds(a)
+                    .iter()
+                    .any(|&(_, ob)| ob != b && mol.bond(ob).dir == BondDir::Either)
             });
         if wavy {
             let bm = mol.bond_mut(b);
@@ -226,7 +246,10 @@ fn wedge_chirality(mol: &Molecule, i: usize) -> ChiralTag {
     if deg + atom.total_hidden_hs() as usize > 4 {
         return ChiralTag::Unspecified;
     }
-    if !bonds.iter().all(|&(_, b)| matches!(mol.bond(b).order, BondOrder::Single | BondOrder::Dative)) {
+    if !bonds
+        .iter()
+        .all(|&(_, b)| matches!(mol.bond(b).order, BondOrder::Single | BondOrder::Dative))
+    {
         return ChiralTag::Unspecified;
     }
     // The wedge's height for each neighbour: only wedges starting at `i` count.
@@ -261,7 +284,9 @@ fn wedge_chirality(mol: &Molecule, i: usize) -> ChiralTag {
         .collect();
     if deg == 4 {
         // A single unwedged explicit H: it points away from the three others.
-        let hs: Vec<usize> = (0..4).filter(|&k| mol.atom(bonds[k].0).atomic_num == 1 && heights[k] == 0.0).collect();
+        let hs: Vec<usize> = (0..4)
+            .filter(|&k| mol.atom(bonds[k].0).atomic_num == 1 && heights[k] == 0.0)
+            .collect();
         if let [k] = hs[..] {
             let mut o = [0.0; 3];
             for (m, w) in v.iter().enumerate() {
@@ -342,7 +367,11 @@ mod tests {
             real.coords[3][2] = z;
             real.coords[4] = [0.0, 0.0, -z];
             assign_chiral_tags_from_3d(&mut real);
-            assert_eq!(with_h.atom(0).chiral_tag, real.atom(0).chiral_tag, "{dir:?}");
+            assert_eq!(
+                with_h.atom(0).chiral_tag,
+                real.atom(0).chiral_tag,
+                "{dir:?}"
+            );
 
             // Three neighbours: the embedder takes the centre as the fourth point.
             let mut flat = drawn(dir);
@@ -351,7 +380,11 @@ mod tests {
             p[3][2] = z;
             let v = |k: usize| sub(p[k], p[0]);
             let vol = dot(v(1), cross(v(2), v(3)));
-            let want = if vol > 0.0 { ChiralTag::Ccw } else { ChiralTag::Cw };
+            let want = if vol > 0.0 {
+                ChiralTag::Ccw
+            } else {
+                ChiralTag::Cw
+            };
             assert_eq!(flat.atom(0).chiral_tag, want, "{dir:?}");
         }
     }

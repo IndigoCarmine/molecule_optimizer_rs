@@ -36,7 +36,10 @@ fn parse_xyz(l: &str) -> [f64; 3] {
 }
 
 fn load() -> Vec<Record> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/uff/uff_reference.txt");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/uff/uff_reference.txt"
+    );
     let text = std::fs::read_to_string(path).expect("fixture");
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -46,7 +49,10 @@ fn load() -> Vec<Record> {
         let l = lines[k];
         k += 1;
         if let Some(v) = l.strip_prefix("$NAME ") {
-            cur = Record { name: v.to_string(), ..Default::default() };
+            cur = Record {
+                name: v.to_string(),
+                ..Default::default()
+            };
         } else if let Some(v) = l.strip_prefix("$OPTS ") {
             let f: Vec<&str> = v.split_whitespace().collect();
             cur.vdw_thresh = f[0].parse().unwrap();
@@ -100,7 +106,10 @@ fn mol_of(r: &Record) -> Molecule {
 }
 
 fn builder(r: &Record) -> UffBuilder {
-    UffBuilder { vdw_thresh: r.vdw_thresh, ignore_interfrag_interactions: r.ignore_interfrag }
+    UffBuilder {
+        vdw_thresh: r.vdw_thresh,
+        ignore_interfrag_interactions: r.ignore_interfrag,
+    }
 }
 
 fn rmsd(m: &Molecule, a: &[f64], b: &[[f64; 3]], heavy_only: bool) -> f64 {
@@ -139,7 +148,12 @@ fn atom_types_match_rdkit() {
         }
         assert_eq!(uff_has_all_params(&m), r.has_all, "{}", r.name);
     }
-    assert!(bad.is_empty(), "{} type mismatches:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} type mismatches:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 #[test]
@@ -164,16 +178,31 @@ fn energies_and_gradients_match_rdkit() {
         let rel_e = (e - e_ref).abs() / e_ref.abs().max(1.0);
         max_rel_e = max_rel_e.max(rel_e);
         let gmax = r.grad.iter().flatten().fold(1.0f64, |a, &b| a.max(b.abs()));
-        let dg = r.grad.iter().flatten().zip(&g).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max) / gmax;
+        let dg = r
+            .grad
+            .iter()
+            .flatten()
+            .zip(&g)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max)
+            / gmax;
         max_rel_g = max_rel_g.max(dg);
         if rel_e > 1e-6 || dg > 1e-6 {
-            bad.push(format!("{}: E {e} vs {e_ref} (rel {rel_e:.2e}), grad rel {dg:.2e}", r.name));
+            bad.push(format!(
+                "{}: E {e} vs {e_ref} (rel {rel_e:.2e}), grad rel {dg:.2e}",
+                r.name
+            ));
         }
     }
     println!(
         "{n} molecules: bit-identical energy {exact_e}, bit-identical gradient {exact_g};          max relative energy error {max_rel_e:.3e}, max relative gradient error {max_rel_g:.3e}"
     );
-    assert!(bad.is_empty(), "{} energy/gradient mismatches:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} energy/gradient mismatches:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 #[test]
@@ -192,13 +221,24 @@ fn minimization_matches_rdkit() {
         let ff = builder(r).build(&m, &[]).unwrap();
         for o in &r.opts {
             let mut pos = m.flat_coords();
-            let opts = MinimizeOptions { max_iters: o.iters, ..Default::default() };
+            let opts = MinimizeOptions {
+                max_iters: o.iters,
+                ..Default::default()
+            };
             let res = optim::minimize(&ff, &mut pos, &opts, &mut NoObserver);
-            let rc = if res.status == MinimizeStatus::Converged { 0 } else { 1 };
+            let rc = if res.status == MinimizeStatus::Converged {
+                0
+            } else {
+                1
+            };
             let de = (res.energy - o.energy).abs();
             let rm = rmsd(&m, &pos, &o.coords, true);
             n_total += 1;
-            n_exact += (res.energy == o.energy && pos.iter().zip(o.coords.iter().flatten()).all(|(a, b)| a == b)) as usize;
+            n_exact += (res.energy == o.energy
+                && pos
+                    .iter()
+                    .zip(o.coords.iter().flatten())
+                    .all(|(a, b)| a == b)) as usize;
             let ok = de <= 1e-4 && rm < 1e-3 && rc == o.rc;
             if ok {
                 n_ok += 1;
@@ -212,7 +252,9 @@ fn minimization_matches_rdkit() {
             }
         }
     }
-    println!("minimization: {n_exact}/{n_total} runs bit-identical to RDKit (energy and coordinates)");
+    println!(
+        "minimization: {n_exact}/{n_total} runs bit-identical to RDKit (energy and coordinates)"
+    );
     println!(
         "minimization parity: {n_ok}/{n_total} runs within dE<=1e-4 and heavy-atom RMSD<1e-3 \
          (max dE {max_de:.2e}, max RMSD {max_rmsd:.2e} among those)"
@@ -220,7 +262,11 @@ fn minimization_matches_rdkit() {
     for l in &report {
         println!("  outlier: {l}");
     }
-    assert!(n_ok as f64 >= 0.98 * n_total as f64, "{n_ok}/{n_total}:\n{}", report.join("\n"));
+    assert!(
+        n_ok as f64 >= 0.98 * n_total as f64,
+        "{n_ok}/{n_total}:\n{}",
+        report.join("\n")
+    );
 }
 
 /// Debug helper:

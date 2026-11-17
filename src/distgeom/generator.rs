@@ -26,7 +26,10 @@ impl Clone for EtkdgGenerator {
 
 impl EtkdgGenerator {
     pub fn new(params: EmbedParams) -> Self {
-        EtkdgGenerator { params, cache: Mutex::new(None) }
+        EtkdgGenerator {
+            params,
+            cache: Mutex::new(None),
+        }
     }
 
     fn key(mol: &Molecule) -> u64 {
@@ -36,7 +39,14 @@ impl EtkdgGenerator {
             (a.atomic_num, a.formal_charge, a.chiral_tag as u8).hash(&mut h);
         }
         for b in mol.bonds() {
-            (b.begin, b.end, b.order as u8, b.stereo as u8, b.stereo_atoms).hash(&mut h);
+            (
+                b.begin,
+                b.end,
+                b.order as u8,
+                b.stereo as u8,
+                b.stereo_atoms,
+            )
+                .hash(&mut h);
         }
         for p in &mol.coords {
             for x in p {
@@ -49,7 +59,10 @@ impl EtkdgGenerator {
     /// The prepared embedding for `mol` (cached for repeated calls).
     pub fn embedding(&self, mol: &Molecule) -> Result<Arc<Embedding>> {
         let k = Self::key(mol);
-        let mut g = self.cache.lock().map_err(|_| Error::Job("poisoned cache".into()))?;
+        let mut g = self
+            .cache
+            .lock()
+            .map_err(|_| Error::Job("poisoned cache".into()))?;
         if let Some((key, e)) = g.as_ref() {
             if *key == k {
                 return Ok(e.clone());
@@ -71,7 +84,12 @@ impl ConformerGenerator for EtkdgGenerator {
     fn name(&self) -> &str {
         "ETKDG"
     }
-    fn generate(&self, mol: &Molecule, conf_id: usize, observer: &mut dyn Observer) -> Result<Vec<V3>> {
+    fn generate(
+        &self,
+        mol: &Molecule,
+        conf_id: usize,
+        observer: &mut dyn Observer,
+    ) -> Result<Vec<V3>> {
         let e = self.embedding(mol)?;
         e.embed_conformer(conf_id, observer)?
             .ok_or_else(|| Error::Embedding(format!("embedding of conformer {conf_id} failed")))

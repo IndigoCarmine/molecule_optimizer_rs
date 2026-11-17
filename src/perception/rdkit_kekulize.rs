@@ -32,7 +32,10 @@ fn is_early_atom(anum: u8) -> bool {
 /// `isAromaticAtom`: the atom flag or any aromatic bond.
 fn is_aromatic_atom(mol: &Molecule, i: usize) -> bool {
     mol.atom(i).is_aromatic
-        || mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).is_aromatic || mol.bond(b).order == BondOrder::Aromatic)
+        || mol
+            .atom_bonds(i)
+            .iter()
+            .any(|&(_, b)| mol.bond(b).is_aromatic || mol.bond(b).order == BondOrder::Aromatic)
 }
 
 /// Atom properties RDKit has cached before kekulization starts.
@@ -74,13 +77,20 @@ fn mark_dbond_cands(
     questions: &mut Vec<usize>,
     done: &mut Vec<usize>,
 ) {
-    if !all_atms.iter().any(|&a| mol.atom(a).atomic_num == 0 || is_aromatic_atom(mol, a)) {
+    if !all_atms
+        .iter()
+        .any(|&a| mol.atom(a).atomic_num == 0 || is_aromatic_atom(mol, a))
+    {
         return;
     }
     let ring_not_cand: Vec<bool> = ri
         .atom_rings
         .iter()
-        .map(|ring| !ring.iter().any(|&ai| is_aromatic_atom(mol, ai) && ri.num_atom_rings(ai) == 1))
+        .map(|ring| {
+            !ring
+                .iter()
+                .any(|&ai| is_aromatic_atom(mol, ai) && ri.num_atom_rings(ai) == 1)
+        })
         .collect();
     let mut make_single = Vec::new();
     let mut in_all = vec![false; mol.num_atoms()];
@@ -101,7 +111,12 @@ fn mark_dbond_cands(
                 non_ar_non_dummy_nbr += 1;
             }
             let bond = mol.bond(b);
-            if bond.is_aromatic && matches!(bond.order, BondOrder::Single | BondOrder::Double | BondOrder::Aromatic) {
+            if bond.is_aromatic
+                && matches!(
+                    bond.order,
+                    BondOrder::Single | BondOrder::Double | BondOrder::Aromatic
+                )
+            {
                 sbo += 1;
                 make_single.push(b);
             } else {
@@ -113,7 +128,11 @@ fn mark_dbond_cands(
             }
         }
         let num_atom_rings = ri.num_atom_rings(a);
-        let num_non_cand = ri.atom_ring_ids(a).iter().filter(|&&r| ring_not_cand[r]).count();
+        let num_non_cand = ri
+            .atom_ring_ids(a)
+            .iter()
+            .filter(|&&r| ring_not_cand[r])
+            .count();
         if anum == 0 && non_ar_non_dummy_nbr < num_atom_rings && num_non_cand < num_atom_rings {
             dbnd_cands[a] = true;
             questions.push(a);
@@ -152,7 +171,9 @@ fn mark_dbond_cands(
         if total_degree + n_radicals >= dv {
             continue;
         }
-        if dv == sbo + 1 + n_radicals || (n_radicals == 0 && mol.atom(a).no_implicit && dv == sbo + 2) {
+        if dv == sbo + 1 + n_radicals
+            || (n_radicals == 0 && mol.atom(a).no_implicit && dv == sbo + 2)
+        {
             dbnd_cands[a] = true;
         }
     }
@@ -170,7 +191,10 @@ fn back_track(
     dbnd_cands: &mut [bool],
     dbnd_adds: &mut [bool],
 ) {
-    let first = done.iter().position(|&x| x == last_opt).unwrap_or(done.len());
+    let first = done
+        .iter()
+        .position(|&x| x == last_opt)
+        .unwrap_or(done.len());
     let tdone: Vec<usize> = done[..first].to_vec();
     if let Some(last) = done.iter().rposition(|&x| x == last_opt) {
         for k in (last..done.len()).rev() {
@@ -232,8 +256,10 @@ fn kekulize_worker(
             opts = o.clone();
         } else {
             opts = VecDeque::new();
-            let mut nbrs: Vec<usize> =
-                mol.neighbors(curr).filter(|&nb| in_all[nb] && !done.contains(&nb)).collect();
+            let mut nbrs: Vec<usize> = mol
+                .neighbors(curr)
+                .filter(|&nb| in_all[nb] && !done.contains(&nb))
+                .collect();
             nbrs.sort_by_key(|&a| less_key(a));
             let mut lstack = Vec::new();
             for nb in nbrs {
@@ -243,7 +269,9 @@ fn kekulize_worker(
                 }
                 if c_cand
                     && dbnd_cands[nb]
-                    && (mol.bond(b).is_aromatic || mol.atom(curr).atomic_num == 0 || mol.atom(nb).atomic_num == 0)
+                    && (mol.bond(b).is_aromatic
+                        || mol.atom(curr).atomic_num == 0
+                        || mol.atom(nb).atomic_num == 0)
                 {
                     opts.push_back(nb);
                 }
@@ -274,7 +302,14 @@ fn kekulize_worker(
             } else if mol.atom(curr).atomic_num != 0 {
                 match last_opt {
                     Some(lo) if num_bt < max_back_tracks => {
-                        back_track(mol, lo, &mut done, &mut astack, &mut dbnd_cands, &mut dbnd_adds);
+                        back_track(
+                            mol,
+                            lo,
+                            &mut done,
+                            &mut astack,
+                            &mut dbnd_cands,
+                            &mut dbnd_adds,
+                        );
                         num_bt += 1;
                     }
                     _ => {
@@ -312,10 +347,25 @@ fn kekulize_fused(
     let mut done = Vec::new();
     let mut questions = Vec::new();
     let mut dbnd_cands = vec![false; mol.num_atoms()];
-    mark_dbond_cands(mol, ri, cache, &all_atms, &mut dbnd_cands, &mut questions, &mut done);
+    mark_dbond_cands(
+        mol,
+        ri,
+        cache,
+        &all_atms,
+        &mut dbnd_cands,
+        &mut questions,
+        &mut done,
+    );
     let nb = mol.num_bonds();
-    let mut kekulized =
-        kekulize_worker(mol, &all_atms, dbnd_cands.clone(), vec![false; nb], done, ranks, max_back_tracks);
+    let mut kekulized = kekulize_worker(
+        mol,
+        &all_atms,
+        dbnd_cands.clone(),
+        vec![false; nb],
+        done,
+        ranks,
+        max_back_tracks,
+    );
     if !kekulized && !questions.is_empty() {
         // permuteDummiesAndKekulize: enumerate subsets of the questionable
         // (dummy) atoms to switch off, starting with {questions[0]}
@@ -330,14 +380,21 @@ fn kekulize_fused(
         while !kekulized {
             for b in 0..nb {
                 let bond = mol.bond(b);
-                if bond.is_aromatic && bond.order != BondOrder::Single && in_play[bond.begin] && in_play[bond.end] {
+                if bond.is_aromatic
+                    && bond.order != BondOrder::Single
+                    && in_play[bond.begin]
+                    && in_play[bond.end]
+                {
                     mol.bond_mut(b).order = BondOrder::Single;
                 }
             }
             if enum_done {
                 break;
             }
-            let switch_off: Vec<usize> = (0..nq).filter(|&i| state[i]).map(|i| questions[i]).collect();
+            let switch_off: Vec<usize> = (0..nq)
+                .filter(|&i| state[i])
+                .map(|i| questions[i])
+                .collect();
             let mut pos = 0;
             while pos < nq && state[pos] {
                 state[pos] = false;
@@ -355,12 +412,22 @@ fn kekulize_fused(
             for &a in &switch_off {
                 t[a] = false;
             }
-            kekulized = kekulize_worker(mol, &all_atms, t, vec![false; nb], Vec::new(), ranks, max_back_tracks);
+            kekulized = kekulize_worker(
+                mol,
+                &all_atms,
+                t,
+                vec![false; nb],
+                Vec::new(),
+                ranks,
+                max_back_tracks,
+            );
         }
     }
     if !kekulized {
         let problems: Vec<usize> = (0..mol.num_atoms()).filter(|&i| dbnd_cands[i]).collect();
-        return Err(Error::Perception(format!("Can't kekulize mol. Unkekulized atoms: {problems:?}")));
+        return Err(Error::Perception(format!(
+            "Can't kekulize mol. Unkekulized atoms: {problems:?}"
+        )));
     }
     Ok(())
 }
@@ -385,7 +452,11 @@ pub fn kekulize_canonical(mol: &mut Molecule, ranks: Option<&[usize]>) -> Result
     res
 }
 
-fn kekulize_canonical_with(mol: &mut Molecule, ri: &RingInfo, ranks: Option<&[usize]>) -> Result<()> {
+fn kekulize_canonical_with(
+    mol: &mut Molecule,
+    ri: &RingInfo,
+    ranks: Option<&[usize]>,
+) -> Result<()> {
     let n = mol.num_atoms();
     let owned;
     let ranks: &[usize] = match ranks {
@@ -397,13 +468,19 @@ fn kekulize_canonical_with(mol: &mut Molecule, ri: &RingInfo, ranks: Option<&[us
     };
     let cache = Cached {
         total_valence: (0..n).map(|i| mol.total_valence(i)).collect(),
-        total_num_hs: (0..n).map(|i| mol.atom(i).total_hidden_hs() as i32).collect(),
+        total_num_hs: (0..n)
+            .map(|i| mol.atom(i).total_hidden_hs() as i32)
+            .collect(),
         implicit: (0..n).map(|i| mol.atom(i).implicit_hs as i32).collect(),
     };
 
     // rings with at least one non-dummy atom, in ring-info order
     let ring_ids: Vec<usize> = (0..ri.atom_rings.len())
-        .filter(|&r| ri.atom_rings[r].iter().any(|&a| mol.atom(a).atomic_num != 0))
+        .filter(|&r| {
+            ri.atom_rings[r]
+                .iter()
+                .any(|&a| mol.atom(a).atomic_num != 0)
+        })
         .collect();
     let brings: Vec<&Vec<usize>> = ring_ids.iter().map(|&r| &ri.bond_rings[r]).collect();
     let nr = ring_ids.len();
@@ -439,12 +516,17 @@ fn kekulize_canonical_with(mol: &mut Molecule, ri: &RingInfo, ranks: Option<&[us
             continue;
         }
         if ri.num_atom_rings(i) == 0 {
-            return Err(Error::Perception(format!("non-ring atom {i} marked aromatic")));
+            return Err(Error::Perception(format!(
+                "non-ring atom {i} marked aromatic"
+            )));
         }
         let a = mol.atom_mut(i);
         a.is_aromatic = false;
         // GitHub #141: "explicit" Hs on pyrrole-like N/P become implicit
-        if (a.atomic_num == 7 || a.atomic_num == 15) && a.formal_charge == 0 && a.num_explicit_hs == 1 {
+        if (a.atomic_num == 7 || a.atomic_num == 15)
+            && a.formal_charge == 0
+            && a.num_explicit_hs == 1
+        {
             a.no_implicit = false;
             a.num_explicit_hs = 0;
             a.implicit_hs += 1;

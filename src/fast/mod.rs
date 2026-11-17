@@ -75,7 +75,11 @@ pub enum Electrostatics {
     /// Reaction-field cutoff (`eps_rf = f64::INFINITY` = conducting boundary).
     ReactionField { eps_rf: f64 },
     /// Smooth particle-mesh Ewald (periodic systems only).
-    Pme { ewald_rtol: f64, grid_spacing: f64, order: usize },
+    Pme {
+        ewald_rtol: f64,
+        grid_spacing: f64,
+        order: usize,
+    },
 }
 
 /// Options of the approximate mode.
@@ -96,7 +100,9 @@ impl Default for ApproxOptions {
             cutoff: 10.0,
             buffer: 1.0,
             vdw_modifier: VdwModifier::PotentialShift,
-            electrostatics: Electrostatics::ReactionField { eps_rf: f64::INFINITY },
+            electrostatics: Electrostatics::ReactionField {
+                eps_rf: f64::INFINITY,
+            },
         }
     }
 }
@@ -247,7 +253,10 @@ impl std::fmt::Debug for FastForceField {
             .field("n", &self.n)
             .field("bonded_terms", &self.bonded.num_terms())
             .field("bonded_chunks", &self.bonded.chunks.len())
-            .field("nonbonded", &self.nb.backend().map(|b| b.name().to_string()))
+            .field(
+                "nonbonded",
+                &self.nb.backend().map(|b| b.name().to_string()),
+            )
             .field("opaque", &self.opaque.len())
             .field("fixed", &self.fixed)
             .finish()
@@ -326,7 +335,9 @@ impl FastForceField {
             if e.is_parallel() {
                 // overlap the other terms with the parallel pair chunks
                 let mut nb_acc = 0.0;
-                let (_, rest) = e.eval_overlapped::<G, f64>(pos, grad, &mut nb_acc, |g| self.eval_segments::<G>(pos, g, false));
+                let (_, rest) = e.eval_overlapped::<G, f64>(pos, grad, &mut nb_acc, |g| {
+                    self.eval_segments::<G>(pos, g, false)
+                });
                 return rest + nb_acc;
             }
         }
@@ -339,7 +350,11 @@ impl FastForceField {
         let b = &*self.bonded;
         let simd = self.simd;
         let parallel = !b.chunks.is_empty();
-        let mut acc = if parallel { self.bonded_parallel::<G>(pos, grad) } else { 0.0 };
+        let mut acc = if parallel {
+            self.bonded_parallel::<G>(pos, grad)
+        } else {
+            0.0
+        };
         for seg in &self.segments {
             match *seg {
                 Segment::Table(k) => {
@@ -352,7 +367,11 @@ impl FastForceField {
                     if let Some(src) = &self.opaque_src {
                         let c = &src.contribs()[i];
                         let r = 0..c.num_terms();
-                        if G { c.energy_grad_acc(pos, grad, r, &mut acc) } else { c.energy_acc(pos, r, &mut acc) }
+                        if G {
+                            c.energy_grad_acc(pos, grad, r, &mut acc)
+                        } else {
+                            c.energy_acc(pos, r, &mut acc)
+                        }
                     }
                 }
                 Segment::Nonbonded if !with_nb => {}
@@ -361,7 +380,14 @@ impl FastForceField {
                     Nb::Exact(e) => {
                         e.eval_into::<G>(pos, grad, &mut acc);
                     }
-                    Nb::Other(o) => acc += if G { o.energy_grad(pos, grad) } else { o.energy(pos) }.total(),
+                    Nb::Other(o) => {
+                        acc += if G {
+                            o.energy_grad(pos, grad)
+                        } else {
+                            o.energy(pos)
+                        }
+                        .total()
+                    }
                 },
             }
         }
@@ -382,12 +408,13 @@ impl FastForceField {
                 e
             };
             if G {
-                bufs.par_chunks_mut(len).zip(energies.par_iter_mut()).zip(b.chunks.par_iter()).for_each(
-                    |((buf, en), ch)| {
+                bufs.par_chunks_mut(len)
+                    .zip(energies.par_iter_mut())
+                    .zip(b.chunks.par_iter())
+                    .for_each(|((buf, en), ch)| {
                         buf.fill(0.0);
                         en[0] = run(ch, buf);
-                    },
-                );
+                    });
                 let nc = b.chunks.len();
                 let bufs: &[f64] = bufs;
                 workspace::reduce_into(grad, len, |k0, k1, out| {
@@ -398,9 +425,12 @@ impl FastForceField {
                     }
                 });
             } else {
-                energies.par_iter_mut().zip(b.chunks.par_iter()).for_each(|(en, ch)| {
-                    en[0] = run(ch, &mut []);
-                });
+                energies
+                    .par_iter_mut()
+                    .zip(b.chunks.par_iter())
+                    .for_each(|(en, ch)| {
+                        en[0] = run(ch, &mut []);
+                    });
             }
             let mut e = 0.0;
             for en in energies.iter() {
@@ -409,7 +439,6 @@ impl FastForceField {
             e
         })
     }
-
 }
 
 impl ForceField for FastForceField {
@@ -493,14 +522,22 @@ pub struct FastBuilder<B: ForceFieldBuilder + 'static> {
 
 impl<B: ForceFieldBuilder + 'static> std::fmt::Debug for FastBuilder<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FastBuilder").field("name", &self.name).field("opts", &self.opts).finish()
+        f.debug_struct("FastBuilder")
+            .field("name", &self.name)
+            .field("opts", &self.opts)
+            .finish()
     }
 }
 
 impl<B: ForceFieldBuilder + 'static> FastBuilder<B> {
     pub fn new(inner: B, opts: FastOptions) -> Self {
         let name = format!("{}/fast", inner.name());
-        FastBuilder { inner, opts, name, cache: Mutex::new(HashMap::new()) }
+        FastBuilder {
+            inner,
+            opts,
+            name,
+            cache: Mutex::new(HashMap::new()),
+        }
     }
     pub fn inner(&self) -> &B {
         &self.inner
@@ -525,14 +562,24 @@ impl<B: ForceFieldBuilder + 'static> FastBuilder<B> {
             return Ok(None);
         }
         let key = compile::graph_key(mol);
-        let hit = self.cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
+        let hit = self
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned();
         if let Some(t) = hit {
             if mol.coords.len() != mol.num_atoms() {
-                return Err(crate::Error::InvalidArgument("molecule has no coordinates".into()));
+                return Err(crate::Error::InvalidArgument(
+                    "molecule has no coordinates".into(),
+                ));
             }
             return Ok(Some(t));
         }
-        let Some(t) = compile::make_template(self.inner_any(), mol, self.opts.parallel_grain)? else { return Ok(None) };
+        let Some(t) = compile::make_template(self.inner_any(), mol, self.opts.parallel_grain)?
+        else {
+            return Ok(None);
+        };
         let t = Arc::new(t);
         let mut c = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if c.len() >= CACHE_CAPACITY {
@@ -571,7 +618,10 @@ impl<B: ForceFieldBuilder + 'static> FastBuilder<B> {
                 Some(nb) => (nb, self.approx_labels()),
                 None => {
                     let e = t.nb.select(&mol.coords, grain, simd);
-                    let labels = (e.has_vdw().then_some("VdW"), e.has_electrostatics().then_some("Electrostatic"));
+                    let labels = (
+                        e.has_vdw().then_some("VdW"),
+                        e.has_electrostatics().then_some("Electrostatic"),
+                    );
                     (Nb::Exact(e), labels)
                 }
             };
@@ -609,12 +659,19 @@ impl<B: ForceFieldBuilder + 'static> FastBuilder<B> {
             None if c.nb.is_empty() => (Nb::None, (None, None)),
             None => {
                 let e = std::mem::take(&mut c.nb).finish(n, grain, simd);
-                let labels = (e.has_vdw().then_some("VdW"), e.has_electrostatics().then_some("Electrostatic"));
+                let labels = (
+                    e.has_vdw().then_some("VdW"),
+                    e.has_electrostatics().then_some("Electrostatic"),
+                );
                 (Nb::Exact(e), labels)
             }
         };
         let fixed = ff.fixed_points().to_vec();
-        let opaque_src = if c.opaque.is_empty() { None } else { Some(Arc::new(ff)) };
+        let opaque_src = if c.opaque.is_empty() {
+            None
+        } else {
+            Some(Arc::new(ff))
+        };
         Ok(FastForceField::assemble(Parts {
             n,
             bonded: Arc::new(c.bonded),

@@ -2,10 +2,14 @@
 //! the UFF/MMFF ports).
 
 use molecule_optimizer_rs::calc::conformer::RandomTorsionGenerator;
-use molecule_optimizer_rs::calc::{self, ConformerSearchOptions, OptimizeOptions, ScanCoordinate, ScanMode, ScanOptions};
+use molecule_optimizer_rs::calc::{
+    self, ConformerSearchOptions, OptimizeOptions, ScanCoordinate, ScanMode, ScanOptions,
+};
 use molecule_optimizer_rs::core::geometry::dihedral;
 use molecule_optimizer_rs::ff::constraints::{AngleConstraintContrib, DistanceConstraintContrib};
-use molecule_optimizer_rs::ff::{Constraint, Contrib, ContribForceField, ForceFieldBuilder, utils::p3};
+use molecule_optimizer_rs::ff::{
+    Constraint, Contrib, ContribForceField, ForceFieldBuilder, utils::p3,
+};
 use molecule_optimizer_rs::tasks::{Engine, EngineConfig};
 use molecule_optimizer_rs::{Molecule, Result, io};
 use std::sync::Arc;
@@ -77,24 +81,48 @@ impl ForceFieldBuilder for Toy {
         let n = mol.num_atoms();
         let mut ff = ContribForceField::new(n, 3);
         for b in mol.bonds() {
-            let d0 = if mol.atom(b.begin).atomic_num == 1 || mol.atom(b.end).atomic_num == 1 { 1.09 } else { 1.53 };
-            ff.add_contrib(Box::new(DistanceConstraintContrib { i: b.begin, j: b.end, min: d0, max: d0, k: 600.0 }));
+            let d0 = if mol.atom(b.begin).atomic_num == 1 || mol.atom(b.end).atomic_num == 1 {
+                1.09
+            } else {
+                1.53
+            };
+            ff.add_contrib(Box::new(DistanceConstraintContrib {
+                i: b.begin,
+                j: b.end,
+                min: d0,
+                max: d0,
+                k: 600.0,
+            }));
         }
         let topo = mol.topological_distances();
         for j in 0..n {
             let nb: Vec<usize> = mol.neighbors(j).collect();
             for x in 0..nb.len() {
                 for y in x + 1..nb.len() {
-                    ff.add_contrib(Box::new(AngleConstraintContrib { i: nb[x], j, k: nb[y], min: 109.5, max: 109.5, force: 0.02 }));
+                    ff.add_contrib(Box::new(AngleConstraintContrib {
+                        i: nb[x],
+                        j,
+                        k: nb[y],
+                        min: 109.5,
+                        max: 109.5,
+                        force: 0.02,
+                    }));
                 }
             }
         }
         for b in mol.bonds() {
             let (j, k) = (b.begin, b.end);
-            let a = mol.neighbors(j).find(|&x| x != k && mol.atom(x).atomic_num > 1);
-            let d = mol.neighbors(k).find(|&x| x != j && mol.atom(x).atomic_num > 1);
+            let a = mol
+                .neighbors(j)
+                .find(|&x| x != k && mol.atom(x).atomic_num > 1);
+            let d = mol
+                .neighbors(k)
+                .find(|&x| x != j && mol.atom(x).atomic_num > 1);
             if let (Some(a), Some(d)) = (a, d) {
-                ff.add_contrib(Box::new(Tors { idx: [a, j, k, d], v: 3.0 }));
+                ff.add_contrib(Box::new(Tors {
+                    idx: [a, j, k, d],
+                    v: 3.0,
+                }));
             }
         }
         for i in 0..n {
@@ -135,7 +163,11 @@ fn pentane() -> Molecule {
 }
 
 fn engine(n: usize, interval_ms: u64) -> Engine {
-    Engine::new(EngineConfig { num_threads: Some(n), publish_interval: Duration::from_millis(interval_ms) }).unwrap()
+    Engine::new(EngineConfig {
+        num_threads: Some(n),
+        publish_interval: Duration::from_millis(interval_ms),
+    })
+    .unwrap()
 }
 
 #[test]
@@ -170,14 +202,28 @@ async fn optimize_with_live_snapshots() {
     }
     let r = h.await.unwrap();
     for w in energies.windows(2) {
-        assert!(w[1] <= w[0] + 1e-9, "energy must not increase: {energies:?}");
+        assert!(
+            w[1] <= w[0] + 1e-9,
+            "energy must not increase: {energies:?}"
+        );
     }
-    let sync = calc::optimize::optimize(&mol, &Toy, &OptimizeOptions {
-        minimize: molecule_optimizer_rs::optim::MinimizeOptions { max_iters: 5000, force_tol: 1e-10, ..Default::default() },
-        ..Default::default()
-    })
+    let sync = calc::optimize::optimize(
+        &mol,
+        &Toy,
+        &OptimizeOptions {
+            minimize: molecule_optimizer_rs::optim::MinimizeOptions {
+                max_iters: 5000,
+                force_tol: 1e-10,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
     .unwrap();
-    assert!((r.energy - sync.energy).abs() < 1e-9, "async and sync results must agree");
+    assert!(
+        (r.energy - sync.energy).abs() < 1e-9,
+        "async and sync results must agree"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -191,12 +237,22 @@ async fn cancel_returns_current_geometry() {
     let _ = h.request_snapshot().await;
     h.cancel();
     let r = h.await.unwrap();
-    assert!(matches!(r.status, molecule_optimizer_rs::optim::MinimizeStatus::Cancelled | molecule_optimizer_rs::optim::MinimizeStatus::Converged));
+    assert!(matches!(
+        r.status,
+        molecule_optimizer_rs::optim::MinimizeStatus::Cancelled
+            | molecule_optimizer_rs::optim::MinimizeStatus::Converged
+    ));
 }
 
 fn scan_opts(mode: ScanMode) -> ScanOptions {
     ScanOptions {
-        coordinates: vec![ScanCoordinate::Dihedral { i: 0, j: 1, k: 2, l: 3, values: ScanCoordinate::steps(-180.0, 30.0, 12) }],
+        coordinates: vec![ScanCoordinate::Dihedral {
+            i: 0,
+            j: 1,
+            k: 2,
+            l: 3,
+            values: ScanCoordinate::steps(-180.0, 30.0, 12),
+        }],
         mode,
         ..Default::default()
     }
@@ -206,8 +262,14 @@ fn scan_opts(mode: ScanMode) -> ScanOptions {
 async fn dihedral_scan_parallel_matches_sequential() {
     let mol = Arc::new(pentane());
     for mode in [ScanMode::Relaxed, ScanMode::Independent] {
-        let r4 = engine(4, 10).scan(mol.clone(), Arc::new(Toy), scan_opts(mode)).await.unwrap();
-        let r1 = engine(1, 10).scan(mol.clone(), Arc::new(Toy), scan_opts(mode)).await.unwrap();
+        let r4 = engine(4, 10)
+            .scan(mol.clone(), Arc::new(Toy), scan_opts(mode))
+            .await
+            .unwrap();
+        let r1 = engine(1, 10)
+            .scan(mol.clone(), Arc::new(Toy), scan_opts(mode))
+            .await
+            .unwrap();
         assert_eq!(r4.points.len(), 12);
         for (a, b) in r4.points.iter().zip(&r1.points) {
             assert!((a.energy - b.energy).abs() < 1e-10);
@@ -219,7 +281,13 @@ async fn dihedral_scan_parallel_matches_sequential() {
             assert!(diff.abs() < 1.0, "target {} achieved {}", a.values[0], ach);
         }
         // 3-fold torsion: staggered (180) lower than eclipsed (120 / 0)
-        let e = |v: f64| r4.points.iter().find(|p| (p.values[0] - v).abs() < 1e-9).unwrap().energy;
+        let e = |v: f64| {
+            r4.points
+                .iter()
+                .find(|p| (p.values[0] - v).abs() < 1e-9)
+                .unwrap()
+                .energy
+        };
         assert!(e(-180.0) < e(0.0));
     }
 }
@@ -229,8 +297,20 @@ async fn two_dimensional_scan() {
     let mol = Arc::new(pentane());
     let opts = ScanOptions {
         coordinates: vec![
-            ScanCoordinate::Dihedral { i: 0, j: 1, k: 2, l: 3, values: ScanCoordinate::steps(-180.0, 60.0, 6) },
-            ScanCoordinate::Dihedral { i: 1, j: 2, k: 3, l: 4, values: ScanCoordinate::steps(-180.0, 60.0, 6) },
+            ScanCoordinate::Dihedral {
+                i: 0,
+                j: 1,
+                k: 2,
+                l: 3,
+                values: ScanCoordinate::steps(-180.0, 60.0, 6),
+            },
+            ScanCoordinate::Dihedral {
+                i: 1,
+                j: 2,
+                k: 3,
+                l: 4,
+                values: ScanCoordinate::steps(-180.0, 60.0, 6),
+            },
         ],
         ..Default::default()
     };
@@ -253,11 +333,29 @@ async fn conformer_search_finds_all_anti() {
     let r = h.await.unwrap();
     assert!(r.conformers.len() >= 2);
     let best = r.global_minimum().unwrap();
-    let d1 = dihedral(best.coords[0], best.coords[1], best.coords[2], best.coords[3]).to_degrees();
-    let d2 = dihedral(best.coords[1], best.coords[2], best.coords[3], best.coords[4]).to_degrees();
-    assert!(d1.abs() > 150.0 && d2.abs() > 150.0, "global minimum should be anti/anti: {d1} {d2}");
+    let d1 = dihedral(
+        best.coords[0],
+        best.coords[1],
+        best.coords[2],
+        best.coords[3],
+    )
+    .to_degrees();
+    let d2 = dihedral(
+        best.coords[1],
+        best.coords[2],
+        best.coords[3],
+        best.coords[4],
+    )
+    .to_degrees();
+    assert!(
+        d1.abs() > 150.0 && d2.abs() > 150.0,
+        "global minimum should be anti/anti: {d1} {d2}"
+    );
     // deterministic regardless of thread count
-    let r1 = engine(1, 5).conformer_search(mol, Arc::new(Toy), opts).await.unwrap();
+    let r1 = engine(1, 5)
+        .conformer_search(mol, Arc::new(Toy), opts)
+        .await
+        .unwrap();
     assert_eq!(r.conformers.len(), r1.conformers.len());
     assert!((r.conformers[0].energy - r1.conformers[0].energy).abs() < 1e-10);
 }

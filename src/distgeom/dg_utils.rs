@@ -23,14 +23,21 @@ pub struct SymmMatrix {
 
 impl SymmMatrix {
     pub fn new(n: usize, init: f64) -> Self {
-        SymmMatrix { n, data: vec![init; n * (n + 1) / 2] }
+        SymmMatrix {
+            n,
+            data: vec![init; n * (n + 1) / 2],
+        }
     }
     pub fn num_rows(&self) -> usize {
         self.n
     }
     #[inline]
     pub fn get(&self, i: usize, j: usize) -> f64 {
-        if j <= i { self.data[i * (i + 1) / 2 + j] } else { self.data[j * (j + 1) / 2 + i] }
+        if j <= i {
+            self.data[i * (i + 1) / 2 + j]
+        } else {
+            self.data[j * (j + 1) / 2 + i]
+        }
     }
     #[inline]
     pub fn set(&mut self, i: usize, j: usize, v: f64) {
@@ -69,7 +76,11 @@ impl SymmMatrix {
 }
 
 /// RDKit `DistGeom::pickRandomDistMat`. Returns the largest distance.
-pub fn pick_random_dist_mat(mmat: &BoundsMatrix, dist_mat: &mut SymmMatrix, rng: &mut DoubleSource) -> f64 {
+pub fn pick_random_dist_mat(
+    mmat: &BoundsMatrix,
+    dist_mat: &mut SymmMatrix,
+    rng: &mut DoubleSource,
+) -> f64 {
     let npt = mmat.num_rows();
     assert_eq!(npt, dist_mat.num_rows());
     let mut largest = -1.0;
@@ -230,7 +241,13 @@ pub fn compute_initial_coords(
         }
     }
     let n_eigs = dim.min(n);
-    power_eigen_solver(n_eigs, &mut t, &mut eig_vals, &mut eig_vecs, (sum_sq_d2 * n as f64) as i32);
+    power_eigen_solver(
+        n_eigs,
+        &mut t,
+        &mut eig_vals,
+        &mut eig_vecs,
+        (sum_sq_d2 * n as f64) as i32,
+    );
 
     let mut found_neg = false;
     let mut zero_eigs = 0u32;
@@ -315,7 +332,9 @@ mod tests {
         let mut rng = DoubleSource::new(1);
         assert!(compute_initial_coords(&d, &mut pos, 3, &mut rng, true, 2));
         let p = |i: usize| [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
-        let dd = |a: [f64; 3], b: [f64; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        let dd = |a: [f64; 3], b: [f64; 3]| {
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+        };
         assert!((dd(p(0), p(2)) - (1.0f64 + 1.21).sqrt()).abs() < 1e-2);
     }
 }

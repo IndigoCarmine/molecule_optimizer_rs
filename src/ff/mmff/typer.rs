@@ -61,7 +61,9 @@ pub(crate) struct TypingMol {
 
 impl TypingMol {
     fn new(input: &Molecule) -> Result<TypingMol> {
-        let mut mol = if input.atoms().iter().any(|a| a.is_aromatic) || input.bonds().iter().any(|b| b.order == BondOrder::Aromatic) {
+        let mut mol = if input.atoms().iter().any(|a| a.is_aromatic)
+            || input.bonds().iter().any(|b| b.order == BondOrder::Aromatic)
+        {
             perception::kekulized_copy_canonical(input)?
         } else {
             input.clone()
@@ -71,7 +73,9 @@ impl TypingMol {
             None => RingInfo::compute(&mol),
         };
         mol.ring_info = Some(ri);
-        let ev = (0..mol.num_atoms()).map(|i| mol.explicit_valence(i)).collect();
+        let ev = (0..mol.num_atoms())
+            .map(|i| mol.explicit_valence(i))
+            .collect();
         let mut tm = TypingMol { mol, ev };
         tm.set_mmff_aromaticity();
         Ok(tm)
@@ -114,7 +118,9 @@ impl TypingMol {
     /// Bond type between two bonded atoms.
     #[inline]
     fn bt(&self, a: usize, b: usize) -> BondOrder {
-        self.mol.bond(self.mol.bond_between(a, b).expect("bonded atoms")).order
+        self.mol
+            .bond(self.mol.bond_between(a, b).expect("bonded atoms"))
+            .order
     }
     #[inline]
     fn in_ring_of_size(&self, a: usize, size: usize) -> bool {
@@ -124,14 +130,19 @@ impl TypingMol {
     /// RDKit `isRingAromatic`: all bonds between consecutive ring atoms (the
     /// closing bond is not checked) are aromatic.
     fn is_ring_aromatic(&self, ring: &[usize]) -> bool {
-        (0..ring.len().saturating_sub(1)).all(|i| self.bt(ring[i], ring[i + 1]) == BondOrder::Aromatic)
+        (0..ring.len().saturating_sub(1))
+            .all(|i| self.bt(ring[i], ring[i + 1]) == BondOrder::Aromatic)
     }
 
     /// RDKit `MolOps::setMMFFAromaticity`.
     fn set_mmff_aromaticity(&mut self) {
         // only atom / bond flags change below, so the ring info is moved out
         // for the duration (no copy) and put back at the end
-        let rinfo = self.mol.ring_info.take().expect("typing molecule ring info");
+        let rinfo = self
+            .mol
+            .ring_info
+            .take()
+            .expect("typing molecule ring info");
         let rings = &rinfo.atom_rings;
         let n = self.mol.num_atoms();
         let mut arom_bit = vec![false; n];
@@ -152,7 +163,11 @@ impl TypingMol {
                     if an == 7 || an == 8 || (an == 16 && self.deg(a) == 2) {
                         is_nos_in_ring = true;
                     }
-                    let next = if j == ring.len() - 1 { ring[0] } else { ring[j + 1] };
+                    let next = if j == ring.len() - 1 {
+                        ring[0]
+                    } else {
+                        ring[j + 1]
+                    };
                     if self.bt(a, next) == BondOrder::Double {
                         pi_e += 2;
                     } else {
@@ -189,7 +204,9 @@ impl TypingMol {
                 for &a in ring {
                     arom_bit[a] = true;
                     let an = self.anum(a);
-                    if (an == 6 || an == 7) && self.mol.atom(a).hybridization != crate::core::Hybridization::SP2 {
+                    if (an == 6 || an == 7)
+                        && self.mol.atom(a).hybridization != crate::core::Hybridization::SP2
+                    {
                         can_be_aromatic = false;
                     }
                 }
@@ -224,7 +241,11 @@ impl TypingMol {
                 continue;
             }
             for j in 0..ring.len() {
-                let next = if j == ring.len() - 1 { ring[0] } else { ring[j + 1] };
+                let next = if j == ring.len() - 1 {
+                    ring[0]
+                } else {
+                    ring[j + 1]
+                };
                 let b = self.mol.bond_between(ring[j], next).expect("ring bond");
                 let bond = self.mol.bond_mut(b);
                 bond.order = BondOrder::Aromatic;
@@ -236,7 +257,9 @@ impl TypingMol {
 
     /// RDKit `isAtomNOxide`.
     fn is_n_oxide(&self, a: usize) -> bool {
-        self.anum(a) == 7 && self.tdeg(a) >= 3 && self.nbrs(a).any(|n| self.anum(n) == 8 && self.tdeg(n) == 1)
+        self.anum(a) == 7
+            && self.tdeg(a) >= 3
+            && self.nbrs(a).any(|n| self.anum(n) == 8 && self.tdeg(n) == 1)
     }
 }
 
@@ -247,7 +270,10 @@ pub(crate) fn angle_in_ring_of_size_3_or_4(mol: &Molecule, i1: usize, i2: usize,
             return 3;
         }
         // a common neighbor of i1 and i3 other than i2
-        if mol.neighbors(i1).any(|n| n != i2 && mol.neighbors(i3).any(|m| m == n)) {
+        if mol
+            .neighbors(i1)
+            .any(|n| n != i2 && mol.neighbors(i3).any(|m| m == n))
+        {
             return 4;
         }
     }
@@ -255,13 +281,25 @@ pub(crate) fn angle_in_ring_of_size_3_or_4(mol: &Molecule, i1: usize, i2: usize,
 }
 
 /// RDKit `isTorsionInRingOfSize4or5`.
-pub(crate) fn torsion_in_ring_of_size_4_or_5(mol: &Molecule, i1: usize, i2: usize, i3: usize, i4: usize) -> u32 {
-    if mol.bond_between(i1, i2).is_some() && mol.bond_between(i2, i3).is_some() && mol.bond_between(i3, i4).is_some() {
+pub(crate) fn torsion_in_ring_of_size_4_or_5(
+    mol: &Molecule,
+    i1: usize,
+    i2: usize,
+    i3: usize,
+    i4: usize,
+) -> u32 {
+    if mol.bond_between(i1, i2).is_some()
+        && mol.bond_between(i2, i3).is_some()
+        && mol.bond_between(i3, i4).is_some()
+    {
         if mol.bond_between(i4, i1).is_some() {
             return 4;
         }
         // a common neighbor of i1 (other than i2) and i4 (other than i3)
-        if mol.neighbors(i1).any(|n| n != i2 && n != i3 && mol.neighbors(i4).any(|m| m == n)) {
+        if mol
+            .neighbors(i1)
+            .any(|n| n != i2 && n != i3 && mol.neighbors(i4).any(|m| m == n))
+        {
             return 5;
         }
     }
@@ -279,7 +317,11 @@ struct RingMembershipSize {
 impl RingMembershipSize {
     fn new(tm: &TypingMol) -> Self {
         let ri = tm.ri();
-        let arom: Vec<bool> = ri.atom_rings.iter().map(|r| tm.is_ring_aromatic(r)).collect();
+        let arom: Vec<bool> = ri
+            .atom_rings
+            .iter()
+            .map(|r| tm.is_ring_aromatic(r))
+            .collect();
         let n = tm.mol.num_atoms();
         let mut start = Vec::with_capacity(n + 1);
         let mut rings = Vec::new();
@@ -297,13 +339,20 @@ impl RingMembershipSize {
         &self.rings[self.start[a] as usize..self.start[a + 1] as usize]
     }
     fn is_atom_in_aromatic_ring_of_size(&self, a: usize, size: usize) -> bool {
-        self.of(a).iter().any(|&(_, s, ar)| ar && s as usize == size)
+        self.of(a)
+            .iter()
+            .any(|&(_, s, ar)| ar && s as usize == size)
     }
     /// `true` if at least two atoms are given and some ring of `size`
     /// contains all of them.
     fn are_atoms_in_same_ring_of_size(&self, size: usize, atoms: &[usize]) -> bool {
         atoms.len() >= 2
-            && self.of(atoms[0]).iter().any(|&(r, s, _)| s as usize == size && atoms[1..].iter().all(|&a| self.of(a).iter().any(|e| e.0 == r)))
+            && self.of(atoms[0]).iter().any(|&(r, s, _)| {
+                s as usize == size
+                    && atoms[1..]
+                        .iter()
+                        .all(|&a| self.of(a).iter().any(|e| e.0 == r))
+            })
     }
 }
 
@@ -387,7 +436,10 @@ impl MmffMolProperties {
     }
 
     fn prop(&self, t: u8) -> &MmffProp {
-        self.params.prop.get(t).expect("MMFF properties for atom type")
+        self.params
+            .prop
+            .get(t)
+            .expect("MMFF properties for atom type")
     }
 
     // -----------------------------------------------------------------------
@@ -414,7 +466,9 @@ impl MmffMolProperties {
                         }
                         let nba = tm.anum(nb);
                         if rm.are_atoms_in_same_ring_of_size(5, &[a, nb])
-                            && (nba == 8 || nba == 16 || (nba == 7 && tm.tdeg(nb) == 3 && !tm.is_n_oxide(nb)))
+                            && (nba == 8
+                                || nba == 16
+                                || (nba == 7 && tm.tdeg(nb) == 3 && !tm.is_n_oxide(nb)))
                         {
                             alpha_het.push(nb);
                         }
@@ -427,7 +481,9 @@ impl MmffMolProperties {
                             }
                             let nb2a = tm.anum(nb2);
                             if rm.are_atoms_in_same_ring_of_size(5, &[a, nb2])
-                                && (nb2a == 8 || nb2a == 16 || (nb2a == 7 && tm.tdeg(nb2) == 3 && !tm.is_n_oxide(nb2)))
+                                && (nb2a == 8
+                                    || nb2a == 16
+                                    || (nb2a == 7 && tm.tdeg(nb2) == 3 && !tm.is_n_oxide(nb2)))
                             {
                                 beta_het.push(nb2);
                             }
@@ -444,8 +500,12 @@ impl MmffMolProperties {
                         }
                     }
                 }
-                let is_alpha_os = alpha_het.iter().any(|&x| tm.anum(x) == 8 || tm.anum(x) == 16);
-                let is_beta_os = beta_het.iter().any(|&x| tm.anum(x) == 8 || tm.anum(x) == 16);
+                let is_alpha_os = alpha_het
+                    .iter()
+                    .any(|&x| tm.anum(x) == 8 || tm.anum(x) == 16);
+                let is_beta_os = beta_het
+                    .iter()
+                    .any(|&x| tm.anum(x) == 8 || tm.anum(x) == 16);
 
                 match anum {
                     6 => 'c: {
@@ -465,7 +525,10 @@ impl MmffMolProperties {
                                     }
                                 }
                             }
-                            if (((n_n == 2) && n5 != 0) || ((n_n == 3) && (n5 == 2))) && n_fc != 0 && n6 == 0 {
+                            if (((n_n == 2) && n5 != 0) || ((n_n == 3) && (n5 == 2)))
+                                && n_fc != 0
+                                && n6 == 0
+                            {
                                 // CIM+
                                 atom_type = 80;
                                 break 'c;
@@ -482,10 +545,14 @@ impl MmffMolProperties {
                                     surrounded_by_arom = false;
                                 }
                             }
-                            if (alpha_het.is_empty() && beta_het.is_empty() && !surrounded_by_benzene_c && surrounded_by_arom)
+                            if (alpha_het.is_empty()
+                                && beta_het.is_empty()
+                                && !surrounded_by_benzene_c
+                                && surrounded_by_arom)
                                 || (!alpha_het.is_empty()
                                     && !beta_het.is_empty()
-                                    && (!alpha_or_beta_in_same_ring || (!is_alpha_os && !is_beta_os)))
+                                    && (!alpha_or_beta_in_same_ring
+                                        || (!is_alpha_os && !is_beta_os)))
                             {
                                 // C5
                                 atom_type = 78;
@@ -572,7 +639,11 @@ impl MmffMolProperties {
         if atom_type == 0 {
             atom_type = match anum {
                 3 => {
-                    if tm.deg(a) == 0 { 92 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        92
+                    } else {
+                        0
+                    }
                 }
                 6 => self.carbon_type(a),
                 7 => {
@@ -582,7 +653,10 @@ impl MmffMolProperties {
                             n_term_o_bonded_to_n += 1;
                         }
                         if tm.tval(a) >= 3 && (tm.anum(nb) == 15 || tm.anum(nb) == 16) {
-                            let n_o = tm.nbrs(nb).filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
+                            let n_o = tm
+                                .nbrs(nb)
+                                .filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1)
+                                .count();
                             if !is_nso2_or_nso3_or_ncn {
                                 is_nso2_or_nso3_or_ncn = n_o >= 2;
                             }
@@ -597,10 +671,18 @@ impl MmffMolProperties {
                     _ => 0,
                 },
                 11 => {
-                    if tm.deg(a) == 0 { 93 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        93
+                    } else {
+                        0
+                    }
                 }
                 12 => {
-                    if tm.deg(a) == 0 { 99 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        99
+                    } else {
+                        0
+                    }
                 }
                 14 => 19,
                 15 => match tm.tdeg(a) {
@@ -624,10 +706,18 @@ impl MmffMolProperties {
                     t
                 }
                 19 => {
-                    if tm.deg(a) == 0 { 94 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        94
+                    } else {
+                        0
+                    }
                 }
                 20 => {
-                    if tm.deg(a) == 0 { 96 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        96
+                    } else {
+                        0
+                    }
                 }
                 26 => {
                     if tm.deg(a) == 0 {
@@ -652,7 +742,11 @@ impl MmffMolProperties {
                     }
                 }
                 30 => {
-                    if tm.deg(a) == 0 { 95 } else { 0 }
+                    if tm.deg(a) == 0 {
+                        95
+                    } else {
+                        0
+                    }
                 }
                 35 => match tm.deg(a) {
                     1 => 13,
@@ -660,7 +754,11 @@ impl MmffMolProperties {
                     _ => 0,
                 },
                 53 => {
-                    if tm.deg(a) == 1 { 14 } else { 0 }
+                    if tm.deg(a) == 1 {
+                        14
+                    } else {
+                        0
+                    }
                 }
                 _ => 0,
             };
@@ -732,7 +830,13 @@ impl MmffMolProperties {
         }
     }
 
-    fn nitrogen_type(&self, a: usize, rm: &RingMembershipSize, n_term_o_bonded_to_n: u32, mut is_nso2_or_nso3_or_ncn: bool) -> u8 {
+    fn nitrogen_type(
+        &self,
+        a: usize,
+        rm: &RingMembershipSize,
+        n_term_o_bonded_to_n: u32,
+        mut is_nso2_or_nso3_or_ncn: bool,
+    ) -> u8 {
         let tm = &self.tm;
         if tm.tdeg(a) == 4 {
             // N3OX or NR+
@@ -800,7 +904,9 @@ impl MmffMolProperties {
                                 is_nco_or_ncs = true;
                             }
                             if bt == BondOrder::Double
-                                || (bt == BondOrder::Aromatic && (nb2a == 6 || (nb2a == 7 && tm.ri().num_atom_rings(nb2) == 1)))
+                                || (bt == BondOrder::Aromatic
+                                    && (nb2a == 6
+                                        || (nb2a == 7 && tm.ri().num_atom_rings(nb2) == 1)))
                             {
                                 element_double_bonded_to_c = nb2a;
                             }
@@ -814,12 +920,16 @@ impl MmffMolProperties {
                                 if rm.is_atom_in_aromatic_ring_of_size(nb, 6) {
                                     n_in_aromatic_6_ring += 1;
                                 }
-                                let n_o_bonded_to_n3 = tm.nbrs(nb2).filter(|&x| tm.anum(x) == 8).count();
+                                let n_o_bonded_to_n3 =
+                                    tm.nbrs(nb2).filter(|&x| tm.anum(x) == 8).count();
                                 if n_o_bonded_to_n3 < 2 {
                                     n_n3_bonded_to_c += 1;
                                 }
                             }
-                            if nb2a == 7 && tm.tdeg(nb2) == 2 && (bt == BondOrder::Double || bt == BondOrder::Aromatic) {
+                            if nb2a == 7
+                                && tm.tdeg(nb2) == 2
+                                && (bt == BondOrder::Double || bt == BondOrder::Aromatic)
+                            {
                                 n_n2_bonded_to_c += 1;
                             }
                             if tm.arom(nb2) {
@@ -932,7 +1042,10 @@ impl MmffMolProperties {
                         break;
                     }
                     if tm.anum(nb) == 16 {
-                        let n_term_o = tm.nbrs(nb).filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1).count();
+                        let n_term_o = tm
+                            .nbrs(nb)
+                            .filter(|&x| tm.anum(x) == 8 && tm.tdeg(x) == 1)
+                            .count();
                         is_nso = n_term_o == 1;
                     }
                 }
@@ -963,7 +1076,8 @@ impl MmffMolProperties {
                         if is_nazt {
                             break;
                         }
-                        is_nazt = (tm.anum(nb2) == 7 && tm.tdeg(nb2) == 2) || (tm.anum(nb2) == 6 && tm.tdeg(nb2) == 3);
+                        is_nazt = (tm.anum(nb2) == 7 && tm.tdeg(nb2) == 2)
+                            || (tm.anum(nb2) == 6 && tm.tdeg(nb2) == 3);
                     }
                 }
             }
@@ -1064,7 +1178,8 @@ impl MmffMolProperties {
                 }
                 if nba == 16 {
                     is_thio_sulfinate_o = n_s == 1;
-                    is_sulfate_o = bt == BondOrder::Single || (bt == BondOrder::Double && (n_o + n_n) > 1);
+                    is_sulfate_o =
+                        bt == BondOrder::Single || (bt == BondOrder::Double && (n_o + n_n) > 1);
                     is_sulfoxide_o = bt == BondOrder::Double && (n_o + n_n) == 1;
                 }
                 is_phosphate_or_perchlorate_o = nba == 15 || nba == 17;
@@ -1073,7 +1188,13 @@ impl MmffMolProperties {
                 // OM / OM2
                 return 35;
             }
-            if is_carboxylate_o || is_nitro_o || is_n_oxide_o || is_thio_sulfinate_o || is_sulfate_o || is_phosphate_or_perchlorate_o {
+            if is_carboxylate_o
+                || is_nitro_o
+                || is_n_oxide_o
+                || is_thio_sulfinate_o
+                || is_sulfate_o
+                || is_phosphate_or_perchlorate_o
+            {
                 // O2CM, ONX, O2N, O2NO, O3N, OSMS, O-S, O2S, O3S, O4S, OP, O2P,
                 // O3P, O4P, O4Cl
                 return 32;
@@ -1116,7 +1237,9 @@ impl MmffMolProperties {
             return 17;
         }
         if td == 2 {
-            let is_o_double = tm.nbrs(a).any(|nb| tm.anum(nb) == 8 && tm.bt(a, nb) == BondOrder::Double);
+            let is_o_double = tm
+                .nbrs(a)
+                .any(|nb| tm.anum(nb) == 8 && tm.bt(a, nb) == BondOrder::Double);
             // =S=O or S
             return if is_o_double { 74 } else { 15 };
         }
@@ -1171,7 +1294,8 @@ impl MmffMolProperties {
                         // HOH
                         70 => 31,
                         6 => {
-                            let (mut hocc, mut hoco, mut hop, mut hos) = (false, false, false, false);
+                            let (mut hocc, mut hoco, mut hop, mut hos) =
+                                (false, false, false, false);
                             for nb2 in tm.nbrs(nb) {
                                 if tm.anum(nb2) == 6 {
                                     for nb3 in tm.nbrs(nb2) {
@@ -1180,7 +1304,10 @@ impl MmffMolProperties {
                                         }
                                         let bt = tm.bt(nb2, nb3);
                                         let a3 = tm.anum(nb3);
-                                        if (a3 == 6 || a3 == 7) && (bt == BondOrder::Double || bt == BondOrder::Aromatic) {
+                                        if (a3 == 6 || a3 == 7)
+                                            && (bt == BondOrder::Double
+                                                || bt == BondOrder::Aromatic)
+                                        {
                                             hocc = true;
                                         }
                                         if a3 == 8 && bt == BondOrder::Double {
@@ -1253,7 +1380,11 @@ impl MmffMolProperties {
                             n_sec_n = 0;
                         }
                         if tm.anum(nb) == 6 && n_term_os != 0 {
-                            f = if n_term_os == 1 { -1.0 } else { -((n_term_os - 1) as f64 / n_term_os as f64) };
+                            f = if n_term_os == 1 {
+                                -1.0
+                            } else {
+                                -((n_term_os - 1) as f64 / n_term_os as f64)
+                            };
                             break;
                         }
                         if nbr_type == 45 && n_term_os == 3 {
@@ -1261,7 +1392,11 @@ impl MmffMolProperties {
                             break;
                         }
                         if nbr_type == 25 && n_term_os != 0 {
-                            f = if n_term_os == 1 { 0.0 } else { -((n_term_os - 1) as f64 / n_term_os as f64) };
+                            f = if n_term_os == 1 {
+                                0.0
+                            } else {
+                                -((n_term_os - 1) as f64 / n_term_os as f64)
+                            };
                             break;
                         }
                         if nbr_type == 18 && n_term_os != 0 {
@@ -1273,7 +1408,11 @@ impl MmffMolProperties {
                             break;
                         }
                         if nbr_type == 73 && n_term_os != 0 {
-                            f = if n_term_os == 1 { 0.0 } else { -((n_term_os - 1) as f64 / n_term_os as f64) };
+                            f = if n_term_os == 1 {
+                                0.0
+                            } else {
+                                -((n_term_os - 1) as f64 / n_term_os as f64)
+                            };
                             break;
                         }
                         if nbr_type == 77 && n_term_os != 0 {
@@ -1370,7 +1509,10 @@ impl MmffMolProperties {
                 let (sign, bci) = p.chg.get(bond_type, atom_type, nbr_type);
                 sum_partial += match bci {
                     Some(b) => sign as f64 * b,
-                    None => p.pbci.get(atom_type).expect("pbci").pbci - p.pbci.get(nbr_type).expect("pbci").pbci,
+                    None => {
+                        p.pbci.get(atom_type).expect("pbci").pbci
+                            - p.pbci.get(nbr_type).expect("pbci").pbci
+                    }
                 };
                 sum_formal += fchg[nb];
             }
@@ -1390,7 +1532,10 @@ impl MmffMolProperties {
         let bond = self.tm.mol.bond(bi);
         let p1 = self.prop(self.atom_types[bond.begin]);
         let p2 = self.prop(self.atom_types[bond.end]);
-        u8::from(bond.order == BondOrder::Single && ((p1.sbmb != 0 && p2.sbmb != 0) || (p1.arom != 0 && p2.arom != 0)))
+        u8::from(
+            bond.order == BondOrder::Single
+                && ((p1.sbmb != 0 && p2.sbmb != 0) || (p1.arom != 0 && p2.arom != 0)),
+        )
     }
 
     /// RDKit `getMMFFAngleType`.
@@ -1420,7 +1565,8 @@ impl MmffMolProperties {
             tor_type = 2;
         }
         let size = torsion_in_ring_of_size_4_or_5(mol, i1, i2, i3, i4);
-        if size == 4 && !(mol.bond_between(i1, i3).is_some() || mol.bond_between(i2, i4).is_some()) {
+        if size == 4 && !(mol.bond_between(i1, i3).is_some() || mol.bond_between(i2, i4).is_some())
+        {
             second = tor_type;
             tor_type = 4;
         } else if size == 5 && [i1, i2, i3, i4].iter().any(|&x| self.atom_types[x] == 1) {
@@ -1433,12 +1579,21 @@ impl MmffMolProperties {
     /// RDKit `getMMFFBondStretchEmpiricalRuleParams`.
     fn bond_stretch_empirical(&self, a: usize, b: usize) -> MmffBond {
         let p = self.params;
-        let bond = self.tm.mol.bond(self.tm.mol.bond_between(a, b).expect("bond"));
+        let bond = self
+            .tm
+            .mol
+            .bond(self.tm.mol.bond_between(a, b).expect("bond"));
         let an1 = self.tm.anum(bond.begin);
         let an2 = self.tm.anum(bond.end);
         let bndk = p.bndk.get(an1, an2);
-        let c1 = p.cov_rad_pau_ele.get(an1).expect("covalent radius/Pauling electronegativity parameters for atom 1 not found");
-        let c2 = p.cov_rad_pau_ele.get(an2).expect("covalent radius/Pauling electronegativity parameters for atom 2 not found");
+        let c1 = p
+            .cov_rad_pau_ele
+            .get(an1)
+            .expect("covalent radius/Pauling electronegativity parameters for atom 1 not found");
+        let c2 = p
+            .cov_rad_pau_ele
+            .get(an2)
+            .expect("covalent radius/Pauling electronegativity parameters for atom 2 not found");
         let c = if an1 == 1 || an2 == 1 { 0.050 } else { 0.085 };
         let n = 1.4;
         let delta = 0.0;
@@ -1464,7 +1619,11 @@ impl MmffMolProperties {
             return None;
         }
         let bt = self.bond_type(a, b);
-        let p = match self.params.bond.get(bt, self.atom_types[a], self.atom_types[b]) {
+        let p = match self
+            .params
+            .bond
+            .get(bt, self.atom_types[a], self.atom_types[b])
+        {
             Some(p) => p,
             None => self.bond_stretch_empirical(a, b),
         };
@@ -1480,7 +1639,11 @@ impl MmffMolProperties {
         b2: &MmffBond,
         idx: [usize; 3],
     ) -> MmffAngle {
-        let an = [self.tm.anum(idx[0]), self.tm.anum(idx[1]), self.tm.anum(idx[2])];
+        let an = [
+            self.tm.anum(idx[0]),
+            self.tm.anum(idx[1]),
+            self.tm.anum(idx[2]),
+        ];
         let ring_size = angle_in_ring_of_size_3_or_4(&self.tm.mol, idx[0], idx[1], idx[2]);
         let theta0 = match old {
             Some(o) => o.theta0,
@@ -1540,7 +1703,8 @@ impl MmffMolProperties {
         } else if ring_size == 3 {
             beta *= 0.05;
         }
-        let ka = beta * z[0] * c[1] * z[2] / ((r0_ij + r0_jk) * theta0_rad * theta0_rad * (2.0 * d).exp());
+        let ka = beta * z[0] * c[1] * z[2]
+            / ((r0_ij + r0_jk) * theta0_rad * theta0_rad * (2.0 * d).exp());
         MmffAngle { ka, theta0 }
     }
 
@@ -1553,7 +1717,11 @@ impl MmffMolProperties {
         let p = self.params;
         let idx = [i1, i2, i3];
         let angle_type = self.angle_type(i1, i2, i3);
-        let at = [self.atom_types[i1], self.atom_types[i2], self.atom_types[i3]];
+        let at = [
+            self.atom_types[i1],
+            self.atom_types[i2],
+            self.atom_types[i3],
+        ];
         let mut params = p.angle.get(&p.def, angle_type, at[0], at[1], at[2]);
         let central = self.prop(at[1]);
         if params.is_none() || is_double_zero(params.unwrap().ka) {
@@ -1568,7 +1736,12 @@ impl MmffMolProperties {
 
     /// RDKit `getMMFFStretchBendParams`: `(stbnType, stbn, [bond1, bond2],
     /// angle)`.
-    pub fn stretch_bend_params(&self, i1: usize, i2: usize, i3: usize) -> Option<(u8, MmffStbn, [MmffBond; 2], MmffAngle)> {
+    pub fn stretch_bend_params(
+        &self,
+        i1: usize,
+        i2: usize,
+        i3: usize,
+    ) -> Option<(u8, MmffStbn, [MmffBond; 2], MmffAngle)> {
         if !self.valid {
             return None;
         }
@@ -1578,7 +1751,11 @@ impl MmffMolProperties {
             return None;
         }
         let idx = [i1, i2, i3];
-        let at = [self.atom_types[i1], self.atom_types[i2], self.atom_types[i3]];
+        let at = [
+            self.atom_types[i1],
+            self.atom_types[i2],
+            self.atom_types[i3],
+        ];
         let (bt1, b1) = self.bond_stretch_params(idx[0], idx[1])?;
         let (bt2, b2) = self.bond_stretch_params(idx[1], idx[2])?;
         let (angle_type, angle) = self.angle_bend_params(i1, i2, i3)?;
@@ -1599,7 +1776,14 @@ impl MmffMolProperties {
         if is_double_zero(s.kba_ijk) && is_double_zero(s.kba_kji) {
             return None;
         }
-        let s = if r.0 { MmffStbn { kba_ijk: s.kba_kji, kba_kji: s.kba_ijk } } else { s };
+        let s = if r.0 {
+            MmffStbn {
+                kba_ijk: s.kba_kji,
+                kba_kji: s.kba_ijk,
+            }
+        } else {
+            s
+        };
         Some((stbn_type, s, [b1, b2], angle))
     }
 
@@ -1653,27 +1837,43 @@ impl MmffMolProperties {
             // rule (a)
         } else if is_mmff_aromatic(jt) && is_mmff_aromatic(kt) && bond.is_aromatic {
             // rule (b)
-            let beta = if (jp.val == 3 && kp.val == 4) || (jp.val == 4 && kp.val == 3) { 3.0 } else { 6.0 };
-            let pi_jk = if jp.pilp == 0 && kp.pilp == 0 { 0.5 } else { 0.3 };
+            let beta = if (jp.val == 3 && kp.val == 4) || (jp.val == 4 && kp.val == 3) {
+                3.0
+            } else {
+                6.0
+            };
+            let pi_jk = if jp.pilp == 0 && kp.pilp == 0 {
+                0.5
+            } else {
+                0.3
+            };
             t.v2 = beta * pi_jk * (u[0] * u[1]).sqrt();
         } else if bond.order == BondOrder::Double {
             // rule (c)
             let beta = 6.0;
-            let pi_jk = if jp.mltb == 2 && kp.mltb == 2 { 1.0 } else { 0.4 };
+            let pi_jk = if jp.mltb == 2 && kp.mltb == 2 {
+                1.0
+            } else {
+                0.4
+            };
             t.v2 = beta * pi_jk * (u[0] * u[1]).sqrt();
         } else if jp.crd == 4 && kp.crd == 4 {
             // rule (d)
             t.v3 = (v[0] * v[1]).sqrt() / n_jk;
         } else if jp.crd == 4 && kp.crd != 4 {
             // rule (e)
-            if (kp.crd == 3 && ((kp.val == 4 || kp.val == 34) || kp.mltb != 0)) || (kp.crd == 2 && (kp.val == 3 || kp.mltb != 0)) {
+            if (kp.crd == 3 && ((kp.val == 4 || kp.val == 34) || kp.mltb != 0))
+                || (kp.crd == 2 && (kp.val == 3 || kp.mltb != 0))
+            {
                 // zero
             } else {
                 t.v3 = (v[0] * v[1]).sqrt() / n_jk;
             }
         } else if kp.crd == 4 && jp.crd != 4 {
             // rule (f)
-            if (jp.crd == 3 && ((jp.val == 4 || jp.val == 34) || jp.mltb != 0)) || (jp.crd == 2 && (jp.val == 3 || jp.mltb != 0)) {
+            if (jp.crd == 3 && ((jp.val == 4 || jp.val == 34) || jp.mltb != 0))
+                || (jp.crd == 2 && (jp.val == 3 || jp.mltb != 0))
+            {
                 // zero
             } else {
                 t.v3 = (v[0] * v[1]).sqrt() / n_jk;
@@ -1725,13 +1925,28 @@ impl MmffMolProperties {
 
     /// RDKit `getMMFFTorsionParams`: `(torsionType, params)`; `None` if the
     /// torsion has no (non-zero) parameters.
-    pub fn torsion_params(&self, i1: usize, i2: usize, i3: usize, i4: usize) -> Option<(u8, MmffTor)> {
+    pub fn torsion_params(
+        &self,
+        i1: usize,
+        i2: usize,
+        i3: usize,
+        i4: usize,
+    ) -> Option<(u8, MmffTor)> {
         let mol = &self.tm.mol;
-        if !self.valid || mol.bond_between(i1, i2).is_none() || mol.bond_between(i2, i3).is_none() || mol.bond_between(i3, i4).is_none() {
+        if !self.valid
+            || mol.bond_between(i1, i2).is_none()
+            || mol.bond_between(i2, i3).is_none()
+            || mol.bond_between(i3, i4).is_none()
+        {
             return None;
         }
         let p = self.params;
-        let at = [self.atom_types[i1], self.atom_types[i2], self.atom_types[i3], self.atom_types[i4]];
+        let at = [
+            self.atom_types[i1],
+            self.atom_types[i2],
+            self.atom_types[i3],
+            self.atom_types[i4],
+        ];
         let tt = self.torsion_type(i1, i2, i3, i4);
         let (used, params) = p.tor.get(&p.def, tt, at[0], at[1], at[2], at[3]);
         let mut tor_type = if used != 0 { used } else { tt.0 };
@@ -1751,11 +1966,21 @@ impl MmffMolProperties {
     /// RDKit `getMMFFOopBendParams`.
     pub fn oop_bend_params(&self, i1: usize, i2: usize, i3: usize, i4: usize) -> Option<MmffOop> {
         let mol = &self.tm.mol;
-        if !self.valid || mol.bond_between(i1, i2).is_none() || mol.bond_between(i2, i3).is_none() || mol.bond_between(i2, i4).is_none() {
+        if !self.valid
+            || mol.bond_between(i1, i2).is_none()
+            || mol.bond_between(i2, i3).is_none()
+            || mol.bond_between(i2, i4).is_none()
+        {
             return None;
         }
         let p = self.params;
-        p.oop.get(&p.def, self.atom_types[i1], self.atom_types[i2], self.atom_types[i3], self.atom_types[i4])
+        p.oop.get(
+            &p.def,
+            self.atom_types[i1],
+            self.atom_types[i2],
+            self.atom_types[i3],
+            self.atom_types[i4],
+        )
     }
 
     /// RDKit `getMMFFVdWParams`.
@@ -1783,17 +2008,29 @@ impl MmffMolProperties {
 pub(crate) fn stretch_bend_type(angle_type: u8, bt1: u8, bt2: u8) -> u8 {
     match angle_type {
         1 => {
-            if bt1 != 0 || bt1 == bt2 { 1 } else { 2 }
+            if bt1 != 0 || bt1 == bt2 {
+                1
+            } else {
+                2
+            }
         }
         2 => 3,
         4 => 4,
         3 => 5,
         5 => {
-            if bt1 != 0 || bt1 == bt2 { 6 } else { 7 }
+            if bt1 != 0 || bt1 == bt2 {
+                6
+            } else {
+                7
+            }
         }
         6 => 8,
         7 => {
-            if bt1 != 0 || bt1 == bt2 { 9 } else { 10 }
+            if bt1 != 0 || bt1 == bt2 {
+                9
+            } else {
+                10
+            }
         }
         8 => 11,
         _ => 0,

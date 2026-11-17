@@ -86,7 +86,13 @@ struct Cluster {
 }
 
 /// Builds the list for positions `pos`.
-pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f64, all_pairs: bool) -> PairList {
+pub(crate) fn build(
+    p: &NbParams,
+    pos: &[f64],
+    cell: Option<&UnitCell>,
+    rlist: f64,
+    all_pairs: bool,
+) -> PairList {
     let n = p.n;
     // --- geometry: wrapped positions, fractional column coordinates, heights
     let mut tshift = vec![[0.0; 3]; n];
@@ -99,7 +105,11 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
             let [va, vb, vc] = c.vectors();
             let w = c.perpendicular_widths();
             for (k, s) in shifts.iter_mut().enumerate() {
-                let (na, nb, nc) = ((k / 9) as f64 - 1.0, ((k / 3) % 3) as f64 - 1.0, (k % 3) as f64 - 1.0);
+                let (na, nb, nc) = (
+                    (k / 9) as f64 - 1.0,
+                    ((k / 3) % 3) as f64 - 1.0,
+                    (k % 3) as f64 - 1.0,
+                );
                 for d in 0..3 {
                     s[d] = na * va[d] + nb * vb[d] + nc * vc[d];
                 }
@@ -137,7 +147,11 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                 frac[i] = [(r[0] - lo[0]) / len[0], (r[1] - lo[1]) / len[1]];
                 height[i] = r[2] - lo[2];
             }
-            (len[0], len[1], len.iter().map(|&l| l.max(2.0)).product::<f64>())
+            (
+                len[0],
+                len[1],
+                len.iter().map(|&l| l.max(2.0)).product::<f64>(),
+            )
         }
     };
     let periodic = cell.is_some();
@@ -218,7 +232,11 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
     let rl2 = rlist * rlist;
     let wc = cell.map(|c| c.perpendicular_widths()[2]).unwrap_or(0.0);
     let reach = |w: f64, nc: usize| -> i64 {
-        if all_pairs { nc as i64 } else { ((rlist * nc as f64 / w).floor() as i64 + 1).min(nc as i64) }
+        if all_pairs {
+            nc as i64
+        } else {
+            ((rlist * nc as f64 / w).floor() as i64 + 1).min(nc as i64)
+        }
     };
     let (rx, ry) = (reach(wa, nx), reach(wb, ny));
     let sc_range: &[i64] = if periodic { &[-1, 0, 1] } else { &[0] };
@@ -229,7 +247,9 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
     let wcl: Vec<[f64x4; 3]> = atoms
         .par_iter()
         .map(|a| {
-            let c = |d: usize| f64x4::new(a.map(|i| if i == DUMMY { FAR } else { wpos[i as usize][d] }));
+            let c = |d: usize| {
+                f64x4::new(a.map(|i| if i == DUMMY { FAR } else { wpos[i as usize][d] }))
+            };
             [c(0), c(1), c(2)]
         })
         .collect();
@@ -263,14 +283,17 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
             (lo, hi)
         })
         .collect();
-    let box_dist2 = |alo: &[f64; 3], ahi: &[f64; 3], blo: &[f64; 3], bhi: &[f64; 3], s: &[f64; 3]| -> f64 {
-        let mut d2 = 0.0;
-        for d in 0..3 {
-            let g = (blo[d] + s[d] - ahi[d]).max(alo[d] - bhi[d] - s[d]).max(0.0);
-            d2 += g * g;
-        }
-        d2
-    };
+    let box_dist2 =
+        |alo: &[f64; 3], ahi: &[f64; 3], blo: &[f64; 3], bhi: &[f64; 3], s: &[f64; 3]| -> f64 {
+            let mut d2 = 0.0;
+            for d in 0..3 {
+                let g = (blo[d] + s[d] - ahi[d])
+                    .max(alo[d] - bhi[d] - s[d])
+                    .max(0.0);
+                d2 += g * g;
+            }
+            d2
+        };
     let mask_of = |ci: usize, cj: usize, shift: usize| -> u16 {
         let s = shifts[shift];
         let (ri, rj) = (&ranges[ci], &ranges[cj]);
@@ -278,8 +301,15 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
         let self_pair = ci == cj && shift == ZERO_SHIFT as usize;
         let xi = wcl[ci].map(|v| v.to_array());
         let [xj, yj, zj] = wcl[cj];
-        let (xj, yj, zj) = (xj + f64x4::splat(s[0]), yj + f64x4::splat(s[1]), zj + f64x4::splat(s[2]));
-        let jvalid = atoms[cj].iter().enumerate().fold(0u16, |m, (b, &j)| if j != DUMMY { m | (1 << b) } else { m });
+        let (xj, yj, zj) = (
+            xj + f64x4::splat(s[0]),
+            yj + f64x4::splat(s[1]),
+            zj + f64x4::splat(s[2]),
+        );
+        let jvalid = atoms[cj]
+            .iter()
+            .enumerate()
+            .fold(0u16, |m, (b, &j)| if j != DUMMY { m | (1 << b) } else { m });
         let rl2v = f64x4::splat(rl2);
         let mut m = 0u16;
         for a in 0..4 {
@@ -321,7 +351,11 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                     for cj in 0..nclusters {
                         let m = mask_of(ci, cj, ZERO_SHIFT as usize);
                         if m != 0 {
-                            out.push(CjEntry { j: cj as u32, mask: m, shift: ZERO_SHIFT });
+                            out.push(CjEntry {
+                                j: cj as u32,
+                                mask: m,
+                                shift: ZERO_SHIFT,
+                            });
                         }
                     }
                 } else {
@@ -359,7 +393,8 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                                 let sh = sc as f64 * wc;
                                 let lo_h = ic.hmin - rlist - sh;
                                 let hi_h = ic.hmax + rlist - sh;
-                                let first = c0 + clusters[c0..c1].partition_point(|c| c.hmax < lo_h);
+                                let first =
+                                    c0 + clusters[c0..c1].partition_point(|c| c.hmax < lo_h);
                                 for cj in first..c1 {
                                     let jc = &clusters[cj];
                                     if jc.hmin > hi_h {
@@ -370,7 +405,11 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
                                     }
                                     let m = mask_of(ci, cj, shift);
                                     if m != 0 {
-                                        out.push(CjEntry { j: cj as u32, mask: m, shift: shift as u8 });
+                                        out.push(CjEntry {
+                                            j: cj as u32,
+                                            mask: m,
+                                            shift: shift as u8,
+                                        });
                                     }
                                 }
                             }
@@ -391,7 +430,19 @@ pub(crate) fn build(p: &NbParams, pos: &[f64], cell: Option<&UnitCell>, rlist: f
     }
     let mut cj = Vec::with_capacity(*ci.last().unwrap() as usize);
     cj.par_extend(blocks.into_par_iter().flat_map_iter(|b| b.1));
-    PairList { nclusters, atoms, slot, tshift, ref_pos: pos[..3 * n].to_vec(), ci, cj, shifts, q, types, all_pairs }
+    PairList {
+        nclusters,
+        atoms,
+        slot,
+        tshift,
+        ref_pos: pos[..3 * n].to_vec(),
+        ci,
+        cj,
+        shifts,
+        q,
+        types,
+        all_pairs,
+    }
 }
 
 impl PairList {
@@ -401,8 +452,12 @@ impl PairList {
         let mut x = vec![f64x4::splat(0.0); nc];
         let mut y = vec![f64x4::splat(0.0); nc];
         let mut z = vec![f64x4::splat(0.0); nc];
-        x.par_iter_mut().zip(y.par_iter_mut()).zip(z.par_iter_mut()).enumerate().with_min_len(256).for_each(
-            |(c, ((x, y), z))| {
+        x.par_iter_mut()
+            .zip(y.par_iter_mut())
+            .zip(z.par_iter_mut())
+            .enumerate()
+            .with_min_len(256)
+            .for_each(|(c, ((x, y), z))| {
                 let mut a = [[0.0; 4]; 3];
                 for l in 0..4 {
                     let i = self.atoms[c][l];
@@ -417,8 +472,7 @@ impl PairList {
                 *x = f64x4::new(a[0]);
                 *y = f64x4::new(a[1]);
                 *z = f64x4::new(a[2]);
-            },
-        );
+            });
         super::kernel::ClusterCoords { x, y, z }
     }
 
@@ -448,7 +502,11 @@ impl PairList {
                 }
                 let mut mm = m.to_array().iter().fold(0.0f64, |a, &b| a.max(b));
                 for i in (12 * full / 3)..(p.len() / 3) {
-                    let d = [p[3 * i] - r[3 * i], p[3 * i + 1] - r[3 * i + 1], p[3 * i + 2] - r[3 * i + 2]];
+                    let d = [
+                        p[3 * i] - r[3 * i],
+                        p[3 * i + 1] - r[3 * i + 1],
+                        p[3 * i + 2] - r[3 * i + 2],
+                    ];
                     mm = mm.max(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
                 }
                 mm

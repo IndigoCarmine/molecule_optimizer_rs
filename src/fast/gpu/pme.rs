@@ -63,7 +63,9 @@ impl PmeGpu {
     pub fn new(ctx: &GpuContext, pme: &Pme, natoms: usize) -> Result<PmeGpu> {
         let order = pme.order;
         if order > MAX_GPU_ORDER {
-            return Err(Error::InvalidArgument(format!("GPU PME supports spline orders up to {MAX_GPU_ORDER} (got {order})")));
+            return Err(Error::InvalidArgument(format!(
+                "GPU PME supports spline orders up to {MAX_GPU_ORDER} (got {order})"
+            )));
         }
         let k = pme.k;
         let [k1, k2, k3] = k;
@@ -77,12 +79,28 @@ impl PmeGpu {
             nq: nq as u32,
             ntot: ntot as u32,
             pad: [0; 3],
-            recip0: [pme.recip[0][0] as f32, pme.recip[0][1] as f32, pme.recip[0][2] as f32, 0.0],
-            recip1: [pme.recip[1][0] as f32, pme.recip[1][1] as f32, pme.recip[1][2] as f32, 0.0],
-            recip2: [pme.recip[2][0] as f32, pme.recip[2][1] as f32, pme.recip[2][2] as f32, 0.0],
+            recip0: [
+                pme.recip[0][0] as f32,
+                pme.recip[0][1] as f32,
+                pme.recip[0][2] as f32,
+                0.0,
+            ],
+            recip1: [
+                pme.recip[1][0] as f32,
+                pme.recip[1][1] as f32,
+                pme.recip[1][2] as f32,
+                0.0,
+            ],
+            recip2: [
+                pme.recip[2][0] as f32,
+                pme.recip[2][1] as f32,
+                pme.recip[2][2] as f32,
+                0.0,
+            ],
         };
         let pbuf = util::uniform(ctx, "pme params", std::mem::size_of::<PmeParams>());
-        ctx.queue().write_buffer(&pbuf, 0, bytemuck::bytes_of(&params));
+        ctx.queue()
+            .write_buffer(&pbuf, 0, bytemuck::bytes_of(&params));
         let atoms_b = util::storage(ctx, "pme atoms b", nq * 16);
         let atoms_w = util::storage(ctx, "pme atoms w", nq * 16);
         let theta = util::storage(ctx, "pme theta", nq * 6 * order * 4);
@@ -91,15 +109,18 @@ impl PmeGpu {
         let gb = util::storage(ctx, "pme grid b", ntot * 8);
         // influence function: CPU layout (y, z, x) -> (x, y, z)
         let mut infl = vec![0f32; ntot];
-        infl.par_chunks_mut(k2 * k3).enumerate().for_each(|(x, plane)| {
-            for y in 0..k2 {
-                for z in 0..k3 {
-                    plane[y * k3 + z] = pme.infl[(y * k3 + z) * k1 + x] as f32;
+        infl.par_chunks_mut(k2 * k3)
+            .enumerate()
+            .for_each(|(x, plane)| {
+                for y in 0..k2 {
+                    for z in 0..k3 {
+                        plane[y * k3 + z] = pme.infl[(y * k3 + z) * k1 + x] as f32;
+                    }
                 }
-            }
-        });
+            });
         let ibuf = util::storage(ctx, "pme influence", ntot * 4);
-        ctx.queue().write_buffer(&ibuf, 0, bytemuck::cast_slice(&infl));
+        ctx.queue()
+            .write_buffer(&ibuf, 0, bytemuck::cast_slice(&infl));
         let epart = util::storage(ctx, "pme energy partials", npart * 4);
         let pgrad = util::storage(ctx, "pme gradient", natoms * 16);
         let kernels = FftKernels::new(ctx);
@@ -112,18 +133,83 @@ impl PmeGpu {
         };
         let (m0, m1) = (module(false), module(true));
         use Bind::*;
-        let l_spread = util::layout(ctx, "pme spread", &[(0, Uniform), (1, Read), (2, Read), (3, ReadWrite), (4, ReadWrite)]);
-        let l_convert = util::layout(ctx, "pme convert", &[(0, Uniform), (4, ReadWrite), (5, ReadWrite)]);
-        let l_infl = util::layout(ctx, "pme influence", &[(0, Uniform), (6, ReadWrite), (7, Read), (8, ReadWrite)]);
-        let l_gather = util::layout(ctx, "pme gather", &[(0, Uniform), (1, Read), (2, Read), (3, ReadWrite), (9, Read), (10, ReadWrite)]);
+        let l_spread = util::layout(
+            ctx,
+            "pme spread",
+            &[
+                (0, Uniform),
+                (1, Read),
+                (2, Read),
+                (3, ReadWrite),
+                (4, ReadWrite),
+            ],
+        );
+        let l_convert = util::layout(
+            ctx,
+            "pme convert",
+            &[(0, Uniform), (4, ReadWrite), (5, ReadWrite)],
+        );
+        let l_infl = util::layout(
+            ctx,
+            "pme influence",
+            &[(0, Uniform), (6, ReadWrite), (7, Read), (8, ReadWrite)],
+        );
+        let l_gather = util::layout(
+            ctx,
+            "pme gather",
+            &[
+                (0, Uniform),
+                (1, Read),
+                (2, Read),
+                (3, ReadWrite),
+                (9, Read),
+                (10, ReadWrite),
+            ],
+        );
         let spread = util::pipeline(ctx, "pme spread", &m1, "spread", &l_spread);
         let convert = util::pipeline(ctx, "pme convert", &m1, "convert", &l_convert);
-        let influence = [util::pipeline(ctx, "pme influence", &m0, "influence", &l_infl), util::pipeline(ctx, "pme influence", &m1, "influence", &l_infl)];
+        let influence = [
+            util::pipeline(ctx, "pme influence", &m0, "influence", &l_infl),
+            util::pipeline(ctx, "pme influence", &m1, "influence", &l_infl),
+        ];
         let gather = util::pipeline(ctx, "pme gather", &m1, "gather", &l_gather);
-        let bg_spread = util::bind_group(ctx, "pme spread", &l_spread, &[(0, &pbuf), (1, &atoms_b), (2, &atoms_w), (3, &theta), (4, &qgrid)]);
-        let bg_convert = util::bind_group(ctx, "pme convert", &l_convert, &[(0, &pbuf), (4, &qgrid), (5, &ga)]);
-        let bg_influence = util::bind_group(ctx, "pme influence", &l_infl, &[(0, &pbuf), (6, fx), (7, &ibuf), (8, &epart)]);
-        let bg_gather = util::bind_group(ctx, "pme gather", &l_gather, &[(0, &pbuf), (1, &atoms_b), (2, &atoms_w), (3, &theta), (9, fy), (10, &pgrad)]);
+        let bg_spread = util::bind_group(
+            ctx,
+            "pme spread",
+            &l_spread,
+            &[
+                (0, &pbuf),
+                (1, &atoms_b),
+                (2, &atoms_w),
+                (3, &theta),
+                (4, &qgrid),
+            ],
+        );
+        let bg_convert = util::bind_group(
+            ctx,
+            "pme convert",
+            &l_convert,
+            &[(0, &pbuf), (4, &qgrid), (5, &ga)],
+        );
+        let bg_influence = util::bind_group(
+            ctx,
+            "pme influence",
+            &l_infl,
+            &[(0, &pbuf), (6, fx), (7, &ibuf), (8, &epart)],
+        );
+        let bg_gather = util::bind_group(
+            ctx,
+            "pme gather",
+            &l_gather,
+            &[
+                (0, &pbuf),
+                (1, &atoms_b),
+                (2, &atoms_w),
+                (3, &theta),
+                (9, fy),
+                (10, &pgrad),
+            ],
+        );
         Ok(PmeGpu {
             k,
             recip: pme.recip,
@@ -163,26 +249,33 @@ impl PmeGpu {
     /// uploads them.
     pub fn prepare(&mut self, ctx: &GpuContext, pos: &[f64]) {
         let (k, recip, atoms, q) = (self.k, &self.recip, &self.atoms, &self.q);
-        self.h_b.par_iter_mut().zip(self.h_w.par_iter_mut()).enumerate().with_min_len(1024).for_each(|(a, (b, w))| {
-            let i = atoms[a] as usize;
-            let r = [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
-            for d in 0..3 {
-                let s = recip[d][0] * r[0] + recip[d][1] * r[1] + recip[d][2] * r[2];
-                let u = s * k[d] as f64;
-                let fl = u.floor();
-                let mut ww = u - fl;
-                if ww >= 1.0 {
-                    ww = 0.0;
+        self.h_b
+            .par_iter_mut()
+            .zip(self.h_w.par_iter_mut())
+            .enumerate()
+            .with_min_len(1024)
+            .for_each(|(a, (b, w))| {
+                let i = atoms[a] as usize;
+                let r = [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
+                for d in 0..3 {
+                    let s = recip[d][0] * r[0] + recip[d][1] * r[1] + recip[d][2] * r[2];
+                    let u = s * k[d] as f64;
+                    let fl = u.floor();
+                    let mut ww = u - fl;
+                    if ww >= 1.0 {
+                        ww = 0.0;
+                    }
+                    b[d] = (fl as i64).rem_euclid(k[d] as i64) as u32;
+                    w[d] = ww as f32;
                 }
-                b[d] = (fl as i64).rem_euclid(k[d] as i64) as u32;
-                w[d] = ww as f32;
-            }
-            b[3] = i as u32;
-            w[3] = q[a] as f32;
-        });
+                b[3] = i as u32;
+                w[3] = q[a] as f32;
+            });
         if !self.h_b.is_empty() {
-            ctx.queue().write_buffer(&self.atoms_b, 0, bytemuck::cast_slice(&self.h_b));
-            ctx.queue().write_buffer(&self.atoms_w, 0, bytemuck::cast_slice(&self.h_w));
+            ctx.queue()
+                .write_buffer(&self.atoms_b, 0, bytemuck::cast_slice(&self.h_b));
+            ctx.queue()
+                .write_buffer(&self.atoms_w, 0, bytemuck::cast_slice(&self.h_w));
         }
     }
 

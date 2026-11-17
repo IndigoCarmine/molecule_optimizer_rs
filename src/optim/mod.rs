@@ -165,7 +165,9 @@ pub fn minimize_with(
         a => a,
     };
     let mut res = match alg {
-        Algorithm::Lbfgs(m) => bfgs::minimize_lbfgs_impl(ff, pos, opts, m.max(1), endless, observer),
+        Algorithm::Lbfgs(m) => {
+            bfgs::minimize_lbfgs_impl(ff, pos, opts, m.max(1), endless, observer)
+        }
         _ => bfgs::minimize_bfgs_impl(ff, pos, opts, endless, observer),
     };
     let mut g = vec![0.0; dim];

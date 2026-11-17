@@ -11,7 +11,11 @@ use rayon::prelude::*;
 use std::ops::ControlFlow;
 
 fn molecules() -> Vec<Molecule> {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/etkdg/molecules.sdf")).unwrap();
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/etkdg/molecules.sdf"
+    ))
+    .unwrap();
     io::molfile::read_sdf(&text).unwrap()
 }
 
@@ -44,9 +48,18 @@ fn conformers_satisfy_bounds_and_keep_stereo() {
                     let (a, b) = (f.atoms[i], f.atoms[j]);
                     let d = molecule_optimizer_rs::core::geometry::dist(c[a], c[b]);
                     let (lb, ub) = (f.bounds.lower(i, j), f.bounds.upper(i, j));
-                    let viol = if d < lb { lb - d } else if d > ub { d - ub } else { 0.0 };
+                    let viol = if d < lb {
+                        lb - d
+                    } else if d > ub {
+                        d - ub
+                    } else {
+                        0.0
+                    };
                     if viol > worst_bound.0 {
-                        worst_bound = (viol, format!("{} {a}-{b}: d {d:.3} bounds [{lb:.3}, {ub:.3}]", mol.name));
+                        worst_bound = (
+                            viol,
+                            format!("{} {a}-{b}: d {d:.3} bounds [{lb:.3}, {ub:.3}]", mol.name),
+                        );
                     }
                 }
             }
@@ -60,7 +73,11 @@ fn conformers_satisfy_bounds_and_keep_stereo() {
             let nb: Vec<usize> = m.neighbors(i).collect();
             let v_in = signed_volume(&mol.coords, i, &nb);
             let v_out = signed_volume(&c, i, &nb);
-            assert!(v_in * v_out > 0.0, "{}: chirality of atom {i} inverted", mol.name);
+            assert!(
+                v_in * v_out > 0.0,
+                "{}: chirality of atom {i} inverted",
+                mol.name
+            );
         }
         // double-bond stereo
         for b in m.bonds() {
@@ -70,17 +87,29 @@ fn conformers_satisfy_bounds_and_keep_stereo() {
             let (s0, s1) = b.stereo_atoms.unwrap();
             let d = dihedral(c[s0], c[b.begin], c[b.end], c[s1]).abs();
             let cis = d < std::f64::consts::FRAC_PI_2;
-            assert_eq!(cis, b.stereo == BondStereo::Cis, "{}: E/Z of bond {}-{} lost", mol.name, b.begin, b.end);
+            assert_eq!(
+                cis,
+                b.stereo == BondStereo::Cis,
+                "{}: E/Z of bond {}-{} lost",
+                mol.name,
+                b.begin,
+                b.end
+            );
         }
     }
-    println!("largest bounds violation: {:.3} A ({})", worst_bound.0, worst_bound.1);
+    println!(
+        "largest bounds violation: {:.3} A ({})",
+        worst_bound.0, worst_bound.1
+    );
     // pairs covered by torsion terms are not bounds-restrained in the ETK stage
     assert!(worst_bound.0 < 0.75, "{}", worst_bound.1);
 }
 
 #[test]
 fn deterministic_and_parallel_equals_sequential() {
-    for mol in molecules().into_iter().filter(|m| ["ibuprofen", "l_menthol", "macrolactone_14", "glucose"].contains(&m.name.as_str())) {
+    for mol in molecules().into_iter().filter(|m| {
+        ["ibuprofen", "l_menthol", "macrolactone_14", "glucose"].contains(&m.name.as_str())
+    }) {
         let p = seeded(0xf00d);
         let seq = distgeom::embed_multiple(&mol, 8, &p).unwrap();
         let again = distgeom::embed_multiple(&mol, 8, &p).unwrap();
@@ -102,7 +131,10 @@ fn deterministic_and_parallel_equals_sequential() {
 
 #[test]
 fn observer_sees_4d_positions_and_can_cancel() {
-    let mol = molecules().into_iter().find(|m| m.name == "l_menthol").unwrap();
+    let mol = molecules()
+        .into_iter()
+        .find(|m| m.name == "l_menthol")
+        .unwrap();
     let n = mol.num_atoms();
     let mut dims = std::collections::BTreeSet::new();
     let mut obs = |info: &IterationInfo<'_>| {
@@ -118,18 +150,29 @@ fn observer_sees_4d_positions_and_can_cancel() {
 
 #[test]
 fn pruning_removes_duplicates() {
-    let mol = molecules().into_iter().find(|m| m.name == "cyclohexane").unwrap();
+    let mol = molecules()
+        .into_iter()
+        .find(|m| m.name == "cyclohexane")
+        .unwrap();
     let mut p = seeded(3);
     let all = distgeom::embed_multiple(&mol, 10, &p).unwrap();
     p.prune_rms_thresh = 0.5;
     let pruned = distgeom::embed_multiple(&mol, 10, &p).unwrap();
-    assert!(pruned.len() < all.len() && !pruned.is_empty(), "{} vs {}", pruned.len(), all.len());
+    assert!(
+        pruned.len() < all.len() && !pruned.is_empty(),
+        "{} vs {}",
+        pruned.len(),
+        all.len()
+    );
     assert_eq!(pruned[0], all[0]);
 }
 
 #[test]
 fn etk_force_field_gradient_matches_finite_differences() {
-    for mol in molecules().into_iter().filter(|m| ["aspirin", "propyne", "e_stilbene"].contains(&m.name.as_str())) {
+    for mol in molecules()
+        .into_iter()
+        .filter(|m| ["aspirin", "propyne", "e_stilbene"].contains(&m.name.as_str()))
+    {
         let e = Embedding::new(&mol, &seeded(5)).unwrap();
         let f = &e.fragments[0];
         let c = e.embed_conformer(0, &mut NoObserver).unwrap().unwrap();
@@ -140,7 +183,15 @@ fn etk_force_field_gradient_matches_finite_differences() {
         let ff = force_fields::construct_3d_force_field(&f.bounds, &pos, &f.details);
         let err = gradient_error(&ff, &pos);
         assert!(err < 1e-3, "{}: {err}", mol.name);
-        let dg = force_fields::construct_force_field(&f.bounds, 3, &f.chiral_centers, 1.0, 0.0, 0.0, 5.0);
+        let dg = force_fields::construct_force_field(
+            &f.bounds,
+            3,
+            &f.chiral_centers,
+            1.0,
+            0.0,
+            0.0,
+            5.0,
+        );
         assert!(gradient_error(&dg, &pos) < 1e-3);
     }
 }
@@ -155,7 +206,11 @@ fn bounds_matrix_is_smoothed() {
             for j in 0..n {
                 for k in 0..n {
                     if i != j && j != k && i != k {
-                        assert!(b.upper(i, j) <= b.upper(i, k) + b.upper(k, j) + 1e-9, "{}", mol.name);
+                        assert!(
+                            b.upper(i, j) <= b.upper(i, k) + b.upper(k, j) + 1e-9,
+                            "{}",
+                            mol.name
+                        );
                     }
                 }
             }

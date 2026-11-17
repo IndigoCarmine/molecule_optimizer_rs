@@ -13,7 +13,8 @@ use super::exact::{NbTemplate, PairCollector};
 use crate::core::{Hybridization, Molecule};
 use crate::error::{Error, Result};
 use crate::ff::constraints::{
-    AngleConstraintContrib, DistanceConstraintContrib, PositionConstraintContrib, TorsionConstraintContrib,
+    AngleConstraintContrib, DistanceConstraintContrib, PositionConstraintContrib,
+    TorsionConstraintContrib,
 };
 use crate::ff::mmff::{self, MmffBuilder, MmffMolProperties};
 use crate::ff::uff::{self, UffBuilder};
@@ -67,7 +68,11 @@ impl ConstraintTable {
     pub fn eval<const G: bool>(&self, pos: &[f64], grad: &mut [f64], acc: &mut f64) {
         for t in &self.terms {
             let c = t.as_contrib();
-            *acc += if G { c.energy_grad(pos, grad) } else { c.energy(pos) };
+            *acc += if G {
+                c.energy_grad(pos, grad)
+            } else {
+                c.energy(pos)
+            };
         }
     }
     pub fn energy(&self, pos: &[f64]) -> f64 {
@@ -147,7 +152,8 @@ pub fn compile(contribs: &[Box<dyn Contrib>], skip_nonbonded: bool) -> Compiled 
                 u.half_fc.push(t.force_constant / 2.0);
                 u.cos_term.push(t.cos_term);
                 u.ord.push(t.order as f64);
-                u.dfac.push(-(t.force_constant / 2.0 * t.cos_term) * t.order as f64);
+                u.dfac
+                    .push(-(t.force_constant / 2.0 * t.cos_term) * t.order as f64);
                 table(TableKind::UffTorsion, &mut out.segments);
             } else if let Some(t) = is!(uff::InversionContrib) {
                 let u = &mut b.uff_inversions;
@@ -302,35 +308,62 @@ pub fn is_cacheable_builder(inner: &dyn Any) -> bool {
 pub fn make_template(inner: &dyn Any, mol: &Molecule, grain: usize) -> Result<Option<Template>> {
     if let Some(b) = inner.downcast_ref::<UffBuilder>() {
         check_coords(mol)?;
-        if (0..mol.num_atoms()).any(|i| mol.atom(i).hybridization == Hybridization::SP3D && mol.degree(i) == 5) {
+        if (0..mol.num_atoms())
+            .any(|i| mol.atom(i).hybridization == Hybridization::SP3D && mol.degree(i) == 5)
+        {
             return Ok(None);
         }
         let (_, params, _) = uff::atom_typer::atom_types_and_params(mol);
         // vdw_thresh 0: no nonbonded pairs (they are selected per geometry)
-        let ff = uff::builder::construct_force_field(mol, &params, 0.0, b.ignore_interfrag_interactions)?;
+        let ff = uff::builder::construct_force_field(
+            mol,
+            &params,
+            0.0,
+            b.ignore_interfrag_interactions,
+        )?;
         let mut c = compile(ff.contribs(), true);
         c.bonded.plan(grain);
         debug_assert!(c.opaque.is_empty() && c.constraints.is_empty());
         let split = c
             .segments
             .iter()
-            .position(|s| matches!(s, Segment::Table(TableKind::UffTorsion) | Segment::Table(TableKind::UffInversion)))
+            .position(|s| {
+                matches!(
+                    s,
+                    Segment::Table(TableKind::UffTorsion) | Segment::Table(TableKind::UffInversion)
+                )
+            })
             .unwrap_or(c.segments.len());
         let after = c.segments.split_off(split);
         let nb = NbTemplate::uff(mol, &params, b.vdw_thresh, b.ignore_interfrag_interactions);
-        return Ok(Some(Template { bonded: Arc::new(c.bonded), before: c.segments, after, nb: Arc::new(nb), mmff: false }));
+        return Ok(Some(Template {
+            bonded: Arc::new(c.bonded),
+            before: c.segments,
+            after,
+            nb: Arc::new(nb),
+            mmff: false,
+        }));
     }
     if let Some(b) = inner.downcast_ref::<MmffBuilder>() {
         check_coords(mol)?;
         let props = MmffMolProperties::new(mol, b.variant)?;
         // threshold -inf: no nonbonded pairs
-        let b0 = MmffBuilder { nonbonded_thresh: f64::NEG_INFINITY, ..b.clone() };
+        let b0 = MmffBuilder {
+            nonbonded_thresh: f64::NEG_INFINITY,
+            ..b.clone()
+        };
         let ff: ContribForceField = b0.build_with_properties(mol, &props, &[])?;
         let mut c = compile(ff.contribs(), true);
         c.bonded.plan(grain);
         debug_assert!(c.opaque.is_empty() && c.constraints.is_empty());
         let nb = NbTemplate::mmff(&props, b);
-        return Ok(Some(Template { bonded: Arc::new(c.bonded), before: c.segments, after: Vec::new(), nb: Arc::new(nb), mmff: true }));
+        return Ok(Some(Template {
+            bonded: Arc::new(c.bonded),
+            before: c.segments,
+            after: Vec::new(),
+            nb: Arc::new(nb),
+            mmff: true,
+        }));
     }
     Ok(None)
 }

@@ -11,22 +11,39 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().unwrap_or_else(|| "examples/data/paracetamol.mol".into());
+    let path = args
+        .next()
+        .unwrap_or_else(|| "examples/data/paracetamol.mol".into());
     let n: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(100);
     let mol = Arc::new(io::read_file(&path)?.remove(0));
     let mut params = EmbedParams::etkdg_v3();
     params.random_seed = 0xf00d;
     let opts = ConformerSearchOptions::etkdg(params, n);
-    let job = Engine::global().conformer_search(mol.clone(), Arc::new(MmffBuilder::default()), opts);
+    let job =
+        Engine::global().conformer_search(mol.clone(), Arc::new(MmffBuilder::default()), opts);
     while !job.is_finished() {
         let s = job.snapshot();
         let best = s.data.best().map(|c| c.energy).unwrap_or(f64::NAN);
-        println!("{}/{} done, {} in flight, best E = {:.4}", s.data.completed, s.data.total, s.data.in_flight.len(), best);
+        println!(
+            "{}/{} done, {} in flight, best E = {:.4}",
+            s.data.completed,
+            s.data.total,
+            s.data.in_flight.len(),
+            best
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let r = job.await?;
     let best = r.global_minimum().unwrap();
-    println!("{} unique conformers; global minimum E(MMFF94) = {:.6} kcal/mol (conformer {})", r.conformers.len(), best.energy, best.id);
-    std::fs::write("global_min.xyz", io::xyz::write_xyz_coords(&mol, &best.coords, Some("global minimum")))?;
+    println!(
+        "{} unique conformers; global minimum E(MMFF94) = {:.6} kcal/mol (conformer {})",
+        r.conformers.len(),
+        best.energy,
+        best.id
+    );
+    std::fs::write(
+        "global_min.xyz",
+        io::xyz::write_xyz_coords(&mol, &best.coords, Some("global minimum")),
+    )?;
     Ok(())
 }

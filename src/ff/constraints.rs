@@ -14,13 +14,39 @@ use crate::core::geometry::{V3, cross, dot, norm, scale, sub};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     /// Keep `|r_i - r_j|` within `[min, max]` Å.
-    Distance { i: usize, j: usize, min: f64, max: f64, k: f64 },
+    Distance {
+        i: usize,
+        j: usize,
+        min: f64,
+        max: f64,
+        k: f64,
+    },
     /// Keep the angle i-j-k within `[min, max]` degrees.
-    Angle { i: usize, j: usize, k: usize, min: f64, max: f64, force: f64 },
+    Angle {
+        i: usize,
+        j: usize,
+        k: usize,
+        min: f64,
+        max: f64,
+        force: f64,
+    },
     /// Keep the dihedral i-j-k-l within `[min, max]` degrees (may wrap).
-    Dihedral { i: usize, j: usize, k: usize, l: usize, min: f64, max: f64, force: f64 },
+    Dihedral {
+        i: usize,
+        j: usize,
+        k: usize,
+        l: usize,
+        min: f64,
+        max: f64,
+        force: f64,
+    },
     /// Keep atom `i` within `max_displ` Å of `pos` (`None` = its current position).
-    Position { i: usize, pos: Option<[f64; 3]>, max_displ: f64, k: f64 },
+    Position {
+        i: usize,
+        pos: Option<[f64; 3]>,
+        max_displ: f64,
+        k: f64,
+    },
     /// Freeze atom `i` completely.
     Fixed { i: usize },
 }
@@ -28,16 +54,37 @@ pub enum Constraint {
 impl Constraint {
     /// Distance restrained to an exact value.
     pub fn distance(i: usize, j: usize, value: f64, k: f64) -> Self {
-        Constraint::Distance { i, j, min: value, max: value, k }
+        Constraint::Distance {
+            i,
+            j,
+            min: value,
+            max: value,
+            k,
+        }
     }
     /// Angle restrained to an exact value (degrees).
     pub fn angle(i: usize, j: usize, k: usize, value_deg: f64, force: f64) -> Self {
-        Constraint::Angle { i, j, k, min: value_deg, max: value_deg, force }
+        Constraint::Angle {
+            i,
+            j,
+            k,
+            min: value_deg,
+            max: value_deg,
+            force,
+        }
     }
     /// Dihedral restrained to an exact value (degrees).
     pub fn dihedral(i: usize, j: usize, k: usize, l: usize, value_deg: f64, force: f64) -> Self {
         let v = normalize_angle_deg(value_deg);
-        Constraint::Dihedral { i, j, k, l, min: v, max: v, force }
+        Constraint::Dihedral {
+            i,
+            j,
+            k,
+            l,
+            min: v,
+            max: v,
+            force,
+        }
     }
 
     /// Adds the corresponding contrib(s) to `ff`.
@@ -46,16 +93,41 @@ impl Constraint {
             Constraint::Distance { i, j, min, max, k } => {
                 ff.add_contrib(Box::new(DistanceConstraintContrib { i, j, min, max, k }))
             }
-            Constraint::Angle { i, j, k, min, max, force } => {
-                ff.add_contrib(Box::new(AngleConstraintContrib { i, j, k, min, max, force }))
-            }
-            Constraint::Dihedral { i, j, k, l, min, max, force } => ff.add_contrib(Box::new(TorsionConstraintContrib {
+            Constraint::Angle {
+                i,
+                j,
+                k,
+                min,
+                max,
+                force,
+            } => ff.add_contrib(Box::new(AngleConstraintContrib {
+                i,
+                j,
+                k,
+                min,
+                max,
+                force,
+            })),
+            Constraint::Dihedral {
+                i,
+                j,
+                k,
+                l,
+                min,
+                max,
+                force,
+            } => ff.add_contrib(Box::new(TorsionConstraintContrib {
                 idx: [i, j, k, l],
                 min: normalize_angle_deg(min),
                 max: normalize_angle_deg(max),
                 force,
             })),
-            Constraint::Position { i, pos, max_displ, k } => ff.add_contrib(Box::new(PositionConstraintContrib {
+            Constraint::Position {
+                i,
+                pos,
+                max_displ,
+                k,
+            } => ff.add_contrib(Box::new(PositionConstraintContrib {
                 i,
                 pos0: pos.unwrap_or(coords[i]),
                 max_displ,
@@ -238,12 +310,26 @@ impl Contrib for TorsionConstraintContrib {
     fn grad(&self, pos: &[f64], grad: &mut [f64]) {
         let g = Torsion::at(pos, self.idx);
         let t = self.term(g.angle() * RAD2DEG);
-        torsion_angle_grad(pos, self.idx, &g.r, &g.n, 2.0 * RAD2DEG * self.force * t, grad);
+        torsion_angle_grad(
+            pos,
+            self.idx,
+            &g.r,
+            &g.n,
+            2.0 * RAD2DEG * self.force * t,
+            grad,
+        );
     }
     fn energy_grad(&self, pos: &[f64], grad: &mut [f64]) -> f64 {
         let g = Torsion::at(pos, self.idx);
         let t = self.term(g.angle() * RAD2DEG);
-        torsion_angle_grad(pos, self.idx, &g.r, &g.n, 2.0 * RAD2DEG * self.force * t, grad);
+        torsion_angle_grad(
+            pos,
+            self.idx,
+            &g.r,
+            &g.n,
+            2.0 * RAD2DEG * self.force * t,
+            grad,
+        );
         self.force * t * t
     }
     fn label(&self) -> &'static str {
@@ -252,15 +338,35 @@ impl Contrib for TorsionConstraintContrib {
 }
 
 /// Distributes `dE/dφ` onto the four atoms (RDKit torsion gradient code).
-pub fn torsion_grad(pos: &[f64], idx: [usize; 4], dd: &super::utils::DihedralData, de_dphi: f64, grad: &mut [f64]) {
+pub fn torsion_grad(
+    pos: &[f64],
+    idx: [usize; 4],
+    dd: &super::utils::DihedralData,
+    de_dphi: f64,
+    grad: &mut [f64],
+) {
     let r = &dd.r;
-    torsion_angle_grad(pos, idx, r, &[cross(r[0], r[1]), cross(r[2], r[3])], de_dphi, grad);
+    torsion_angle_grad(
+        pos,
+        idx,
+        r,
+        &[cross(r[0], r[1]), cross(r[2], r[3])],
+        de_dphi,
+        grad,
+    );
 }
 
 /// [`torsion_grad`] from the bond vectors `r` and plane normals `n` of a
 /// [`Torsion`].
 #[inline]
-fn torsion_angle_grad(pos: &[f64], idx: [usize; 4], r: &[V3; 4], n: &[V3; 2], de_dphi: f64, grad: &mut [f64]) {
+fn torsion_angle_grad(
+    pos: &[f64],
+    idx: [usize; 4],
+    r: &[V3; 4],
+    n: &[V3; 2],
+    de_dphi: f64,
+    grad: &mut [f64],
+) {
     let [a, b, c, d] = idx;
     let d23 = distance(pos, b, c);
     let r31 = sub(p3(pos, c), p3(pos, a));
@@ -334,7 +440,12 @@ mod tests {
 
     #[test]
     fn constraint_gradients() {
-        let coords = [[0.1, 0.0, 0.0], [1.5, 0.2, -0.1], [2.0, 1.4, 0.3], [3.1, 1.6, 1.2]];
+        let coords = [
+            [0.1, 0.0, 0.0],
+            [1.5, 0.2, -0.1],
+            [2.0, 1.4, 0.3],
+            [3.1, 1.6, 1.2],
+        ];
         let pos: Vec<f64> = coords.iter().flatten().copied().collect();
         let mut ff = ContribForceField::new(4, 3);
         ff.add_constraints(
@@ -343,7 +454,12 @@ mod tests {
                 Constraint::distance(0, 3, 2.0, 10.0),
                 Constraint::angle(0, 1, 2, 100.0, 0.5),
                 Constraint::dihedral(0, 1, 2, 3, 170.0, 0.3),
-                Constraint::Position { i: 2, pos: Some([2.5, 1.0, 0.0]), max_displ: 0.1, k: 5.0 },
+                Constraint::Position {
+                    i: 2,
+                    pos: Some([2.5, 1.0, 0.0]),
+                    max_displ: 0.1,
+                    k: 5.0,
+                },
             ],
         );
         assert!(ff.energy(&pos) > 0.0);

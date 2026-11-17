@@ -31,7 +31,12 @@ unsafe impl GlobalAlloc for Counting {
 static GLOBAL: Counting = Counting;
 
 fn paracetamol() -> Molecule {
-    molecule_optimizer_rs::io::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/data/paracetamol.mol")).unwrap().remove(0)
+    molecule_optimizer_rs::io::read_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/data/paracetamol.mol"
+    ))
+    .unwrap()
+    .remove(0)
 }
 
 fn lattice(mol: &Molecule, n: usize, spacing: f64) -> Molecule {
@@ -43,7 +48,14 @@ fn lattice(mol: &Molecule, n: usize, spacing: f64) -> Molecule {
                 for i in 0..mol.num_atoms() {
                     let a: Atom = mol.atom(i).clone();
                     let p = mol.coords[i];
-                    out.add_atom(a, [p[0] + x as f64 * spacing, p[1] + y as f64 * spacing, p[2] + z as f64 * spacing]);
+                    out.add_atom(
+                        a,
+                        [
+                            p[0] + x as f64 * spacing,
+                            p[1] + y as f64 * spacing,
+                            p[2] + z as f64 * spacing,
+                        ],
+                    );
                 }
                 for b in mol.bonds() {
                     out.add_bond(b.begin + off, b.end + off, b.order);
@@ -77,9 +89,16 @@ fn count(ff: &dyn ForceField, pos: &[f64]) -> usize {
 fn energy_grad_does_not_allocate() {
     let mol = paracetamol();
     let pos = mol.flat_coords();
-    let cons = [Constraint::distance(0, 8, 6.0, 10.0), Constraint::Fixed { i: 3 }];
-    let serial_m = FastBuilder::new(MmffBuilder::default(), FastOptions::exact()).build_fast(&mol, &cons).unwrap();
-    let serial_u = FastBuilder::new(UffBuilder::default(), FastOptions::exact()).build_fast(&mol, &cons).unwrap();
+    let cons = [
+        Constraint::distance(0, 8, 6.0, 10.0),
+        Constraint::Fixed { i: 3 },
+    ];
+    let serial_m = FastBuilder::new(MmffBuilder::default(), FastOptions::exact())
+        .build_fast(&mol, &cons)
+        .unwrap();
+    let serial_u = FastBuilder::new(UffBuilder::default(), FastOptions::exact())
+        .build_fast(&mol, &cons)
+        .unwrap();
     assert_eq!(count(&serial_m, &pos), 0, "serial MMFF");
     assert_eq!(count(&serial_u, &pos), 0, "serial UFF");
 
@@ -87,12 +106,29 @@ fn energy_grad_does_not_allocate() {
     let big = lattice(&mol, 3, 7.0);
     let bpos = big.flat_coords();
     let opts = FastOptions::exact().parallel_grain(64);
-    let par_m = FastBuilder::new(MmffBuilder { ignore_interfrag_interactions: false, ..Default::default() }, opts.clone())
-        .build_fast(&big, &[])
-        .unwrap();
-    let par_u = FastBuilder::new(UffBuilder { ignore_interfrag_interactions: false, ..Default::default() }, opts).build_fast(&big, &[]).unwrap();
+    let par_m = FastBuilder::new(
+        MmffBuilder {
+            ignore_interfrag_interactions: false,
+            ..Default::default()
+        },
+        opts.clone(),
+    )
+    .build_fast(&big, &[])
+    .unwrap();
+    let par_u = FastBuilder::new(
+        UffBuilder {
+            ignore_interfrag_interactions: false,
+            ..Default::default()
+        },
+        opts,
+    )
+    .build_fast(&big, &[])
+    .unwrap();
     assert!(!par_m.bonded().chunks.is_empty());
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
     let (a, b) = pool.install(|| (count(&par_m, &bpos), count(&par_u, &bpos)));
     println!("parallel allocations per 100 calls: MMFF {a}, UFF {b}");
     assert_eq!(a, 0, "parallel MMFF");

@@ -86,10 +86,15 @@ impl Default for Compute2DCoordsParams {
 pub fn compute_2d_coords(mol: &Molecule, params: &Compute2DCoordsParams) -> Result<Vec<[f64; 3]>> {
     let n = mol.num_atoms();
     if let Some((&bad, _)) = params.coord_map.iter().find(|&(&a, _)| a >= n) {
-        return Err(Error::InvalidArgument(format!("coord_map atom index {bad} out of range ({n} atoms)")));
+        return Err(Error::InvalidArgument(format!(
+            "coord_map atom index {bad} out of range ({n} atoms)"
+        )));
     }
     if !params.bond_length.is_finite() || params.bond_length <= 0.0 {
-        return Err(Error::InvalidArgument(format!("bond_length must be positive, got {}", params.bond_length)));
+        return Err(Error::InvalidArgument(format!(
+            "bond_length must be positive, got {}",
+            params.bond_length
+        )));
     }
     if n == 0 {
         return Ok(Vec::new());
@@ -105,10 +110,18 @@ pub fn compute_2d_coords(mol: &Molecule, params: &Compute2DCoordsParams) -> Resu
     } else {
         legacy_stereo::legacy_cip_ranks_for_assigned_stereo(&cp, cp.ring_info().unwrap())
     };
-    let ctx = Ctx { mol: &cp, ri: RingInfo::compute_including_dative(&cp), cip, bond_len: params.bond_length };
+    let ctx = Ctx {
+        mol: &cp,
+        ri: RingInfo::compute_including_dative(&cp),
+        cip,
+        bond_len: params.bond_length,
+    };
 
-    let coord_map: BTreeMap<usize, Point2D> =
-        params.coord_map.iter().map(|(&a, p)| (a, Point2D::new(p[0], p[1]))).collect();
+    let coord_map: BTreeMap<usize, Point2D> = params
+        .coord_map
+        .iter()
+        .map(|(&a, p)| (a, Point2D::new(p[0], p[1])))
+        .collect();
     let mut efrags = compute_initial_coords(&ctx, &coord_map);
 
     let dmat = utils::distance_matrix(&cp);

@@ -26,16 +26,28 @@ pub struct WgpuNonbonded {
 
 impl std::fmt::Debug for WgpuNonbonded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WgpuNonbonded").field("adapter", &self.ctx.adapter_info().name).field("cpu", &self.cpu).finish()
+        f.debug_struct("WgpuNonbonded")
+            .field("adapter", &self.ctx.adapter_info().name)
+            .field("cpu", &self.cpu)
+            .finish()
     }
 }
 
 /// Builds the GPU nonbonded backend for `mol` (same arguments as
 /// [`build_approx_nonbonded`]; PME spline orders up to 12).
-pub fn build_gpu_nonbonded(mol: &Molecule, inner_builder: &dyn std::any::Any, opts: &ApproxOptions, ctx: &GpuContext) -> Result<WgpuNonbonded> {
+pub fn build_gpu_nonbonded(
+    mol: &Molecule,
+    inner_builder: &dyn std::any::Any,
+    opts: &ApproxOptions,
+    ctx: &GpuContext,
+) -> Result<WgpuNonbonded> {
     let cpu = build_approx_nonbonded(mol, inner_builder, opts, true)?;
     let engine = Engine::new(ctx, &[&cpu], true)?;
-    Ok(WgpuNonbonded { cpu, engine: Mutex::new(engine), ctx: ctx.clone() })
+    Ok(WgpuNonbonded {
+        cpu,
+        engine: Mutex::new(engine),
+        ctx: ctx.clone(),
+    })
 }
 
 impl WgpuNonbonded {
@@ -80,7 +92,15 @@ impl WgpuNonbonded {
         assert!(pos.len() >= 3 * n, "position vector too short");
         let list = self.cpu.current_list(pos);
         let mut eng = self.lock();
-        eng.evaluate(&[SysRef { nb: &self.cpu, tmpl: 0, list, pos }], grad.is_some());
+        eng.evaluate(
+            &[SysRef {
+                nb: &self.cpu,
+                tmpl: 0,
+                list,
+                pos,
+            }],
+            grad.is_some(),
+        );
         if let Some(g) = grad {
             for (o, &v) in g[..3 * n].iter_mut().zip(&eng.r_grad[..3 * n]) {
                 *o += v as f64;

@@ -58,7 +58,9 @@ fn param_table() -> &'static HashMap<String, UffAtomParams> {
             let f: Vec<&str> = line.split('\t').collect();
             assert!(f.len() >= 12, "bad UFF parameter line: {line}");
             let p = |i: usize| -> f64 {
-                f[i].trim().parse().unwrap_or_else(|_| panic!("bad UFF parameter value {:?}", f[i]))
+                f[i].trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("bad UFF parameter value {:?}", f[i]))
             };
             out.insert(
                 f[0].to_string(),
@@ -143,7 +145,9 @@ fn add_atom_charge_flags(mol: &Molecule, i: usize, key: &mut String) {
 }
 
 fn atom_has_conjugated_bond(mol: &Molecule, i: usize) -> bool {
-    mol.atom_bonds(i).iter().any(|&(_, b)| mol.bond(b).is_conjugated)
+    mol.atom_bonds(i)
+        .iter()
+        .any(|&(_, b)| mol.bond(b).is_conjugated)
 }
 
 /// RDKit `UFF::Tools::getAtomLabel` for atom `i`.
@@ -189,14 +193,18 @@ pub fn uff_atom_label(mol: &Molecule, i: usize) -> String {
 
 /// RDKit `UFF::Tools::getAtomLabel` for every atom.
 pub fn uff_atom_labels(mol: &Molecule) -> Vec<String> {
-    (0..mol.num_atoms()).map(|i| uff_atom_label(mol, i)).collect()
+    (0..mol.num_atoms())
+        .map(|i| uff_atom_label(mol, i))
+        .collect()
 }
 
 /// RDKit `UFF::getAtomTypes`: per-atom parameters (`None` if the label has
 /// no parameters) and whether all atoms were parametrized.
 pub fn uff_atom_params(mol: &Molecule) -> (Vec<Option<UffAtomParams>>, bool) {
-    let params: Vec<Option<UffAtomParams>> =
-        uff_atom_labels(mol).iter().map(|l| uff_params_by_label(l)).collect();
+    let params: Vec<Option<UffAtomParams>> = uff_atom_labels(mol)
+        .iter()
+        .map(|l| uff_params_by_label(l))
+        .collect();
     let found_all = params.iter().all(Option::is_some);
     (params, found_all)
 }

@@ -94,7 +94,8 @@ fn linear_search(
             let rhs1 = new_val - old_val - lambda * slope;
             let rhs2 = val2 - old_val - lambda2 * slope;
             let a = (rhs1 / (lambda * lambda) - rhs2 / (lambda2 * lambda2)) / (lambda - lambda2);
-            let b = (-lambda2 * rhs1 / (lambda * lambda) + lambda * rhs2 / (lambda2 * lambda2)) / (lambda - lambda2);
+            let b = (-lambda2 * rhs1 / (lambda * lambda) + lambda * rhs2 / (lambda2 * lambda2))
+                / (lambda - lambda2);
             let mut t = if a == 0.0 {
                 -slope / (2.0 * b)
             } else {
@@ -115,7 +116,11 @@ fn linear_search(
         lambda2 = lambda;
         val2 = new_val;
         // NaN-safe: fall back to halving
-        lambda = if tmp_lambda.is_finite() { tmp_lambda.max(0.1 * lambda) } else { 0.5 * lambda };
+        lambda = if tmp_lambda.is_finite() {
+            tmp_lambda.max(0.1 * lambda)
+        } else {
+            0.5 * lambda
+        };
         it += 1;
     }
     new_pt.copy_from_slice(old_pt);
@@ -123,7 +128,13 @@ fn linear_search(
     (1, old_val)
 }
 
-fn grad_converged(grad: &[f64], pos: &[f64], func_val: f64, grad_scale: f64, grad_tol: f64) -> bool {
+fn grad_converged(
+    grad: &[f64],
+    pos: &[f64],
+    func_val: f64,
+    grad_scale: f64,
+    grad_tol: f64,
+) -> bool {
     let term = (func_val.abs() * grad_scale).max(1.0);
     let mut test: f64 = 0.0;
     for i in 0..grad.len() {
@@ -132,8 +143,22 @@ fn grad_converged(grad: &[f64], pos: &[f64], func_val: f64, grad_scale: f64, gra
     test / term < grad_tol
 }
 
-fn notify(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f64, grad: &[f64]) -> bool {
-    matches!(observer.on_iteration(&IterationInfo { iteration, pos, energy, grad }), ControlFlow::Break(()))
+fn notify(
+    observer: &mut dyn Observer,
+    iteration: usize,
+    pos: &[f64],
+    energy: f64,
+    grad: &[f64],
+) -> bool {
+    matches!(
+        observer.on_iteration(&IterationInfo {
+            iteration,
+            pos,
+            energy,
+            grad
+        }),
+        ControlFlow::Break(())
+    )
 }
 
 /// Endless mode ([`MinimizeOptions::is_endless`]): the line search could not
@@ -142,7 +167,14 @@ fn notify(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f6
 /// a restart too; then the point is stationary to machine precision, and a
 /// short sleep keeps the loop from spinning hot while it stays responsive
 /// to the observer (cancellation, publishing). Returns `true` to stop.
-fn endless_restart(observer: &mut dyn Observer, iteration: usize, pos: &[f64], energy: f64, grad: &[f64], stalled_before: bool) -> bool {
+fn endless_restart(
+    observer: &mut dyn Observer,
+    iteration: usize,
+    pos: &[f64],
+    energy: f64,
+    grad: &[f64],
+    stalled_before: bool,
+) -> bool {
     if stalled_before {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -159,7 +191,10 @@ struct PackedSym {
 
 impl PackedSym {
     fn identity(dim: usize) -> Self {
-        let mut h = PackedSym { dim, a: vec![0.0; dim * (dim + 1) / 2] };
+        let mut h = PackedSym {
+            dim,
+            a: vec![0.0; dim * (dim + 1) / 2],
+        };
         for i in 0..dim {
             let o = h.row_start(i);
             h.a[o] = 1.0;
@@ -264,12 +299,21 @@ mod avx {
         }
         #[inline(always)]
         fn fma(self, b: Self, c: Self) -> Self {
-            F4(unsafe { if FMA { _mm256_fmadd_pd(self.0, b.0, c.0) } else { _mm256_add_pd(_mm256_mul_pd(self.0, b.0), c.0) } })
+            F4(unsafe {
+                if FMA {
+                    _mm256_fmadd_pd(self.0, b.0, c.0)
+                } else {
+                    _mm256_add_pd(_mm256_mul_pd(self.0, b.0), c.0)
+                }
+            })
         }
         #[inline(always)]
         fn hsum(self) -> f64 {
             unsafe {
-                let s = _mm_add_pd(_mm256_castpd256_pd128(self.0), _mm256_extractf128_pd::<1>(self.0));
+                let s = _mm_add_pd(
+                    _mm256_castpd256_pd128(self.0),
+                    _mm256_extractf128_pd::<1>(self.0),
+                );
                 _mm_cvtsd_f64(_mm_add_sd(s, _mm_unpackhi_pd(s, s)))
             }
         }
@@ -285,9 +329,22 @@ mod avx {
 /// Mathematically identical to RDKit `BFGSOpt.h`; the summation order
 /// differs (lane-parallel partial sums, FMA where the CPU has it), so
 /// results agree to rounding, not bit for bit.
-fn fused_pass(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+fn fused_pass(
+    h: &mut PackedSym,
+    upd: Option<&Update<'_>>,
+    a: &[f64],
+    b: &[f64],
+    oa: &mut [f64],
+    ob: &mut [f64],
+) {
     let dim = h.dim;
-    assert!(a.len() == dim && b.len() == dim && oa.len() == dim && ob.len() == dim && h.a.len() == dim * (dim + 1) / 2);
+    assert!(
+        a.len() == dim
+            && b.len() == dim
+            && oa.len() == dim
+            && ob.len() == dim
+            && h.a.len() == dim * (dim + 1) / 2
+    );
     if let Some(u) = upd {
         assert!(u.xi.len() == dim && u.hd.len() == dim && u.w.len() == dim);
     }
@@ -296,11 +353,25 @@ fn fused_pass(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64],
     #[cfg(target_arch = "x86_64")]
     {
         #[target_feature(enable = "avx,fma")]
-        unsafe fn fma(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+        unsafe fn fma(
+            h: &mut PackedSym,
+            upd: Option<&Update<'_>>,
+            a: &[f64],
+            b: &[f64],
+            oa: &mut [f64],
+            ob: &mut [f64],
+        ) {
             fused_pass_lanes::<avx::F4<true>>(h, upd, a, b, oa, ob)
         }
         #[target_feature(enable = "avx")]
-        unsafe fn no_fma(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+        unsafe fn no_fma(
+            h: &mut PackedSym,
+            upd: Option<&Update<'_>>,
+            a: &[f64],
+            b: &[f64],
+            oa: &mut [f64],
+            ob: &mut [f64],
+        ) {
             fused_pass_lanes::<avx::F4<false>>(h, upd, a, b, oa, ob)
         }
         // SAFETY: the CPU supports the enabled features (checked here).
@@ -319,9 +390,21 @@ fn fused_pass(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64],
 /// terms `H[i][j]·a[i]` to `oa[j]`, `j > i` (likewise for `b`); pairing
 /// the rows halves the loads and stores of `oa` / `ob`.
 #[inline(always)]
-fn fused_pass_lanes<V: Fma4>(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64]) {
+fn fused_pass_lanes<V: Fma4>(
+    h: &mut PackedSym,
+    upd: Option<&Update<'_>>,
+    a: &[f64],
+    b: &[f64],
+    oa: &mut [f64],
+    ob: &mut [f64],
+) {
     let dim = h.dim;
-    let none = Update { xi: a, hd: a, w: a, fac: 0.0 };
+    let none = Update {
+        xi: a,
+        hd: a,
+        w: a,
+        fac: 0.0,
+    };
     let mut rest = &mut h.a[..];
     let mut i = 0;
     while i + 1 < dim {
@@ -349,7 +432,16 @@ fn fused_pass_lanes<V: Fma4>(h: &mut PackedSym, upd: Option<&Update<'_>>, a: &[f
 /// `r1` = `H[i+1][i+1..dim]`); the update is applied only if `UPD`.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn fused_rows<V: Fma4, const UPD: bool>(r0: &mut [f64], r1: &mut [f64], u: &Update<'_>, a: &[f64], b: &[f64], oa: &mut [f64], ob: &mut [f64], i: usize) {
+fn fused_rows<V: Fma4, const UPD: bool>(
+    r0: &mut [f64],
+    r1: &mut [f64],
+    u: &Update<'_>,
+    a: &[f64],
+    b: &[f64],
+    oa: &mut [f64],
+    ob: &mut [f64],
+    i: usize,
+) {
     let k = i + 1;
     // row factors of the update
     let (p0, q0) = (u.xi[i], u.fac * u.hd[i]);
@@ -361,7 +453,9 @@ fn fused_rows<V: Fma4, const UPD: bool>(r0: &mut [f64], r1: &mut [f64], u: &Upda
     };
     let (ai, bi, ak, bk) = (a[i], b[i], a[k], b[k]);
     // the 2×2 diagonal block
-    let ([h00, h01, r0 @ ..], [h11, r1 @ ..]) = (r0, r1) else { unreachable!("rows i, i+1 of a packed matrix") };
+    let ([h00, h01, r0 @ ..], [h11, r1 @ ..]) = (r0, r1) else {
+        unreachable!("rows i, i+1 of a packed matrix")
+    };
     elem(h00, (p0, q0), i);
     elem(h01, (p0, q0), k);
     elem(h11, (p1, q1), k);
@@ -379,9 +473,21 @@ fn fused_rows<V: Fma4, const UPD: bool>(r0: &mut [f64], r1: &mut [f64], u: &Upda
         let zero = V::splat(0.0);
         let (mut va0, mut vb0, mut va1, mut vb1) = (zero, zero, zero, zero);
         let rows = h0c.iter_mut().zip(h1c.iter_mut());
-        let outs = oa[j0..].as_chunks_mut::<4>().0.iter_mut().zip(ob[j0..].as_chunks_mut::<4>().0);
-        let ins = a[j0..].as_chunks::<4>().0.iter().zip(b[j0..].as_chunks::<4>().0);
-        let ucols = u.w[j0..].as_chunks::<4>().0.iter().zip(u.xi[j0..].as_chunks::<4>().0);
+        let outs = oa[j0..]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(ob[j0..].as_chunks_mut::<4>().0);
+        let ins = a[j0..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(b[j0..].as_chunks::<4>().0);
+        let ucols = u.w[j0..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(u.xi[j0..].as_chunks::<4>().0);
         for ((((h0, h1), (oac, obc)), (ac, bc)), (wc, xc)) in rows.zip(outs).zip(ins).zip(ucols) {
             let (mut e0, mut e1) = (V::ld(h0), V::ld(h1));
             if UPD {
@@ -429,7 +535,10 @@ struct BfgsWork {
 
 impl BfgsWork {
     fn new(dim: usize, n: usize) -> Self {
-        BfgsWork { dim, buf: vec![0.0; n * dim] }
+        BfgsWork {
+            dim,
+            buf: vec![0.0; n * dim],
+        }
     }
     fn split<const N: usize>(&mut self) -> [&mut [f64]; N] {
         assert_eq!(self.buf.len(), N * self.dim);
@@ -473,7 +582,17 @@ pub(crate) fn minimize_bfgs_impl(
     let dim = pos.len();
     let scaling = opts.rdkit_grad_scaling;
     let mut work = BfgsWork::new(dim, 9);
-    let [grad, mut dgrad, mut hess_dgrad, mut xi, new_pos, hess_grad, mut up_xi, mut up_hd, mut up_w] = work.split::<9>();
+    let [
+        grad,
+        mut dgrad,
+        mut hess_dgrad,
+        mut xi,
+        new_pos,
+        hess_grad,
+        mut up_xi,
+        mut up_hd,
+        mut up_w,
+    ] = work.split::<9>();
     let mut inv_hessian = PackedSym::identity(dim);
     // `fac` of the update pending in `up_*`
     let mut pending: Option<f64> = None;
@@ -501,13 +620,23 @@ pub(crate) fn minimize_bfgs_impl(
                     *x = -g;
                 }
                 if endless_restart(observer, iter, pos, fp, grad, stalled) {
-                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                    return MinimizeResult {
+                        status: MinimizeStatus::Cancelled,
+                        energy: fp,
+                        iterations: iter,
+                        grad_rms: 0.0,
+                    };
                 }
                 stalled = true;
                 continue;
             }
             // bad direction: reset to steepest descent once, otherwise stop
-            return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Converged,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         fp = func_val;
         let mut test: f64 = 0.0;
@@ -531,13 +660,23 @@ pub(crate) fn minimize_bfgs_impl(
                     *x = -g;
                 }
                 if endless_restart(observer, iter, pos, fp, grad, stalled) {
-                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                    return MinimizeResult {
+                        status: MinimizeStatus::Cancelled,
+                        energy: fp,
+                        iterations: iter,
+                        grad_rms: 0.0,
+                    };
                 }
                 stalled = true;
                 continue;
             }
             notify(observer, iter, pos, fp, grad);
-            return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Converged,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         stalled = false;
         let grad_scale = calc_grad(ff, pos, grad, scaling);
@@ -546,14 +685,36 @@ pub(crate) fn minimize_bfgs_impl(
             *d = g - *d;
         }
         if notify(observer, iter, pos, fp, grad) {
-            return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Cancelled,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         if converged {
-            return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Converged,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         // apply the previous update; `H·dgrad` and `H·grad` in the same sweep
-        let upd = pending.map(|fac| Update { xi: up_xi, hd: up_hd, w: up_w, fac });
-        fused_pass(&mut inv_hessian, upd.as_ref(), dgrad, grad, hess_dgrad, hess_grad);
+        let upd = pending.map(|fac| Update {
+            xi: up_xi,
+            hd: up_hd,
+            w: up_w,
+            fac,
+        });
+        fused_pass(
+            &mut inv_hessian,
+            upd.as_ref(),
+            dgrad,
+            grad,
+            hess_dgrad,
+            hess_grad,
+        );
         let (mut fac, mut fae, mut sum_dgrad, mut sum_xi) = (0.0, 0.0, 0.0, 0.0);
         for i in 0..dim {
             fac += dgrad[i] * xi[i];
@@ -589,7 +750,12 @@ pub(crate) fn minimize_bfgs_impl(
         }
         xi.copy_from_slice(new_pos);
     }
-    MinimizeResult { status: MinimizeStatus::MaxIterations, energy: func_val, iterations: opts.max_iters, grad_rms: 0.0 }
+    MinimizeResult {
+        status: MinimizeStatus::MaxIterations,
+        energy: func_val,
+        iterations: opts.max_iters,
+        grad_rms: 0.0,
+    }
 }
 
 /// Ring buffer of the last `m` L-BFGS correction pairs, preallocated.
@@ -606,7 +772,15 @@ struct LbfgsHistory {
 
 impl LbfgsHistory {
     fn new(dim: usize, m: usize) -> Self {
-        LbfgsHistory { dim, m, s: vec![0.0; m * dim], y: vec![0.0; m * dim], rho: vec![0.0; m], head: 0, len: 0 }
+        LbfgsHistory {
+            dim,
+            m,
+            s: vec![0.0; m * dim],
+            y: vec![0.0; m * dim],
+            rho: vec![0.0; m],
+            head: 0,
+            len: 0,
+        }
     }
     fn clear(&mut self) {
         self.head = 0;
@@ -689,13 +863,23 @@ pub(crate) fn minimize_lbfgs_impl(
                     *x = -g;
                 }
                 if endless_restart(observer, iter, pos, fp, grad, stalled) {
-                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                    return MinimizeResult {
+                        status: MinimizeStatus::Cancelled,
+                        energy: fp,
+                        iterations: iter,
+                        grad_rms: 0.0,
+                    };
                 }
                 stalled = true;
                 continue;
             }
             if hist.len == 0 {
-                return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+                return MinimizeResult {
+                    status: MinimizeStatus::Converged,
+                    energy: fp,
+                    iterations: iter,
+                    grad_rms: 0.0,
+                };
             }
             // reset memory, retry steepest descent next iteration
             hist.clear();
@@ -721,23 +905,43 @@ pub(crate) fn minimize_lbfgs_impl(
                     *x = -g;
                 }
                 if endless_restart(observer, iter, pos, fp, grad, stalled) {
-                    return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+                    return MinimizeResult {
+                        status: MinimizeStatus::Cancelled,
+                        energy: fp,
+                        iterations: iter,
+                        grad_rms: 0.0,
+                    };
                 }
                 stalled = true;
                 continue;
             }
             notify(observer, iter, pos, fp, grad);
-            return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Converged,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         stalled = false;
         y.copy_from_slice(grad); // old gradient
         let grad_scale = calc_grad(ff, pos, grad, scaling);
         let converged = !endless && grad_converged(grad, pos, fp, grad_scale, opts.force_tol);
         if notify(observer, iter, pos, fp, grad) {
-            return MinimizeResult { status: MinimizeStatus::Cancelled, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Cancelled,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         if converged {
-            return MinimizeResult { status: MinimizeStatus::Converged, energy: fp, iterations: iter, grad_rms: 0.0 };
+            return MinimizeResult {
+                status: MinimizeStatus::Converged,
+                energy: fp,
+                iterations: iter,
+                grad_rms: 0.0,
+            };
         }
         for (yi, g) in y.iter_mut().zip(grad.iter()) {
             *yi = g - *yi;
@@ -777,7 +981,12 @@ pub(crate) fn minimize_lbfgs_impl(
             *x = -v;
         }
     }
-    MinimizeResult { status: MinimizeStatus::MaxIterations, energy: fp, iterations: opts.max_iters, grad_rms: 0.0 }
+    MinimizeResult {
+        status: MinimizeStatus::MaxIterations,
+        energy: fp,
+        iterations: opts.max_iters,
+        grad_rms: 0.0,
+    }
 }
 
 #[cfg(test)]
@@ -803,10 +1012,17 @@ mod tests {
             let mut ff = ContribForceField::new(1, 3);
             ff.add_contrib(Box::new(Rosen));
             let mut p = vec![-1.2, 1.0, 0.5];
-            let opts = MinimizeOptions { max_iters: 2000, force_tol: 1e-8, algorithm: alg, ..Default::default() };
+            let opts = MinimizeOptions {
+                max_iters: 2000,
+                force_tol: 1e-8,
+                algorithm: alg,
+                ..Default::default()
+            };
             let r = minimize(&ff, &mut p, &opts, &mut NoObserver);
-            assert!((p[0] - 1.0).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-3, "{alg:?} {p:?} {r:?}");
+            assert!(
+                (p[0] - 1.0).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-3,
+                "{alg:?} {p:?} {r:?}"
+            );
         }
     }
 }
-

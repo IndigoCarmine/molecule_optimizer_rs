@@ -134,28 +134,52 @@ impl EmbedParams {
     }
     /// RDKit `srETKDGv3`.
     pub fn sr_etkdg_v3() -> Self {
-        EmbedParams { use_small_ring_torsions: true, use_macrocycle_torsions: false, use_macrocycle14config: false, ..Self::etkdg_v3() }
+        EmbedParams {
+            use_small_ring_torsions: true,
+            use_macrocycle_torsions: false,
+            use_macrocycle14config: false,
+            ..Self::etkdg_v3()
+        }
     }
     /// RDKit `ETKDGv2`.
     pub fn etkdg_v2() -> Self {
-        EmbedParams { use_macrocycle_torsions: false, use_macrocycle14config: false, ..Self::etkdg_v3() }
+        EmbedParams {
+            use_macrocycle_torsions: false,
+            use_macrocycle14config: false,
+            ..Self::etkdg_v3()
+        }
     }
     /// RDKit `ETKDG` (version 1 torsions).
     pub fn etkdg() -> Self {
-        EmbedParams { et_version: 1, ..Self::etkdg_v2() }
+        EmbedParams {
+            et_version: 1,
+            ..Self::etkdg_v2()
+        }
     }
     /// RDKit `KDG`.
     pub fn kdg() -> Self {
-        EmbedParams { use_exp_torsion_angle_prefs: false, use_basic_knowledge: true, et_version: 1, ..Self::dg() }
+        EmbedParams {
+            use_exp_torsion_angle_prefs: false,
+            use_basic_knowledge: true,
+            et_version: 1,
+            ..Self::dg()
+        }
     }
     /// RDKit `ETDG`.
     pub fn etdg() -> Self {
-        EmbedParams { use_exp_torsion_angle_prefs: true, use_basic_knowledge: false, et_version: 1, ..Self::dg() }
+        EmbedParams {
+            use_exp_torsion_angle_prefs: true,
+            use_basic_knowledge: false,
+            et_version: 1,
+            ..Self::dg()
+        }
     }
 
     fn validate(&self) -> Result<()> {
         if !(self.et_version == 1 || self.et_version == 2) {
-            return Err(Error::InvalidArgument("only ETversion 1 and 2 are supported".into()));
+            return Err(Error::InvalidArgument(
+                "only ETversion 1 and 2 are supported".into(),
+            ));
         }
         Ok(())
     }
@@ -196,19 +220,37 @@ impl Embedding {
         for (atoms, fm) in embedder::split_fragments(&m, params.embed_fragments_separately) {
             fragments.push(embedder::setup_fragment(atoms, fm, params)?);
         }
-        Ok(Embedding { params: params.clone(), num_atoms: mol.num_atoms(), fragments, mol: m })
+        Ok(Embedding {
+            params: params.clone(),
+            num_atoms: mol.num_atoms(),
+            fragments,
+            mol: m,
+        })
     }
 
     /// Embeds conformer number `conf_idx` exactly as RDKit's
     /// `EmbedMultipleConfs` would (seed derived from `random_seed` and
     /// `conf_idx`). Returns `None` if embedding failed.
-    pub fn embed_conformer(&self, conf_idx: usize, observer: &mut dyn Observer) -> Result<Option<Vec<[f64; 3]>>> {
-        let seed = conformer_seed(self.params.random_seed, conf_idx, self.params.enable_sequential_random_seeds);
+    pub fn embed_conformer(
+        &self,
+        conf_idx: usize,
+        observer: &mut dyn Observer,
+    ) -> Result<Option<Vec<[f64; 3]>>> {
+        let seed = conformer_seed(
+            self.params.random_seed,
+            conf_idx,
+            self.params.enable_sequential_random_seeds,
+        );
         self.embed_with_seed(seed, StopAfter::default(), observer)
     }
 
     /// Embeds with an explicit per-conformer seed.
-    pub fn embed_with_seed(&self, seed: i32, stop: StopAfter, observer: &mut dyn Observer) -> Result<Option<Vec<[f64; 3]>>> {
+    pub fn embed_with_seed(
+        &self,
+        seed: i32,
+        stop: StopAfter,
+        observer: &mut dyn Observer,
+    ) -> Result<Option<Vec<[f64; 3]>>> {
         let mut out = vec![[0.0; 3]; self.num_atoms];
         for f in &self.fragments {
             match embedder::embed_points(f, &self.params, seed, stop, observer)? {
@@ -232,14 +274,23 @@ impl Embedding {
 /// Embeds a single conformer (RDKit `EmbedMolecule`). The observer sees
 /// every minimizer iteration (positions may be 4D in the first stages) and
 /// can cancel.
-pub fn embed_molecule(mol: &Molecule, params: &EmbedParams, observer: &mut dyn Observer) -> Result<Vec<[f64; 3]>> {
+pub fn embed_molecule(
+    mol: &Molecule,
+    params: &EmbedParams,
+    observer: &mut dyn Observer,
+) -> Result<Vec<[f64; 3]>> {
     let e = Embedding::new(mol, params)?;
-    e.embed_conformer(0, observer)?.ok_or_else(|| Error::Embedding("embedding failed".into()))
+    e.embed_conformer(0, observer)?
+        .ok_or_else(|| Error::Embedding("embedding failed".into()))
 }
 
 /// Embeds `n` conformers (RDKit `EmbedMultipleConfs` semantics: per-
 /// conformer seeds, failed conformers dropped, then greedy RMS pruning).
-pub fn embed_multiple(mol: &Molecule, n: usize, params: &EmbedParams) -> Result<Vec<Vec<[f64; 3]>>> {
+pub fn embed_multiple(
+    mol: &Molecule,
+    n: usize,
+    params: &EmbedParams,
+) -> Result<Vec<Vec<[f64; 3]>>> {
     let e = Embedding::new(mol, params)?;
     let mut confs = Vec::new();
     for ci in 0..n {

@@ -23,11 +23,25 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/etkdg");
 
 fn molecules() -> BTreeMap<String, Molecule> {
     let text = std::fs::read_to_string(format!("{DIR}/molecules.sdf")).unwrap();
-    io::molfile::read_sdf(&text).unwrap().into_iter().map(|m| (m.name.clone(), m)).collect()
+    io::molfile::read_sdf(&text)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.name.clone(), m))
+        .collect()
 }
 
 fn coords(v: &Value) -> Vec<[f64; 3]> {
-    v.as_array().unwrap().iter().map(|p| [p[0].as_f64().unwrap(), p[1].as_f64().unwrap(), p[2].as_f64().unwrap()]).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            [
+                p[0].as_f64().unwrap(),
+                p[1].as_f64().unwrap(),
+                p[2].as_f64().unwrap(),
+            ]
+        })
+        .collect()
 }
 
 fn heavy(mol: &Molecule, c: &[[f64; 3]]) -> Vec<[f64; 3]> {
@@ -41,13 +55,18 @@ fn params(seed: i32) -> EmbedParams {
 }
 
 fn builders() -> Vec<(&'static str, Box<dyn ForceFieldBuilder>)> {
-    vec![("mmff", Box::new(MmffBuilder::default())), ("uff", Box::new(UffBuilder::default()))]
+    vec![
+        ("mmff", Box::new(MmffBuilder::default())),
+        ("uff", Box::new(UffBuilder::default())),
+    ]
 }
 
 #[test]
 fn global_minimum_conformer_matches_rdkit_quick() {
     let mols = molecules();
-    let data: Value = serde_json::from_str(&std::fs::read_to_string(format!("{DIR}/confsearch.json")).unwrap()).unwrap();
+    let data: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{DIR}/confsearch.json")).unwrap())
+            .unwrap();
     let mut ok = 0;
     let mut total = 0;
     let mut report = Vec::new();
@@ -61,7 +80,10 @@ fn global_minimum_conformer_matches_rdkit_quick() {
             total += 1;
             let r = &rec[ffname];
             let ci = r["min_conf_index"].as_u64().unwrap() as usize;
-            let start = e.embed_conformer(ci, &mut NoObserver).unwrap().expect("embedding");
+            let start = e
+                .embed_conformer(ci, &mut NoObserver)
+                .unwrap()
+                .expect("embedding");
             let rdkit_start = coords(&r["min_embedded_coords"]);
             let emb_rmsd = kabsch_rmsd(&rdkit_start, &start);
             // (dE, heavy-atom RMSD) of the optimum reached from `start` vs RDKit's
@@ -70,7 +92,10 @@ fn global_minimum_conformer_matches_rdkit_quick() {
                 m.coords = start.to_vec();
                 let ff = builder.build(&m, &[]).unwrap();
                 let mut pos: Vec<f64> = start.iter().flatten().copied().collect();
-                let opts = MinimizeOptions { max_iters: 2000, ..Default::default() };
+                let opts = MinimizeOptions {
+                    max_iters: 2000,
+                    ..Default::default()
+                };
                 optim::minimize(&ff, &mut pos, &opts, &mut NoObserver);
                 let energy = ff.energy(&pos);
                 let opt: Vec<[f64; 3]> = pos.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
@@ -78,7 +103,9 @@ fn global_minimum_conformer_matches_rdkit_quick() {
                 ((energy - r["min_energy"].as_f64().unwrap()).abs(), rmsd)
             };
             let (de, rmsd) = optimize(&start);
-            let mut line = format!("{name:22} {ffname}: conf {ci:3} embed rmsd {emb_rmsd:.1e}, dE {de:.1e} kcal/mol, heavy rmsd {rmsd:.1e}");
+            let mut line = format!(
+                "{name:22} {ffname}: conf {ci:3} embed rmsd {emb_rmsd:.1e}, dE {de:.1e} kcal/mol, heavy rmsd {rmsd:.1e}"
+            );
             let mut matched = de < 1e-3 && rmsd < 0.05;
             if !matched && emb_rmsd > 0.1 {
                 // The re-embedding ended in a different structure: the ETKDG
@@ -91,7 +118,9 @@ fn global_minimum_conformer_matches_rdkit_quick() {
                 // embedded coordinates instead (same optimum required).
                 let (de2, rmsd2) = optimize(&rdkit_start);
                 matched = de2 < 1e-3 && rmsd2 < 0.05;
-                line += &format!(" -> from RDKit's embedding: dE {de2:.1e} kcal/mol, heavy rmsd {rmsd2:.1e}");
+                line += &format!(
+                    " -> from RDKit's embedding: dE {de2:.1e} kcal/mol, heavy rmsd {rmsd2:.1e}"
+                );
             }
             if matched {
                 ok += 1;
@@ -113,7 +142,9 @@ fn full_conformer_search_matches_rdkit() {
         return;
     }
     let mols = molecules();
-    let data: Value = serde_json::from_str(&std::fs::read_to_string(format!("{DIR}/confsearch.json")).unwrap()).unwrap();
+    let data: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{DIR}/confsearch.json")).unwrap())
+            .unwrap();
     let mut bad = Vec::new();
     for (name, rec) in data.as_object().unwrap() {
         let mol = &mols[name];
@@ -125,7 +156,10 @@ fn full_conformer_search_matches_rdkit() {
             let res = conformer_search(mol, builder.as_ref(), &opts).unwrap();
             let best = res.global_minimum().unwrap();
             let de = (best.energy - r["min_energy"].as_f64().unwrap()).abs();
-            let rmsd = kabsch_rmsd(&heavy(mol, &coords(&r["min_coords"])), &heavy(mol, &best.coords));
+            let rmsd = kabsch_rmsd(
+                &heavy(mol, &coords(&r["min_coords"])),
+                &heavy(mol, &best.coords),
+            );
             println!(
                 "{name:22} {ffname}: {n} confs in {:.2}s, E {:.6} (RDKit {:.6}), heavy rmsd {rmsd:.1e}",
                 t0.elapsed().as_secs_f64(),
@@ -145,14 +179,32 @@ fn full_conformer_search_matches_rdkit() {
                 //   quick test, which checks that conformer from RDKit's own
                 //   embedding): the minimum must match RDKit's minimum over
                 //   the other conformers.
-                let e_rd: Vec<f64> = r["energies"].as_array().unwrap().iter().map(|e| e.as_f64().unwrap()).collect();
+                let e_rd: Vec<f64> = r["energies"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| e.as_f64().unwrap())
+                    .collect();
                 let e_min = r["min_energy"].as_f64().unwrap();
                 let ci = r["min_conf_index"].as_u64().unwrap() as usize;
                 let tie = e_rd.iter().filter(|&&e| e - e_min < 1e-5).count() > 1;
-                let diverged = res.all.iter().find(|c| c.id == ci).is_none_or(|c| (c.energy - e_rd[ci]).abs() >= 1e-3);
-                let e_others = e_rd.iter().enumerate().filter(|&(i, _)| i != ci).map(|(_, &e)| e).fold(f64::INFINITY, f64::min);
+                let diverged = res
+                    .all
+                    .iter()
+                    .find(|c| c.id == ci)
+                    .is_none_or(|c| (c.energy - e_rd[ci]).abs() >= 1e-3);
+                let e_others = e_rd
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| i != ci)
+                    .map(|(_, &e)| e)
+                    .fold(f64::INFINITY, f64::min);
                 let ok = (tie && de < 1e-3) || (diverged && (best.energy - e_others).abs() < 1e-3);
-                println!("{:47}-> {} (tie {tie}, conformer {ci} diverged {diverged})", "", if ok { "accepted" } else { "mismatch" });
+                println!(
+                    "{:47}-> {} (tie {tie}, conformer {ci} diverged {diverged})",
+                    "",
+                    if ok { "accepted" } else { "mismatch" }
+                );
                 if !ok {
                     bad.push(format!("{name}/{ffname}"));
                 }

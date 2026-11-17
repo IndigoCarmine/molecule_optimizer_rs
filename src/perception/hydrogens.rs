@@ -17,7 +17,11 @@ fn xh_length(anum: u8) -> f64 {
 }
 
 fn any_perp(u: V3) -> V3 {
-    let t = if u[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+    let t = if u[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
     normalize(cross(u, t))
 }
 
@@ -29,7 +33,10 @@ fn rotate(v: V3, axis: V3, theta: f64) -> V3 {
 fn new_directions(mol: &Molecule, i: usize, nh: usize) -> Vec<V3> {
     let c = mol.pos(i);
     let nbrs: Vec<usize> = mol.neighbors(i).collect();
-    let us: Vec<V3> = nbrs.iter().map(|&n| normalize(sub(mol.pos(n), c))).collect();
+    let us: Vec<V3> = nbrs
+        .iter()
+        .map(|&n| normalize(sub(mol.pos(n), c)))
+        .collect();
     let total = nbrs.len() + nh;
     let hyb = match mol.atom(i).hybridization {
         Hybridization::SP => 2,
@@ -42,7 +49,12 @@ fn new_directions(mol: &Molecule, i: usize, nh: usize) -> Vec<V3> {
     let mut out = Vec::new();
     match (hyb, us.len()) {
         (_, 0) => {
-            let base = [[1.0, 0.0, 0.0], [-0.333, 0.943, 0.0], [-0.333, -0.471, 0.816], [-0.333, -0.471, -0.816]];
+            let base = [
+                [1.0, 0.0, 0.0],
+                [-0.333, 0.943, 0.0],
+                [-0.333, -0.471, 0.816],
+                [-0.333, -0.471, -0.816],
+            ];
             let tri = [[1.0, 0.0, 0.0], [-0.5, 0.866, 0.0], [-0.5, -0.866, 0.0]];
             for k in 0..nh {
                 out.push(match hyb {
@@ -80,7 +92,11 @@ fn new_directions(mol: &Molecule, i: usize, nh: usize) -> Vec<V3> {
             let perp = any_perp(us[0]);
             let first = normalize(add(scale(us[0], tet.cos()), scale(perp, tet.sin())));
             for k in 0..3 {
-                out.push(rotate(first, us[0], 2.0 * std::f64::consts::PI / 3.0 * k as f64));
+                out.push(rotate(
+                    first,
+                    us[0],
+                    2.0 * std::f64::consts::PI / 3.0 * k as f64,
+                ));
             }
         }
         (_, 2) => {
@@ -92,11 +108,18 @@ fn new_directions(mol: &Molecule, i: usize, nh: usize) -> Vec<V3> {
             let nrm = normalize(nrm);
             let half = tet / 2.0;
             out.push(normalize(add(scale(b, half.cos()), scale(nrm, half.sin()))));
-            out.push(normalize(add(scale(b, half.cos()), scale(nrm, -half.sin()))));
+            out.push(normalize(add(
+                scale(b, half.cos()),
+                scale(nrm, -half.sin()),
+            )));
         }
         _ => {
             let s = us.iter().fold([0.0; 3], |a, &u| add(a, u));
-            let d = if norm(s) < 1e-6 { any_perp(us[0]) } else { normalize(scale(s, -1.0)) };
+            let d = if norm(s) < 1e-6 {
+                any_perp(us[0])
+            } else {
+                normalize(scale(s, -1.0))
+            };
             out.push(d);
         }
     }

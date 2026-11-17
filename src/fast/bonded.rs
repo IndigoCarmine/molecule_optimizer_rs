@@ -310,7 +310,11 @@ pub(crate) fn dot3<L: Lane>(a: P<L>, b: P<L>) -> L {
 }
 #[inline(always)]
 fn cross3<L: Lane>(a: P<L>, b: P<L>) -> P<L> {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 #[inline(always)]
 fn divs<L: Lane>(a: P<L>, s: L) -> P<L> {
@@ -341,7 +345,12 @@ fn zero<L: Lane>() -> L {
 /// Adds per-term atom gradients (`g[a]` belongs to atom `idx[a][t + lane]`)
 /// lane by lane, i.e. in term order.
 #[inline(always)]
-pub(crate) fn scatter<L: Lane, const A: usize>(grad: &mut [f64], idx: [&[u32]; A], t: usize, g: [P<L>; A]) {
+pub(crate) fn scatter<L: Lane, const A: usize>(
+    grad: &mut [f64],
+    idx: [&[u32]; A],
+    t: usize,
+    g: [P<L>; A],
+) {
     let mut v = [[[0.0f64; 4]; 3]; A];
     for a in 0..A {
         for d in 0..3 {
@@ -377,7 +386,13 @@ pub trait Table: Send + Sync {
 /// their energies to `acc` one term after the other (the same summation
 /// order as evaluating the terms one by one).
 #[inline(always)]
-pub fn run<T: Table, L: Lane, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
+pub fn run<T: Table, L: Lane, const G: bool>(
+    tab: &T,
+    pos: &[f64],
+    grad: &mut [f64],
+    r: Range<usize>,
+    acc: &mut f64,
+) {
     let mut t = r.start;
     let mut lanes = [0.0f64; 4];
     while t + L::N <= r.end {
@@ -396,11 +411,23 @@ pub fn run<T: Table, L: Lane, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f
 /// [`run`] with the widest SIMD lanes available: 256-bit AVX ([`super::avx::A4`])
 /// when the CPU has it, [`V4`] otherwise (same results either way).
 #[inline]
-pub fn run_simd<T: Table, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
+pub fn run_simd<T: Table, const G: bool>(
+    tab: &T,
+    pos: &[f64],
+    grad: &mut [f64],
+    r: Range<usize>,
+    acc: &mut f64,
+) {
     #[cfg(target_arch = "x86_64")]
     if super::avx::available() {
         #[target_feature(enable = "avx")]
-        unsafe fn avx<T: Table, const G: bool>(tab: &T, pos: &[f64], grad: &mut [f64], r: Range<usize>, acc: &mut f64) {
+        unsafe fn avx<T: Table, const G: bool>(
+            tab: &T,
+            pos: &[f64],
+            grad: &mut [f64],
+            r: Range<usize>,
+            acc: &mut f64,
+        ) {
             run::<T, super::avx::A4, G>(tab, pos, grad, r, acc)
         }
         // SAFETY: the CPU supports AVX (checked above).
@@ -477,7 +504,8 @@ impl Table for MmffBonds {
         let e = kb * (0.5 * C1) * dt2 * (one::<L>() + dt * CS + dt2 * (C3 * CS * CS));
         if G {
             // C1 * kb * dt * (1.0 + 1.5 * CS * dt + 2.0 * C3 * CS * CS * dt * dt)
-            let de_dr = kb * C1 * dt * (one::<L>() + dt * (1.5 * CS) + dt * (2.0 * C3 * CS * CS) * dt);
+            let de_dr =
+                kb * C1 * dt * (one::<L>() + dt * (1.5 * CS) + dt * (2.0 * C3 * CS * CS) * dt);
             let pos_d = dist.gt(0.0);
             let fb = kb * 0.01;
             let g: P<L> = [
@@ -497,8 +525,16 @@ impl Table for MmffBonds {
 fn angle_grad<L: Lane>(r: [P<L>; 2], dist: [L; 2], de: L, cos: L, sin: L) -> [P<L>; 3] {
     let i0 = one::<L>() / dist[0];
     let i1 = one::<L>() / dist[1];
-    let dc0 = [i0 * (r[1][0] - cos * r[0][0]), i0 * (r[1][1] - cos * r[0][1]), i0 * (r[1][2] - cos * r[0][2])];
-    let dc1 = [i1 * (r[0][0] - cos * r[1][0]), i1 * (r[0][1] - cos * r[1][1]), i1 * (r[0][2] - cos * r[1][2])];
+    let dc0 = [
+        i0 * (r[1][0] - cos * r[0][0]),
+        i0 * (r[1][1] - cos * r[0][1]),
+        i0 * (r[1][2] - cos * r[0][2]),
+    ];
+    let dc1 = [
+        i1 * (r[0][0] - cos * r[1][0]),
+        i1 * (r[0][1] - cos * r[1][1]),
+        i1 * (r[0][2] - cos * r[1][2]),
+    ];
     let ms = -sin;
     let g0 = [de * dc0[0] / ms, de * dc0[1] / ms, de * dc0[2] / ms];
     let g1 = [
@@ -546,7 +582,13 @@ impl Table for UffAngles {
         let c2 = lp::<L>(&self.c2, t);
         let th0 = lp::<L>(&self.theta0, t);
         let ord = lp::<L>(&self.ord, t);
-        let (o0, o1, o2, o3, o4) = (ord.eq(0.0), ord.eq(1.0), ord.eq(2.0), ord.eq(3.0), ord.eq(4.0));
+        let (o0, o1, o2, o3, o4) = (
+            ord.eq(0.0),
+            ord.eq(1.0),
+            ord.eq(2.0),
+            ord.eq(3.0),
+            ord.eq(4.0),
+        );
         let corr_ok = !o0 & ord.lt(5.0);
         let d0 = sub3(p1, p2);
         let d1 = sub3(p3, p2);
@@ -559,7 +601,11 @@ impl Table for UffAngles {
         let e0 = c0 + c1 * cos + c2 * cos2;
         let r3 = cos * (cos * cos - s * 3.0);
         let r4 = (cos * cos) * (cos * cos) - cos * 6.0 * cos * s + s * s;
-        let rk = L::select(o1, -cos, L::select(o2, cos2, L::select(o3, r3, L::select(o4, r4, zero()))));
+        let rk = L::select(
+            o1,
+            -cos,
+            L::select(o2, cos2, L::select(o3, r3, L::select(o4, r4, zero()))),
+        );
         let ek = (one::<L>() - rk) / lp::<L>(&self.ord_sq, t);
         let mut e = fc * L::select(o0, e0, ek);
         let me = corr_ok & cos.gt(UFF_ANGLE_CORRECTION_THRESHOLD);
@@ -577,7 +623,11 @@ impl Table for UffAngles {
             let de0 = -fc * (c1 * sin + c2 * 2.0 * sin2);
             let dk3 = sin * (L::splat(3.0) - sin * 4.0 * sin);
             let dk4 = cos * sin * (L::splat(4.0) - sin * 8.0 * sin);
-            let dk = L::select(o1, -sin, L::select(o2, sin2, L::select(o3, dk3, L::select(o4, dk4, zero()))));
+            let dk = L::select(
+                o1,
+                -sin,
+                L::select(o2, sin2, L::select(o3, dk3, L::select(o4, dk4, zero()))),
+            );
             let mut de = L::select(o0, de0, dk * lp::<L>(&self.fc_ord, t));
             let mg = corr_ok & cos.gt(UFF_ANGLE_CORRECTION_THRESHOLD);
             if L::any(mg) {
@@ -805,7 +855,13 @@ fn dihedral<L: Lane>(p1: P<L>, p2: P<L>, p3: P<L>, p4: P<L>) -> Dihedral<L> {
     let t0 = divs(t0r, d0);
     let t1 = divs(t1r, d1);
     let cos_phi = clamp1(dot3(t0, t1));
-    Dihedral { r: [r0, r1, r2, r3], t: [t0, t1], d: [d0, d1], cos_phi, cos_energy }
+    Dihedral {
+        r: [r0, r1, r2, r3],
+        t: [t0, t1],
+        d: [d0, d1],
+        cos_phi,
+        cos_energy,
+    }
 }
 
 /// RDKit `calcTorsionGrad` (UFF and MMFF share it).
@@ -830,14 +886,32 @@ fn torsion_grad<L: Lane>(dh: &Dihedral<L>, sin_term: L) -> [P<L>; 4] {
         s * (dc[1] * r[1][x] - dc[0] * r[1][y]),
     ];
     let g1 = [
-        s * (dc[1] * (r[1][z] - r[0][z]) + dc[2] * (r[0][y] - r[1][y]) + dc[4] * (-r[3][z]) + dc[5] * (r[3][y])),
-        s * (dc[0] * (r[0][z] - r[1][z]) + dc[2] * (r[1][x] - r[0][x]) + dc[3] * (r[3][z]) + dc[5] * (-r[3][x])),
-        s * (dc[0] * (r[1][y] - r[0][y]) + dc[1] * (r[0][x] - r[1][x]) + dc[3] * (-r[3][y]) + dc[4] * (r[3][x])),
+        s * (dc[1] * (r[1][z] - r[0][z])
+            + dc[2] * (r[0][y] - r[1][y])
+            + dc[4] * (-r[3][z])
+            + dc[5] * (r[3][y])),
+        s * (dc[0] * (r[0][z] - r[1][z])
+            + dc[2] * (r[1][x] - r[0][x])
+            + dc[3] * (r[3][z])
+            + dc[5] * (-r[3][x])),
+        s * (dc[0] * (r[1][y] - r[0][y])
+            + dc[1] * (r[0][x] - r[1][x])
+            + dc[3] * (-r[3][y])
+            + dc[4] * (r[3][x])),
     ];
     let g2 = [
-        s * (dc[1] * (r[0][z]) + dc[2] * (-r[0][y]) + dc[4] * (r[3][z] - r[2][z]) + dc[5] * (r[2][y] - r[3][y])),
-        s * (dc[0] * (-r[0][z]) + dc[2] * (r[0][x]) + dc[3] * (r[2][z] - r[3][z]) + dc[5] * (r[3][x] - r[2][x])),
-        s * (dc[0] * (r[0][y]) + dc[1] * (-r[0][x]) + dc[3] * (r[3][y] - r[2][y]) + dc[4] * (r[2][x] - r[3][x])),
+        s * (dc[1] * (r[0][z])
+            + dc[2] * (-r[0][y])
+            + dc[4] * (r[3][z] - r[2][z])
+            + dc[5] * (r[2][y] - r[3][y])),
+        s * (dc[0] * (-r[0][z])
+            + dc[2] * (r[0][x])
+            + dc[3] * (r[2][z] - r[3][z])
+            + dc[5] * (r[3][x] - r[2][x])),
+        s * (dc[0] * (r[0][y])
+            + dc[1] * (-r[0][x])
+            + dc[3] * (r[3][y] - r[2][y])
+            + dc[4] * (r[2][x] - r[3][x])),
     ];
     let g3 = [
         s * (dc[4] * r[2][z] - dc[5] * r[2][y]),
@@ -987,7 +1061,8 @@ impl Table for UffInversions {
         let ne = divs(cross3(r_ji, r_jk), d_ji * d_jk);
         let l2n = dot3(ne, ne);
         let cy = dot3(ne, r_jl) / (d_jl * l2n.sqrt());
-        let degenerate = l2_ji.lt(ZERO_TOL) | l2_jk.lt(ZERO_TOL) | l2_jl.lt(ZERO_TOL) | l2n.lt(ZERO_TOL);
+        let degenerate =
+            l2_ji.lt(ZERO_TOL) | l2_jk.lt(ZERO_TOL) | l2_jl.lt(ZERO_TOL) | l2n.lt(ZERO_TOL);
         let cy = L::select(degenerate, zero(), cy);
         let sysq = one::<L>() - cy * cy;
         let sy = L::select(sysq.gt(0.0), sysq.sqrt(), zero());
@@ -1075,7 +1150,11 @@ impl TableKind {
     pub fn grouped(self) -> bool {
         matches!(
             self,
-            TableKind::MmffBond | TableKind::MmffAngle | TableKind::MmffStretchBend | TableKind::MmffOop | TableKind::MmffTorsion
+            TableKind::MmffBond
+                | TableKind::MmffAngle
+                | TableKind::MmffStretchBend
+                | TableKind::MmffOop
+                | TableKind::MmffTorsion
         )
     }
     /// Relative cost of one term (for chunk balancing).
@@ -1131,10 +1210,22 @@ impl Bonded {
     /// Evaluates `r` of table `k`, adding the energies to `acc` term by term.
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub fn eval<const G: bool>(&self, k: TableKind, pos: &[f64], grad: &mut [f64], r: Range<usize>, simd: bool, acc: &mut f64) {
+    pub fn eval<const G: bool>(
+        &self,
+        k: TableKind,
+        pos: &[f64],
+        grad: &mut [f64],
+        r: Range<usize>,
+        simd: bool,
+        acc: &mut f64,
+    ) {
         macro_rules! go {
             ($t:expr) => {
-                if simd { run_simd::<_, G>($t, pos, grad, r, acc) } else { run::<_, f64, G>($t, pos, grad, r, acc) }
+                if simd {
+                    run_simd::<_, G>($t, pos, grad, r, acc)
+                } else {
+                    run::<_, f64, G>($t, pos, grad, r, acc)
+                }
             };
         }
         match k {
@@ -1160,7 +1251,14 @@ impl Bonded {
     /// Evaluates a whole table into the running total `acc` with the
     /// reference contribs' summation order (see [`TableKind::grouped`]).
     #[inline]
-    pub fn eval_table<const G: bool>(&self, k: TableKind, pos: &[f64], grad: &mut [f64], simd: bool, acc: &mut f64) {
+    pub fn eval_table<const G: bool>(
+        &self,
+        k: TableKind,
+        pos: &[f64],
+        grad: &mut [f64],
+        simd: bool,
+        acc: &mut f64,
+    ) {
         let n = self.len_of(k);
         if n == 0 {
             return;
@@ -1178,7 +1276,10 @@ impl Bonded {
     /// weighted number of terms per chunk).
     pub fn plan(&mut self, grain: usize) {
         let grain = grain.max(1);
-        let total: usize = TableKind::ALL.iter().map(|&k| self.len_of(k) * k.cost()).sum();
+        let total: usize = TableKind::ALL
+            .iter()
+            .map(|&k| self.len_of(k) * k.cost())
+            .sum();
         let n_chunks = (total / grain).clamp(1, MAX_CHUNKS);
         self.chunks.clear();
         if n_chunks <= 1 {

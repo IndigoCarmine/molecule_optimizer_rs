@@ -41,7 +41,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Unit and integration tests, examples, and one pass through each bench.
-      - run: cargo test --all-targets
+      # Without --no-fail-fast cargo stops at the first failing test binary and
+      # hides failures in the ones after it.
+      - run: cargo test --all-targets --no-fail-fast
       # `--all-targets` leaves the doc tests out.
       - run: cargo test --doc
       - run: cargo build --release

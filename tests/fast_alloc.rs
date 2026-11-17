@@ -85,6 +85,16 @@ fn count(ff: &dyn ForceField, pos: &[f64]) -> usize {
     n
 }
 
+/// Smallest count over several rounds of [`count`]. The counter is global,
+/// so it also sees one-time allocations of the thread pool: on macOS each
+/// worker lazily allocates its mutex and condition variable the first time
+/// it goes to sleep, which can be in any round (up to 8 were seen with 4
+/// threads). Those can spoil only a few rounds, whereas an allocation in
+/// `energy_grad` itself shows up in every round.
+fn count_steady(ff: &dyn ForceField, pos: &[f64]) -> usize {
+    (0..12).map(|_| count(ff, pos)).min().unwrap()
+}
+
 #[test]
 fn energy_grad_does_not_allocate() {
     let mol = paracetamol();
@@ -129,11 +139,8 @@ fn energy_grad_does_not_allocate() {
         .num_threads(4)
         .build()
         .unwrap();
-    let (a, b) = pool.install(|| (count(&par_m, &bpos), count(&par_u, &bpos)));
+    let (a, b) = pool.install(|| (count_steady(&par_m, &bpos), count_steady(&par_u, &bpos)));
     println!("parallel allocations per 100 calls: MMFF {a}, UFF {b}");
-    #[cfg(target_os = "macos")]
-    assert!(a <= 2, "parallel MMFF allocated too much: {a}");
-    #[cfg(not(target_os = "macos"))]
     assert_eq!(a, 0, "parallel MMFF");
     assert_eq!(b, 0, "parallel UFF");
 }

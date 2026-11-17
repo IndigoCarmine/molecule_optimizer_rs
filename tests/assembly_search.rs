@@ -62,6 +62,18 @@ fn water_dimer_search() -> AssemblySearchResult {
     .unwrap()
 }
 
+/// Trials of the acetic acid dimer searches that must find the cyclic dimer.
+///
+/// With the default λ schedule only about 1 trial in 18 ends in the cyclic
+/// dimer (173 of 3072 over 12 seeds); in most of the others the soft-core
+/// stages leave one carboxyl group in the anti conformation. Which trials
+/// succeed depends on rounding in the platform's math library (`powf`,
+/// `cos`, ...), which the chained minimizations amplify, so the number of
+/// trials has to make a miss improbable rather than rely on particular
+/// trials: 32 trials miss in about 1 run in 6 (and did on Linux), 256 in
+/// fewer than 1 in 10⁶.
+const ACID_TRIALS: usize = 256;
+
 fn acetic_acid_dimer_search(mode: AssemblyMode, trials: usize) -> AssemblySearchResult {
     let opts = AssemblySearchOptions {
         num_trials: trials,
@@ -146,7 +158,7 @@ fn water_dimer_is_the_linear_hydrogen_bonded_structure() {
 
 #[test]
 fn acetic_acid_dimer_is_cyclic() {
-    let r = acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32);
+    let r = acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, ACID_TRIALS);
     let best = r.global_minimum().unwrap();
     let (h1, h2) = acid_hbonds(&best.coords);
     println!(
@@ -164,7 +176,7 @@ fn write_assembly_fixtures() {
         ("water_dimer", water_dimer_search()),
         (
             "acetic_acid_dimer",
-            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32),
+            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, ACID_TRIALS),
         ),
     ] {
         let best = r.global_minimum().unwrap();
@@ -215,7 +227,7 @@ fn lowest_structures_agree_with_rdkit_reminimization() {
         ("water_dimer", water_dimer_search()),
         (
             "acetic_acid_dimer",
-            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, 32),
+            acetic_acid_dimer_search(AssemblyMode::LambdaContinuation, ACID_TRIALS),
         ),
     ] {
         let rf = read_ref(name);
